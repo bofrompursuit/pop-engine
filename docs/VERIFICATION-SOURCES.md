@@ -1,0 +1,109 @@
+# PopEngine — Verification Source Dossier
+
+**Purpose:** Candidate primary sources for the 11 open `[VERIFY]` items in `OPEN-QUESTIONS.md` §2, collected 2026-07-22 by a four-agent research pass. **Nothing in this document is a verification.** Statuses in the answer key and `rules/nyc-rules.v1.json` are untouched; only the verification owner (Dev 4) promotes them, per the process note. SUPPORT / CONTRADICT / NOT ADDRESS labels are the researchers' candidate assessments of fetched text against the encoded claim, for triage only.
+
+**Method:** Every URL below was fetched on 2026-07-22 and its content read before quoting; unfetched links were excluded. Note for re-verification: most nyc.gov, nycgovparks.org, and codelibrary.amlegal.com pages block generic fetchers (HTTP 403) and were retrieved with a browser user-agent; a normal browser will open them fine. Beware stale Fire Code PDFs: URLs without "-2022" in the filename serve the 2014 code.
+
+---
+
+## ⚠ Red Flags First: Primary Text That Appears to CONTRADICT Encoded Facts
+
+These are the items where verification is likely to *change* the rules file, not just confirm it. Team + Dev 4 should triage these before the green gate, because two touch the demo anchor.
+
+| # | Encoded claim | What primary text says | Impact if confirmed |
+|---|---|---|---|
+| RF-1 | R7: tent/structure permit "over 10x10 ft", DOB and/or FDNY | CECM: structures **over 10 ft tall** need DOB permit. DOB: tent/canopy **over 400 gross sq ft** (or 30+ days in place) needs a DOB permit (Registered Design Professional files ≥15 business days ahead; $100 fee/30 days). FDNY's published permit list has **no tent category** (FDNY's role is flame-resistance + open-flame/fuel). The 10x10 figure matches **NY State** Parks rules, not NYC | R7's trigger threshold, agency, and lead time all change. Scenario E's 20x20 tent = exactly 400 sq ft, which is **not** "more than 400"; the expected R7 line may be wrong or hinge on height/duration instead |
+| RF-2 | R1: SAPO ~60-day lead (all street events) | CECM FAQ publishes deadlines **by event type**: block parties/clean-ups/farmers markets/religious 60 days; **street events 14–45 days**; plaza events 14–60; press/rallies/productions 10 days; street festivals: December 31 of the **prior year** | The backward-timeline math changes per event type. **Scenario A's INFEASIBLE verdict rests on the 60-day figure**; a sidewalk pop-up classed as a "street event" (14–45 days) might not be date-blocked at 35 days out. This is answer-key-level, team must rule on it |
+| RF-3 | R10: $1M GL + City additional insured for street events (`[VERIFY]` "ALL SAPO event types") | 50 RCNY §1-08(b) (current, July 2026): required for all events **except block parties and press conferences/rallies/stationary demonstrations**, with a hardship waiver. CECM: block parties need insurance only with rides | Scenario D's insurance line (block party) is likely wrong, exactly as the key's own `[VERIFY applicability to block parties]` suspected. R10 trigger needs an exception |
+| RF-4 | A1: prepackaged free food → "confirm DOHMH exemption" | Health Code Art. 88 §88.03(f): distributing prepackaged food at an event is **inside** the TFSE permit scope. Exemptions are narrow: affinity-group/private functions where the public is not invited; govt/nonprofit nutrition education | Scenario B's gallery pop-up (public invited) likely does NOT qualify for an exemption; A1's advisory wording holds up, but the answer may be "permit required," not "exempt" |
+| RF-5 | A2: no sound permit on private property | Admin Code §10-108(b)(3): the permit reaches sound projected **outside a building or through windows/doorways** onto a public street. Only fully-indoor, non-projecting sound is out of scope | A2's advisory should be scoped to "indoor/enclosed private events"; a rooftop DJ audible from the street (Scenario F!) may actually need the permit |
+| RF-6 | (Not encoded at all) | DOB/CECM: **Temporary Place of Assembly (TPA) permit** required where 75+ gather indoors or **200+ outdoors**; apply >10 days ahead; min fee $250, +$100/day if late | A possible missing requirement: Scenario E (300 on a plaza) and Scenario F (90 indoors) may both trigger TPA. Candidate new rule for the team to rule on; the current ruleset never mentions TPA |
+| RF-7 | R8 note: "no BBQ on beaches" | 311: barbecuing is allowed in **designated areas** of certain parks and beaches; the ban is on cooking outside them. Propane in parks: confirmed prohibited | Note wording softens to "outside designated areas" |
+
+---
+
+## Item-by-Item Candidates (§2 numbering)
+
+### 1. R7 — Tent threshold + issuing agency
+
+- https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page ("Street Events - CECM"): "Structures such as tents, canopies, stage platforms, bleachers, or inflatables over 10 feet tall require a permit from the Department of Buildings ... Generators require a certificate from the New York Fire Department." — CONTRADICT (10x10 footprint claim)
+- https://www.nyc.gov/site/cecm/support/department-of-buildings.page: DOB permit needed "if you intend to use a tent or canopy that is more than 400 gross square feet or if the tent or canopy will be in place for 30 days or more." — CONTRADICT (10x10)
+- https://www.nyc.gov/site/buildings/industry/tup.page ("TUP - Buildings"): Temporary Use Permit filed by a Registered Design Professional "no later than 15 business days prior"; $100 initial 30 days, $130 per additional period. — SUPPORT (DOB as issuer, published lead time)
+- https://www.nyc.gov/assets/buildings/pdf/code_notes_temp_place-of-assembly.pdf (DOB Code Notes): "Any tents or canopy more than 400 gross square feet or that will be in place for more than 30 days" requires a DOB work permit. — CONTRADICT (10x10)
+- https://www.nyc.gov/assets/fdny/downloads/pdf/about/chapter-31-2022.pdf (2022 Fire Code ch. 31): tent permits "as set forth in FC 105.6"; FC 105.6 (chapter-1-2022.pdf) contains no tent permit category. — NOT ADDRESS (threshold); supports FDNY-not-structural-issuer
+- Probable origin of "10x10": NY **State** Parks application (parks.ny.gov, lead, not fetched): tents larger than 10'x10' need a separate permit. Wrong jurisdiction for NYC events.
+
+### 2. R8 — Open-flame permit class + lead time
+
+- https://www.nyc.gov/site/fdny/business/all-certifications/per-openflames.page ("Open Flame Permit"): "To use open flame in any public assembly occupancy, place of public gathering, covered mall building. Cost of Permit Fee is $210.00 per set-up or vendor." — SUPPORT (class + fee); NOT ADDRESS (lead time)
+- https://www.nyc.gov/site/cecm/support/new-york-city-fire-department.page: "Fuel Permit: to use and/or store fuel for cooking and/or equipment, including but not limited to kerosene, propane, charcoal/wood, etc. ... Open Flame Permit: to have candles, sternos or floor mounted café heaters." — SUPPORT (charcoal grills → **Fuel Permit**, not Open Flame; class distinction matters for Scenario D)
+- 2022 Fire Code: FC 105.6 open-flame trigger (chapter-1-2022.pdf); FC 307 baseline open-fire prohibition with barbecue exceptions (chapter-3-2022.pdf); FC 6101.5.6 LPG at street fairs needs certificate-of-fitness supervision (chapter-61-2022.pdf). — SUPPORT
+- Propane in parks: https://portal.311.nyc.gov/article/?kanumber=KA-02228: "Propane grills are prohibited." — SUPPORT. Flat "no BBQ on beaches": CONTRADICT (designated areas exist).
+- Published lead time: no primary source found on any fetched page.
+
+### 3. R4 — DOHMH permit classes (sold / sampling / prepackaged)
+
+- https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page ("Food Vending at Temporary Events"): "Acceptable permits include valid Temporary Food Service Establishment (TFSE), standard Food Service Establishment (FSE) and Mobile Food Vendor (MFV)." Permit needed "no matter how the food is offered ... whether the event is held on private property, a public street or in a park." — SUPPORT (classes)
+- https://www.nyc.gov/assets/doh/downloads/pdf/about/healthcode/health-code-article88.pdf (Health Code Art. 88): §88.05(c) permit per operator; §88.03(a) "Event" includes "food samples ... distributed to the public, with or without charge" (— free sampling is in scope); §88.03(f) prepackaged distribution is in scope; §88.03(f)(2)-(4) narrow exemptions (affinity/private functions, govt/nonprofit education). — SUPPORT for sampling-needs-permit; CONTRADICT for any general prepackaged-free exemption (see RF-4)
+- https://nyc-business.nyc.gov/nycbusiness/description/temporary-food-service-establishment-permit: "$70 for an annual permit ... A supervising manager with a Food Protection Certificate must be on site at all times." — SUPPORT (fee detail)
+- SAPO-side sampling nuance (CECM FAQ, https://www.nyc.gov/site/cecm/support/frequently-asked-questions.page): no **SAPO** permit for on-person sampling with no table/street footprint. That is the street permit, not the health permit; do not conflate.
+- Food trucks: https://www.nyc.gov/site/doh/business/food-operators/mobile-and-temporary-food-vendors.page + MFV application PDF (https://www.nyc.gov/assets/doh/downloads/pdf/rii/mobile-food-vending-permit.pdf): insurance requirements are Workers' Comp/Disability; **no auto-insurance-copy requirement found anywhere** — NOT ADDRESS; the key's auto-insurance clause has no located source.
+
+### 4. R10 — Insurance scope for SAPO events
+
+- https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731 (50 RCNY §1-08, "July 2026 (current)"): "All events except for block parties and any Press Conference/Rally/Stationary Demonstration are required to have liability insurance in the amount of one million dollars ($1,000,000) per occurrence naming the City of New York as an additional insured ... The Director of SAPO shall have the authority to waive the insurance requirement ... unreasonable hardship." — SUPPORT ($1M + additional insured); CONTRADICT ("ALL SAPO event types"; see RF-3)
+- https://www.nyc.gov/site/cecm/support/frequently-asked-questions.page: "SAPO requires insurance for all commercial/promotional events and all Street Festivals. Block parties wishing to have rides must also provide insurance." — SUPPORT (exception detail)
+- Per-type confirmation pages fetched: street-events.page, street-festivals.page, open-culture.page (all state $1M + City additional insured; Open Culture requires insurance despite fee exemption); block-parties.page lists **no** organizer liability insurance. 
+- Wording caution: the codified rule says "liability insurance"; the exact phrase "commercial general liability" was not found in fetched primary text.
+
+### 5. R9 — SLA instrument per format
+
+- https://sla.ny.gov/permits-available-online: **One-Day Alcohol Event Permit** ("sale and/or service of wine, beer, cider and liquor ... for a period of 24 hours"; "minimum of 15 business days prior"; $36/point of sale/day). **Catering Permit** (licensed on-premises retailer at private off-premises events; "minimum of 15 business days prior"; $48). — SUPPORT (two-instrument mapping AND the verbatim 15-business-day lead)
+- https://sla.ny.gov/temporary-operating-permit-application-retailers (ST permit PDF): 180-day operating permit for premises awaiting license. — NOT ADDRESS (do not map to one-off events)
+- Encoding note: if any copy says "temporary beer/wine permit," that instrument (TP-820) appears superseded by the One-Day Alcohol Event Permit. Supports interpretation I-1's structure: the venue-license path involves no SLA filing; the 15-business-day lead attaches to the SLA permits.
+
+### 6. R13 — Place-of-assembly threshold
+
+- https://www.nyc.gov/site/buildings/dob/project-categories-paco.page: "New York City requires a Place of Assembly Certificate of Operation (PACO) ... where 75 or more people gather indoors or on roof terraces; or where 200 or more people gather outdoors." — SUPPORT (the ~75 indoors claim, plus a 200-outdoors figure the ruleset doesn't carry)
+- https://www.nyc.gov/assets/buildings/pdf/code_notes_temp_place-of-assembly.pdf: "A TPA is issued where there are 75 or more people within an indoor space or 200 or more in an exterior open space." TPA filed ">10 days before the event"; min fee $250; +$100/day late. — SUPPORT + new candidate requirement (see RF-6)
+- FDNY side: https://www.nyc.gov/site/fdny/business/all-certifications/per-assemblyoccupancy2.page (Public Assembly Permit; fee table starts "Occupancy 75 to 149 — $415.00"). — SUPPORT
+- Scenario F note: "roof terraces" appear explicitly in the 75+ indoor class; relevant to the rooftop fixture.
+
+### 7. R1 — SAPO fee schedule by event type
+
+- https://www.nyc.gov/site/cecm/permitting/fees.page ("Fees - CECM"): $25 processing all types; "Block Parties — Application fee only ... Plaza Events — $1,000 to $31,000 ... Street Event - Small — $3,100; Medium — $11,000; Large — $25,000 ... Street Festival — 20% of the total fees paid by vendors". — SUPPORT (a published per-type schedule exists; the "varies" display can become concrete)
+- https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731 (50 RCNY §1-08): codified fee + deadline table matching the CECM page. — SUPPORT
+- Lead times (same FAQ page as item 4): per-type deadlines, 10 days to prior-year Dec 31. — CONTRADICT for a universal "~60 days" (see RF-2)
+
+### 8. R5 — TUA trigger reconciliation
+
+- Any-sale trigger, three pages: https://www.nycgovparks.org/permits/special-events/vendors ("In order to sell anything on parkland, you'll need a Temporary Use Authorization"), .../guide (TUA needed to sell food/beverages and for merchandise fundraising; Revenue Division (212) 360-1397), .../large-events ("all events where food, merchandise, or other items are sold onsite require a Temporary Use Authorization (TUA)"). — SUPPORT (any-vending version)
+- 500+ version, one page: https://www.nycgovparks.org/permits/special-events/faq ("If you want to sell items (food or materials) at an event with attendance over 500 people, you **may** need a Temporary Use Authorization"). — SUPPORT (hedged; only source tying TUA to 500)
+- Triage read: three unhedged pages vs. one hedged FAQ favors the any-vending trigger (as encoded); Dev 4 should confirm with the Revenue Division. Bonus facts: TUA info due "at least two weeks prior"; fee "as low as $50 per vendor ... will not exceed $150 per vendor" (2026). Unextracted candidate: https://www.nycgovparks.org/pagefiles/76/TUA-FAQ.pdf
+
+### 9. Portal URLs
+
+- SAPO E-Apply: https://www.nyc.gov/site/cecm/e-apply/e-apply.page → live portal at **https://nyceventpermits.nyc.gov/cems/Login** ("E-Apply - Login"; $25 fee text). Note: `/sapo/` path 404s; the login page shows stale 2021 COVID copy. — SUPPORT
+- Parks: **https://nyceventpermits.nyc.gov/parks** confirmed live ("Special Events Permits : NYC Parks", login + "Request a Permit"), linked from https://portal.311.nyc.gov/article/?kanumber=KA-02071. — SUPPORT (matches the rules file's URL)
+- FDNY Business: https://www.nyc.gov/site/fdny/business/support/fdny-business.page ("All services must now be filed online") → portal at **https://fires.fdnycloud.org/CitizenAccess/Default.aspx** (Accela; JS-heavy). — SUPPORT
+- DOHMH application path: permit pages found (item 3); a single online application entry point was not identified. — remaining gap for Dev 4.
+- NYPD sound (bonus): https://www.nyc.gov/site/nypd/services/law-enforcement/permits-licenses-permits.page: "filed at the precinct where the device is to be used no less than five days before the event. There is a $45 fee, payable by certified check or money order." + application form PDF https://www.nyc.gov/assets/nypd/downloads/pdf/form_sounddevice.pdf. — SUPPORT for R3's encoding (nuance: $45 is the first day; +$5/day up to 4 more, Admin Code §10-108(h))
+
+### 10. A2 — Sound permit on private property
+
+- https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-6027 (Admin Code §10-108): permit trigger is use "in, on, near or adjacent to any public street, park or place"; §10-108(b)(3) extends it to sound projected outside a building or through openings onto the street. — SUPPORT for fully-indoor events; CONTRADICT for a flat "private property" exemption (see RF-5)
+- Noise code applies regardless: §24-244 (https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209196, "no person shall operate ... any sound reproduction device in such a manner as to create unreasonable noise") and §24-231 commercial music 42 dB(A) inside receiving dwellings (0-0-0-209184). — SUPPORT (advisory's noise-code half)
+
+### 11. R2 — Site diagram + core Parks claims
+
+- Core claims all supported verbatim at https://www.nycgovparks.org/permits/special-events/faq: "required for events/activities where twenty or more people will be present"; "$25.00 nonrefundable administrative processing fee, and permits require at least 30 days for processing"; "We do not accept applications submitted inside the 21 day threshold." — SUPPORT (R2's VERIFIED facts re-confirmed with quotable text)
+- Site diagram: .../basic-events: "Depending upon the scale of the event, you **may** be asked for ... a site map." .../large-events: 500+ events "typically require ... a preliminary site map." — the universal-requirement reading is CONTRADICTED; conditional/scale-dependent is what primary text supports. Rules-file wording should become "site map may be requested (scale-dependent)" once Dev 4 confirms.
+
+---
+
+## Suggested Dev 4 Workflow
+
+1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.
+2. For each item: open the candidate URL in a browser, confirm the quote, then update `rules/nyc-rules.v1.json`'s `verification` block (facet → VERIFIED, todos cleared, `last_verified_date` set, source URL recorded). `status_verbatim` changes only on promotion.
+3. Where this dossier found concrete values the rules file displays as "varies" (SAPO fee table, TFSE $70, Open Flame $210, TPA $250, SLA $36/$48), adding them is a rules-data change with the fetched URL as source — after confirmation, never from this dossier alone.
+4. Log every check: URL + date checked, per the answer key's method. Unresolvable → keep "confirm with agency."

@@ -1,0 +1,492 @@
+{
+  "schema": "popengine-rules/v1",
+  "ruleset_version": "nyc.v1",
+  "jurisdiction": "US-NY-NYC",
+  "snapshot_date": "2026-07-21",
+  "provenance": "Encodes docs/test-scenario-answer-key.md Part 1 (R1-R13). Advisory entries A1-A3 derive from Part 2 scenario expected outputs and one coverage-gap analysis, as cited per entry. No permit fact appears here that is not in the answer key; gaps carry VERIFY todos, never guesses. verification.status_verbatim strings are preserved exactly from the answer key and must never be edited except by the verification owner promoting them against a primary source.",
+  "status_legend": {
+    "VERIFIED": "confirmed against official/primary source",
+    "VERIFY": "drawn from secondary source, needs primary-source confirmation before demo",
+    "COVERAGE_GAP": "no answer-key rule covers this combination; advisory asserts nothing, flags only"
+  },
+  "config": {
+    "slack_warning_days": {
+      "value": 14,
+      "note": "Default from the answer key's illustrative 'e.g., <14 days slack = warning'. Team-tunable; logged in OPEN-QUESTIONS. Scenario D (10-day slack) must warn under any chosen value > 10."
+    },
+    "lead_range_basis": {
+      "value": "max",
+      "note": "latest_apply_date uses the conservative bound of a lead range. Required by Scenario E's arithmetic: '~75 days of slack' = 135 - 60 (R6 max), not 135 - 45."
+    },
+    "business_day_math": {
+      "mode": "calendar_approximation",
+      "note": "v1 converts business-day leads using the answer key's stated approximation (15 business days ~ 21 calendar days) so relative-date test fixtures are deterministic regardless of weekday. True business-day calendar math is deferred; logged in OPEN-QUESTIONS."
+    },
+    "place_of_assembly_threshold": {
+      "value": 75,
+      "unit": "attendees_indoors",
+      "verification": "VERIFY",
+      "note": "'commonly 75+' per answer key R13. Drives advisory WORDING only (Scenario B: 'below common threshold' at 60; Scenario F: 'consideration' at 90). Must always render with its VERIFY caveat; never assert as fact in UI copy."
+    }
+  },
+  "intake_fields": [
+    { "field": "borough", "type": "enum", "values": ["manhattan", "brooklyn", "queens", "bronx", "staten_island"], "collected": true },
+    { "field": "location_type", "type": "enum", "values": ["street", "sidewalk", "plaza", "park", "private_venue"], "collected": true },
+    { "field": "street_event_kind", "type": "enum", "values": ["residential_block_party", "other"], "collected": true, "asked_when": { "field": "location_type", "op": "eq", "value": "street" }, "note": "Drives R1 display-name variant (Scenario D). Full SAPO event-type taxonomy is VERIFY." },
+    { "field": "headcount", "type": "integer", "collected": true },
+    { "field": "event_date", "type": "date", "collected": true },
+    { "field": "food_format", "type": "enum", "values": ["none", "prepackaged_free", "free_sampling", "served_sold", "catered_private"], "collected": true, "note": "catered_private (Scenario F) deliberately triggers no rule: the answer key's expected set for F contains no DOHMH item." },
+    { "field": "amplified_sound", "type": "boolean", "collected": true },
+    { "field": "structures", "type": "boolean", "collected": true },
+    { "field": "structure_length_ft", "type": "integer", "collected": true, "nullable": true },
+    { "field": "structure_width_ft", "type": "integer", "collected": true, "nullable": true },
+    { "field": "open_flame", "type": "boolean", "collected": true },
+    { "field": "alcohol", "type": "boolean", "collected": true },
+    { "field": "venue_has_liquor_license", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" } ] }, "note": "'unknown' is a collected answer and evaluates tri-state unknown (drives CONDITIONAL, Scenario F)." },
+    { "field": "power_generator", "type": "boolean", "collected": true },
+    { "field": "selling_merchandise", "type": "boolean", "collected": false, "note": "Referenced by R5; not collected in v1 intake. Uncollected fields evaluate false with a coverage note (see engine_conventions). Adding this field is an OPEN-QUESTIONS item." },
+    { "field": "procession", "type": "boolean", "collected": false, "note": "Referenced by R12; not collected in v1 intake (out of MVP scenario set per the answer key)." }
+  ],
+  "derived_values": [
+    { "name": "structure_area_sqft", "formula": "structure_length_ft * structure_width_ft", "null_behavior": "if structures is true and either dimension is null, comparisons evaluate tri-state unknown (never false)" }
+  ],
+  "engine_conventions": [
+    "Tri-state evaluation: conditions resolve true / false / unknown. Collected-but-unknown answers propagate unknown; fields declared collected:false evaluate false with the owning rule's coverage note.",
+    "Rules with deadline.unverified produce plan items rendered 'confirm lead time with agency' and are EXCLUDED from verdict and slack arithmetic (Scenarios A/D/E expect these items present without affecting the verdict).",
+    "An empty permit set is a first-class result: render 'no city event permits required' plus triggered advisories (Scenario B).",
+    "Any fact whose verification facet is VERIFY renders with its caveat; the engine never fills a gap with a guess."
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "permit",
+      "title": "SAPO Street Activity Permit",
+      "trigger": { "all": [ { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza"] } ] },
+      "output": {
+        "permit_name": "Street Activity Permit",
+        "permit_name_variants": [
+          { "when": { "all": [ { "field": "location_type", "op": "eq", "value": "plaza" } ] }, "name": "Street Activity/Plaza Permit", "source": "Scenario E expected output" },
+          { "when": { "all": [ { "field": "location_type", "op": "eq", "value": "street" }, { "field": "street_event_kind", "op": "eq", "value": "residential_block_party" } ] }, "name": "Block Party Permit", "source": "Scenario D expected output", "extra_notes": [ "Community board review applies (per Scenario D expected output)." ] }
+        ],
+        "agency": "SAPO (Mayor's Office CECM)",
+        "portal": { "name": "E-Apply", "url": null, "instructions": null, "verification": "VERIFY exact portal URL against nyc.gov/sapo" },
+        "deadline": { "lead_days": { "value": 60, "approx": true, "display": "~60 days" } },
+        "fee": { "display": "varies by event type", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [],
+      "interpretation_notes": [],
+      "source": { "citation": "nyc.gov/sapo + practitioner guides", "urls": ["https://nyc.gov/sapo"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED — scope; VERIFY exact fee schedule per event type]",
+        "facets": { "trigger_scope": "VERIFIED", "lead_time": "VERIFIED", "fee": "VERIFY", "portal_url": "VERIFY" },
+        "todos": [ "Verify exact SAPO fee schedule per event type (answer key Part 3, item 7)", "Verify E-Apply portal URL for SAPO applications" ]
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["A", "D", "E"]
+    },
+    {
+      "id": "R2",
+      "kind": "permit",
+      "title": "NYC Parks Special Event Permit",
+      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "headcount", "op": "gte", "value": 20 } ] },
+      "output": {
+        "permit_name": "Special Event Permit",
+        "agency": "NYC Parks",
+        "portal": { "name": "NYC Parks event permits (E-Apply)", "url": "https://nyceventpermits.nyc.gov/parks", "instructions": null, "verification": "URL appears in the answer key source column; VERIFY it is the application entry point" },
+        "deadline": { "processing_days": 30, "hard_floor_days": 21, "display": "30 days processing; applications within 21 days of event are NOT accepted (hard floor)" },
+        "fee": { "amount_usd": 25, "display": "$25 nonrefundable" },
+        "required_documents": [ { "name": "Site diagram", "verification": "VERIFY", "source": "practitioner guidance cited in PRD supporting context ('3-6 weeks with site diagrams')" } ]
+      },
+      "dependencies": [],
+      "notes": [],
+      "interpretation_notes": [
+        "The 22-29-days-out band (past no floor, but inside 30-day processing) is undefined by the answer key. Engine interpretation: INFEASIBLE only past the 21-day floor; runway shorter than processing_days renders FEASIBLE-AT-RISK with 'processing may not complete before event'. This is an interpretation, not a verified fact; logged in OPEN-QUESTIONS."
+      ],
+      "source": { "citation": "nycgovparks.org/permits/special-events/faq + nyceventpermits.nyc.gov/parks", "urls": ["https://nycgovparks.org/permits/special-events/faq", "https://nyceventpermits.nyc.gov/parks"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED]",
+        "facets": { "trigger_scope": "VERIFIED", "lead_time": "VERIFIED", "fee": "VERIFIED", "required_documents": "VERIFY" },
+        "todos": [ "Verify site-diagram document requirement against the Parks application checklist" ]
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["C"]
+    },
+    {
+      "id": "R3",
+      "kind": "permit",
+      "title": "NYPD Sound Device Permit",
+      "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza", "park"] } ] },
+      "output": {
+        "permit_name": "Sound Device Permit",
+        "agency": "NYPD",
+        "portal": { "name": "Local NYPD precinct (in person)", "url": null, "instructions": "Filed in person at the precinct local to the event location. Fee payable by certified check or money order.", "verification": null },
+        "deadline": { "lead_days": { "value": 5, "display": ">=5 days before event" } },
+        "fee": { "amount_usd": 45, "display": "$45 (certified check/money order)" },
+        "required_documents": []
+      },
+      "dependencies": [
+        {
+          "depends_on": "R2",
+          "when": { "all": [ { "field": "location_type", "op": "eq", "value": "park" } ] },
+          "requires_dependency_triggered": true,
+          "semantics": "file_after_decision",
+          "note_verbatim": "in parks, the Parks permit WITH amplified-sound permission must be obtained FIRST; sound permit is filed after. Engine must sequence deadlines accordingly."
+        }
+      ],
+      "notes": [],
+      "interpretation_notes": [
+        "Park + headcount < 20 + amplified sound: R3 fires but R2 does not, leaving the dependency inert; R3 is then treated as standalone. The answer key does not define this combination; logged in OPEN-QUESTIONS."
+      ],
+      "source": { "citation": "nyc.gov NYPD permits page", "urls": ["https://nyc.gov"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED]",
+        "facets": { "trigger_scope": "VERIFIED", "lead_time": "VERIFIED", "fee": "VERIFIED" },
+        "todos": []
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["A", "C", "D", "E"]
+    },
+    {
+      "id": "R4",
+      "kind": "permit",
+      "title": "DOHMH food permit",
+      "trigger": { "all": [ { "field": "food_format", "op": "in", "value": ["served_sold", "free_sampling"] } ] },
+      "output": {
+        "permit_name": "DOHMH permit (Temporary Food Service / vendor permits; class depends on food format)",
+        "permit_name_variants": [
+          { "when": { "all": [ { "field": "food_format", "op": "eq", "value": "served_sold" } ] }, "name": "DOHMH food vendor permit (format-dependent)", "source": "Scenario A expected output" },
+          { "when": { "all": [ { "field": "food_format", "op": "eq", "value": "free_sampling" } ] }, "name": "DOHMH sampling permit", "source": "Scenario E expected output", "extra_notes": [ "Permit class for free sampling is VERIFY (answer key Scenario E)." ] }
+        ],
+        "agency": "DOHMH",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": "VERIFY application path per permit class" },
+        "deadline": { "unverified": true, "display": "lead time varies — confirm with agency", "verification": "VERIFY exact lead time per food format" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [
+        "Food trucks need a Mobile Food Vending permit + auto insurance copy (answer key). Unreachable via the v1 intake, which does not distinguish food trucks; logged in OPEN-QUESTIONS."
+      ],
+      "interpretation_notes": [
+        "Including free_sampling under R4's 'food served/sold to the public' trigger is an interpretation forced by Scenario E's expected 'DOHMH sampling permit' line; the class itself is VERIFY.",
+        "prepackaged_free is NOT a trigger here; Scenario B expects an exemption-confirmation advisory (see A1), not a permit.",
+        "catered_private triggers nothing (Scenario F expected set contains no DOHMH item)."
+      ],
+      "source": { "citation": "nycgovparks.org special event guide", "urls": ["https://nycgovparks.org"] },
+      "verification": {
+        "status_verbatim": "[VERIFY — exact permit class + lead time per food format]",
+        "facets": { "trigger_scope": "VERIFY", "lead_time": "VERIFY", "fee": "VERIFY", "permit_class": "VERIFY" },
+        "todos": [ "Verify DOHMH permit classes: sold hot food vs. free sampling vs. prepackaged-free (answer key Part 3, item 3)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["A", "E"]
+    },
+    {
+      "id": "R5",
+      "kind": "permit",
+      "title": "Temporary Use Authorization (TUA) for vending at Parks events",
+      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "any": [ { "field": "food_format", "op": "eq", "value": "served_sold" }, { "field": "selling_merchandise", "op": "bool", "value": true } ] } ] },
+      "output": {
+        "permit_name": "Temporary Use Authorization (TUA)",
+        "agency": "NYC Parks Revenue Division",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": "VERIFY" },
+        "deadline": { "co_apply_with": "R2", "display": "apply with event permit" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [
+        "Answer key tension preserved verbatim: TUA 'explicitly required for vending; FAQ ties TUA to events over 500 attendance — reconcile'. Trigger encoded as any-vending pending reconciliation (answer key Part 3, item 8).",
+        "selling_merchandise is not collected by the v1 intake; the merchandise side of this trigger is dormant (coverage note)."
+      ],
+      "interpretation_notes": [],
+      "source": { "citation": "nycgovparks.org FAQ + Fort Tryon guidance", "urls": ["https://nycgovparks.org"] },
+      "verification": {
+        "status_verbatim": "[VERIFY — attendance threshold vs. any-vending trigger]",
+        "facets": { "trigger_scope": "VERIFY", "lead_time": "VERIFY", "fee": "VERIFY" },
+        "todos": [ "Reconcile TUA trigger: any-vending vs. 500+ attendance (answer key Part 3, item 8; blocks any future vending scenario)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": []
+    },
+    {
+      "id": "R6",
+      "kind": "permit",
+      "title": "FDNY generator/battery permit",
+      "trigger": { "all": [ { "field": "power_generator", "op": "bool", "value": true } ] },
+      "output": {
+        "permit_name": "FDNY permit + site inspection (generator or battery power)",
+        "agency": "FDNY",
+        "portal": { "name": "FDNY Business (online)", "url": null, "instructions": null, "verification": "VERIFY exact portal URL" },
+        "deadline": { "lead_days": { "min": 45, "max": 60, "display": "45-60 days" } },
+        "fee": { "display": "fee applies", "verification": "VERIFY amount" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [ "Site inspection is part of the requirement." ],
+      "interpretation_notes": [ "latest_apply_date uses the max bound (60) per config.lead_range_basis; matches Scenario E's '~75 days of slack' arithmetic." ],
+      "source": { "citation": "nycgovparks.org special event guide", "urls": ["https://nycgovparks.org"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED — lead time; VERIFY fee amount]",
+        "facets": { "trigger_scope": "VERIFIED", "lead_time": "VERIFIED", "fee": "VERIFY", "portal_url": "VERIFY" },
+        "todos": [ "Verify FDNY generator permit fee amount" ]
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["E"]
+    },
+    {
+      "id": "R7",
+      "kind": "permit",
+      "title": "Tent / temporary structure permit (over 10x10 ft)",
+      "trigger": { "all": [ { "field": "structures", "op": "bool", "value": true }, { "field": "structure_area_sqft", "op": "gt", "value": 100 } ] },
+      "output": {
+        "permit_name": "Structure permit (tent/temporary structure over 10x10 ft)",
+        "agency": "DOB and/or FDNY",
+        "agency_verification": "VERIFY issuing agency",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": "VERIFY" },
+        "deadline": { "unverified": true, "display": "lead time varies — confirm with agency", "verification": "VERIFY lead time" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [],
+      "interpretation_notes": [
+        "'Over 10x10 ft' is encoded as derived structure_area_sqft > 100. Whether the true threshold is area-based or either-dimension-based is unresolved and folded into the existing threshold VERIFY (an 8x15 tent passes area > 100 but not both-dims > 10). Scenario E's 20x20 triggers under every interpretation.",
+        "structures = true with null dimensions evaluates unknown (see derived_values), producing a conditional item asking for dimensions."
+      ],
+      "source": { "citation": "practitioner guide (nyc-event-venues.com)", "urls": ["https://nyc-event-venues.com/the-society-brief/navigating-nycs-event-permits-what-you-need-to-know"] },
+      "verification": {
+        "status_verbatim": "[VERIFY — issuing agency + exact sq-ft threshold + lead time]",
+        "facets": { "trigger_scope": "VERIFY", "agency": "VERIFY", "lead_time": "VERIFY", "fee": "VERIFY" },
+        "todos": [ "Verify tent threshold + issuing agency (answer key Part 3, item 1; Scenario E depends on it)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["E"]
+    },
+    {
+      "id": "R8",
+      "kind": "permit",
+      "title": "FDNY open-flame / cooking permit",
+      "trigger": { "all": [ { "field": "open_flame", "op": "bool", "value": true } ] },
+      "output": {
+        "permit_name": "FDNY open-flame/cooking permit",
+        "agency": "FDNY",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": "VERIFY" },
+        "deadline": { "unverified": true, "display": "lead time varies — confirm with agency", "verification": "VERIFY lead time" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [ "Propane restricted in parks; no BBQ on beaches (answer key, from nycgovparks.org BBQ guidance)." ],
+      "interpretation_notes": [],
+      "source": { "citation": "nycgovparks.org BBQ guidance + practitioner guide", "urls": ["https://nycgovparks.org"] },
+      "verification": {
+        "status_verbatim": "[VERIFY — permit class + lead time for street/block-party grilling]",
+        "facets": { "trigger_scope": "VERIFY", "permit_class": "VERIFY", "lead_time": "VERIFY", "fee": "VERIFY" },
+        "todos": [ "Verify open-flame permit class + lead time (answer key Part 3, item 2; Scenario D depends on it)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["D"]
+    },
+    {
+      "id": "R9",
+      "kind": "permit",
+      "title": "Alcohol authorization (private venue event)",
+      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" } ] },
+      "branch_field": "venue_has_liquor_license",
+      "output": {
+        "agency": "NY State Liquor Authority / venue",
+        "paths": [
+          {
+            "id": "venue_license",
+            "when": { "field": "venue_has_liquor_license", "op": "eq", "value": "yes" },
+            "requirement": null,
+            "advisory": "Venue's existing liquor license governs; confirm it covers this event format.",
+            "deadline": null
+          },
+          {
+            "id": "licensed_caterer",
+            "when": null,
+            "requirement": "Licensed caterer covers alcohol service (alternative path)",
+            "advisory": "The answer key lists this path without a separate timing; renders as advisory text within the no/unknown branches.",
+            "deadline": null,
+            "verification": "VERIFY"
+          },
+          {
+            "id": "sla_temporary",
+            "when": { "field": "venue_has_liquor_license", "op": "eq", "value": "no" },
+            "requirement": "SLA temporary permit",
+            "deadline": { "business_days": { "value": 15, "calendar_days_approx": 21, "display": ">=15 business days (~21 calendar)" } }
+          }
+        ],
+        "portal": { "name": null, "url": null, "instructions": null, "verification": "VERIFY" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [],
+      "interpretation_notes": [
+        "The >=15-business-day lead is encoded on the SLA-temporary path only. The answer key attaches 'coordinate >=15 business days out' to the rule as a whole; scoping it to the SLA path is required to reproduce Scenario F's CONDITIONAL verdict (the license-holding branch must be feasible at 20 days out). VERIFY the true scope during source confirmation.",
+        "venue_has_liquor_license = unknown produces the Scenario F CONDITIONAL: yes-branch feasible (with confirm-coverage advisory), no-branch infeasible at < ~21 calendar days runway.",
+        "The licensed-caterer path cannot be branched on (no caterer intake field in v1); it appears as advisory text only."
+      ],
+      "source": { "citation": "practitioner guide", "urls": ["https://nyc-event-venues.com/the-society-brief/navigating-nycs-event-permits-what-you-need-to-know"] },
+      "verification": {
+        "status_verbatim": "[VERIFY — which SLA instrument applies per format]",
+        "facets": { "trigger_scope": "VERIFY", "instrument": "VERIFY", "lead_time": "VERIFY", "fee": "VERIFY" },
+        "todos": [ "Verify SLA instrument per event format (answer key Part 3, item 5; Scenario F depends on it)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["F"]
+    },
+    {
+      "id": "R10",
+      "kind": "insurance",
+      "title": "Commercial GL insurance for street events",
+      "trigger": { "all": [ { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza"] } ] },
+      "output": {
+        "requirement_name": "Commercial general liability insurance, $1M per occurrence, City of New York named as additional insured",
+        "agency": "Requirement attached to SAPO-class permits",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": null },
+        "deadline": { "timing_note": "obtain before permit issuance", "display": "obtain before permit issuance (not a dated deadline; excluded from timeline arithmetic)" },
+        "fee": { "display": "premium varies" },
+        "required_documents": []
+      },
+      "dependencies": [ { "depends_on": "R1", "semantics": "before_issuance", "note": "Attached to the SAPO-class permit; certificate needed before that permit issues." } ],
+      "notes": [ "Scenario D flags applicability to block parties as part of the same VERIFY scope question." ],
+      "interpretation_notes": [],
+      "source": { "citation": "Open Culture / SAPO program requirements", "urls": [] },
+      "verification": {
+        "status_verbatim": "[VERIFY — whether required for ALL SAPO event types]",
+        "facets": { "trigger_scope": "VERIFY", "requirement": "VERIFIED_AS_STATED", "applicability_breadth": "VERIFY" },
+        "todos": [ "Verify insurance scope: all SAPO event types or program-specific (answer key Part 3, item 4; Scenarios A/D/E depend on it)" ]
+      },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["A", "D", "E"]
+    },
+    {
+      "id": "R11",
+      "kind": "note",
+      "title": "Parks events: insurance determined by borough office",
+      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "headcount", "op": "gte", "value": 20 } ] },
+      "output": {
+        "note_text": "Insurance determined by borough office at review",
+        "agency": "NYC Parks",
+        "portal": { "name": null, "url": null, "instructions": null, "verification": null },
+        "deadline": null,
+        "fee": null,
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [ "ENGINE NOTE (verbatim from answer key): output should say \"insurance determined by borough office at review\" — do NOT hard-require it for parks scenarios." ],
+      "interpretation_notes": [ "Trigger scoped to permitted parks events (same conditions as R2); the answer key ties the determination to the borough permit office's review of the event permit." ],
+      "source": { "citation": "nycgovparks.org FAQ", "urls": ["https://nycgovparks.org/permits/special-events/faq"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED]",
+        "facets": { "trigger_scope": "VERIFIED", "requirement": "VERIFIED" },
+        "todos": []
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["C"]
+    },
+    {
+      "id": "R12",
+      "kind": "permit",
+      "active": false,
+      "inactive_reason": "Trigger requires the 'procession' fact, which the v1 intake does not collect. Out of MVP scenario set per the answer key ('included for completeness'). Present so boot validation counts all 13 rules and city #2 imports see the full shape.",
+      "title": "NYPD Parade Permit (procession/parade/race on streets)",
+      "trigger": { "all": [ { "field": "procession", "op": "bool", "value": true } ] },
+      "output": {
+        "permit_name": "Parade Permit",
+        "agency": "NYPD (E-Apply); + SAPO if touching a plaza; + Parks if touching a park",
+        "portal": { "name": "E-Apply", "url": null, "instructions": null, "verification": "VERIFY" },
+        "deadline": { "unverified": true, "display": "varies" },
+        "fee": { "display": "varies", "verification": "VERIFY" },
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [],
+      "interpretation_notes": [],
+      "source": { "citation": "nyc.gov NYPD permits page", "urls": ["https://nyc.gov"] },
+      "verification": {
+        "status_verbatim": "[VERIFIED — scope]",
+        "facets": { "trigger_scope": "VERIFIED", "lead_time": "VERIFY", "fee": "VERIFY" },
+        "todos": []
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": []
+    },
+    {
+      "id": "R13",
+      "kind": "advisory",
+      "title": "Private venue: certificate of occupancy / place-of-assembly governs",
+      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "private_venue" } ] },
+      "output": {
+        "advisory_text": "No city event permits are triggered by private-venue use itself; the venue's certificate of occupancy / place-of-assembly status governs capacity.",
+        "assembly_advisory": {
+          "compare": { "field": "headcount", "op": "gte", "config_ref": "place_of_assembly_threshold" },
+          "at_or_above": "Place-of-assembly consideration at this headcount [threshold VERIFY]",
+          "below": "Below common place-of-assembly threshold [VERIFY]",
+          "note": "Wording only; the ~75 threshold is VERIFY and must render with its caveat (Scenario B at 60, Scenario F at 90)."
+        },
+        "agency": null,
+        "portal": { "name": null, "url": null, "instructions": null, "verification": null },
+        "deadline": null,
+        "fee": null,
+        "required_documents": []
+      },
+      "dependencies": [],
+      "notes": [
+        "The verified logic behind the 'no city event permits required' finding (Scenario B) is the answer key's negative conjunction: private indoor venue, no public-space footprint, no amplified-sound-in-public, no food sales, no structures. In this encoding that finding is emergent (no permit rules trigger), and R13 contributes the governing-capacity advisory."
+      ],
+      "interpretation_notes": [
+        "R13's advisory fires for ANY private venue, including Scenario F (which fails the negative conjunction but still expects the place-of-assembly consideration). Splitting the advisory from the no-permits finding is what makes both B and F reproducible."
+      ],
+      "source": { "citation": "answer key R13 (rule logic)", "urls": [] },
+      "verification": {
+        "status_verbatim": "[VERIFIED by rule logic — VERIFY place-of-assembly threshold (commonly 75+ indoors) before asserting in UI copy]",
+        "facets": { "trigger_scope": "VERIFIED", "assembly_threshold": "VERIFY" },
+        "todos": [ "Verify place-of-assembly threshold (answer key Part 3, item 6; Scenarios B and F depend on it)" ]
+      },
+      "last_verified_date": "2026-07-21",
+      "exercised_by_scenarios": ["B", "F"]
+    }
+  ],
+  "advisories": [
+    {
+      "id": "A1",
+      "kind": "advisory",
+      "title": "Prepackaged free food: confirm DOHMH exemption",
+      "derived_from": "Scenario B expected output ('prepackaged free food flagged as \"confirm DOHMH exemption\" [VERIFY]')",
+      "trigger": { "all": [ { "field": "food_format", "op": "eq", "value": "prepackaged_free" } ] },
+      "output": { "advisory_text": "Prepackaged, free food: confirm DOHMH exemption applies." },
+      "verification": { "status_verbatim": "[VERIFY]", "facets": { "exemption": "VERIFY" }, "todos": [ "Part of answer key Part 3, item 3 (DOHMH permit classes)" ] },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["B"]
+    },
+    {
+      "id": "A2",
+      "kind": "advisory",
+      "title": "Amplified sound on private property: noise code advisory",
+      "derived_from": "Scenario F expected output ('no NYPD sound permit expected on private property — noise code still applies; engine outputs advisory, not permit [VERIFY]')",
+      "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" } ] },
+      "output": { "advisory_text": "No NYPD sound permit expected on private property; the NYC noise code still applies." },
+      "verification": { "status_verbatim": "[VERIFY]", "facets": { "no_permit_needed": "VERIFY" }, "todos": [ "Confirm no sound permit is required for amplified sound on private property" ] },
+      "last_verified_date": null,
+      "exercised_by_scenarios": ["F"]
+    },
+    {
+      "id": "A3",
+      "kind": "advisory",
+      "title": "Alcohol in public space: outside v1 ruleset",
+      "derived_from": "Coverage-gap analysis (NOT the answer key): R9 covers private venues only; no rule addresses alcohol in public space. Asserting nothing; flagging only.",
+      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza", "park"] } ] },
+      "output": { "advisory_text": "Alcohol service in public space is not covered by this ruleset version; requirements were NOT evaluated. Confirm with the relevant agency before proceeding." },
+      "verification": { "status_verbatim": "[COVERAGE_GAP]", "facets": { "coverage": "COVERAGE_GAP" }, "todos": [ "Research public-space alcohol rules for a future ruleset version (OPEN-QUESTIONS)" ] },
+      "last_verified_date": null,
+      "exercised_by_scenarios": []
+    }
+  ]
+}
