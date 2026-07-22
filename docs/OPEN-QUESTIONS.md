@@ -7,8 +7,8 @@
 
 | # | Item | Owner | Detail |
 |---|---|---|---|
-| B-1 | Verification-owner sign-off of nyc.v2.1's SOURCE_CONFIRMED facts | Dev 4 | Evidence pre-collected with URLs + quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2); this is browser confirmation, not research. Flips BASELINE rows to APPROVED. |
-| B-2 | Team ratification of the corrected baseline | All 4 | Ruleset v2.1 + fixtures v3 + re-anchored demo. One sitting. |
+| B-1 | ~~Verification-owner sign-off of nyc.v2.1's SOURCE_CONFIRMED facts~~ | Dev 4 | **RESOLVED 2026-07-22:** baseline ratified; per-fact promotion to VERIFIED continues during the build via the verification issue (evidence pre-collected in `VERIFICATION-SOURCES.md`). |
+| B-2 | ~~Team ratification of the corrected baseline~~ | All 4 | **RESOLVED 2026-07-22:** ruleset v2.1 + fixtures v3 + re-anchored demo approved. |
 | B-3 | `events` schema sign-off | All 4 | The migration mirrors the ruleset's `intake_fields` registry (ARCHITECTURE schema section). Day-1 Phase 0 gate, unchanged. |
 
 ## 2. Regulatory research items (owner: Dev 4; primary sources only)
