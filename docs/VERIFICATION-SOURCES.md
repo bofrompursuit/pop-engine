@@ -101,6 +101,37 @@ These are the items where verification is likely to *change* the rules file, not
 
 ---
 
+## Round 2 — 2026-07-22 (verification of the external rules-v1 critique)
+
+A second fetch-confirmed pass run to verify the external (Codex) assessment of ruleset v1. Same method and caveats as Round 1. These findings are the evidence basis for `rules/nyc-rules.v2.1.json`.
+
+### Confirmed (quote on file, URL fetched)
+
+1. **SAPO street-event deadline mapping**: Small = 14 days / Medium = 30 / Large = 45 / Extra Large = up to 60 ("depends on plaza levels"), stated explicitly on `nyc.gov/site/cecm/permitting/permit-types/street-events.page` AND `nyc.gov/site/cecm/permitting/permit-deadlines.page`.
+2. **SAPO trigger definition**: 50 RCNY §1-01 (2026 SAPO rules PDF, nyc.gov-hosted): "street event" = activity that "will interfere with or obstruct the regular use" of street/curb/sidewalk; §1-03(a) requires the permit for any defined event.
+3. **Plaza deadlines by level** (`permit-deadlines.page`, `plaza-fees.page`): Level A 45 (60 if multiple plaza blocks) · B 30 (45 multi) · C 30 · D 14 · Extra Large up to 60.
+4. **Open Culture**: 15 days (`open-culture.page` + deadlines page).
+5. **Single Block Festival OFFICIAL CONFLICT**: `single-block-festivals.page` + deadlines page say 90 days; the CECM FAQ says December 31 of the preceding year. Both live.
+6. **Block party** (`block-parties.page`): community-sponsored public event, "no sales of goods or services"; "Alcohol, vendors, commercial branding and sponsorships are not permitted"; applicant "must be a member of a block association and given permission by their neighbors"; 60-day deadline. Community-board recommendation per SAPO rules §1-04(h).
+7. **DOB structure triggers** (`support/department-of-buildings.page`): stage/press platform/scaffolding "exceeds two feet in height and covers an area of 120 square feet or more"; "prop or a truss ... higher than 10 feet"; tent/canopy > 400 gross sq ft; 30-days-or-more duration; TPA 75 indoor / 200 outdoor. Separate CECM permit-type pages add "tents, canopies, stage platforms, bleachers, or inflatables over 10 feet tall require a permit from the Department of Buildings."
+8. **Parks threshold OFFICIAL CONFLICT**: portal (`nyceventpermits.nyc.gov/parks`): "We require a permit for any event with more than 20 attendees"; NYC311 KA-02071: "more than 20 people"; Parks FAQ: "twenty or more people." Exactly 20 is ambiguous.
+9. **DOHMH organizer/sponsor obligations** (sponsor-guidelines PDF `temp-vendors.pdf` + DOHMH temporary-events page): "At least 30 days prior to the event, the event sponsor/organizer must submit to the DOHMH" a participating-vendor list with TFSE permit numbers/expirations/food types; private property requires "a signed contract with the property owner." A wholesale omission in ruleset v1.
+10. **Generator/battery/DEP thresholds** (CECM FDNY page + CECM DEP page + Parks guide): FDNY permit for portable generators with aggregate fuel storage "exceeding two and half gallons of gasoline and/or 10 gallons of diesel"; "outdoor battery systems with an aggregate rated energy capacity exceeding 20 kWh"; DEP: "generator that is 40KW or greater ... required to register" (registration, inclusive threshold).
+11. **SLA Catering Permit requires food** (`sla.ny.gov/permits-available-online`, WebFetch-relayed): "The applicant must provide food ... Pretzels and potato chips do not meet minimum requirements."
+
+### Contradicted / corrected against the critique
+
+12. **R5 (TUA)**: the critique's "incorrect as a universal rule" verdict is one-sided. Re-fetched 2026-07-22: `.../vendors`: "In order to sell anything on parkland, you'll need a Temporary Use Authorization" (no attendance qualifier); `.../guide`: TUA needed to sell food/beverages and for merchandise fundraising. Only the FAQ hedges with 500+. Encode as OFFICIAL_CONFLICT leaning any-sale, not as 500+-only.
+13. **Authority hierarchy as stated in the critique** ("primary source → engine result → test expectation") is mis-ordered; fixtures must outrank engine output. Correct order: primary source → published rule → approved fixture → engine output → UI copy.
+
+### Still unresolved (carried into v2.1 as RESEARCH_REQUIRED / OFFICIAL_CONFLICT)
+
+- FDNY fuel/open-flame/generator lead times: no published universal lead located in either pass (the v1 "45–60 days" citation to the Parks special-event guide was not specifically re-checked; one targeted look pending).
+- Parks→NYPD sound sequencing: Parks permission precedes the NYPD pursuit; a strict issued-before-filed rule has no located primary text.
+- SAPO street-event size *criteria* (what makes an event Small vs Medium vs Large) are not defined on the fetched pages; only the deadline/fee mapping per size label is.
+- TPA lead wording: DOB code notes say "earlier than 10 days"; the critique says "10 business days." Pin down before UI copy.
+- Exact SAPO insurance certificate-holder wording per class.
+
 ## Suggested Dev 4 Workflow
 
 1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.

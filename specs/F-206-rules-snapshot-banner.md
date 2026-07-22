@@ -13,14 +13,14 @@ As an independent organizer, I can see when the rules behind my plan were last v
 
 ## Outputs
 
-- A banner on every plan view: "Rules verified as of July 21, 2026 · ruleset nyc.v1".
-- Per-line citation rendering with click-through to the official source.
+- A banner on every plan view: "Rules snapshot nyc.v2.1 · published July 22, 2026". Never "verified as of" — a snapshot date means published-on, not all-facts-verified-on.
+- Per-line citation + verification-status rendering with click-through to the official source.
 
 ## Acceptance Criteria
 
 1. The banner renders on every plan and checklist view, populated from the rules file (never hardcoded copy).
-2. Every plan line shows its source citation and last-verified date; lines with `[VERIFY]` facets render the caveat visibly (e.g. "fee: confirm with agency"), not hidden in a tooltip.
-3. Clicking a citation opens the source URL; lines whose portal/source URL is still `[VERIFY]` render the citation text without a dead link.
+2. Every plan line shows its source citation and verification status; RESEARCH_REQUIRED renders "confirm with agency" visibly (not hidden in a tooltip), and OFFICIAL_CONFLICT lines render both readings with both sources.
+3. Clicking a citation opens the source URL; lines whose portal/source URL is still unresolved render the citation text without a dead link.
 4. The plan's pinned `ruleset_version` is shown (from `permit_plans`, not from the live file), so an old plan viewed after a rules update displays the version that produced it.
 5. Demo check: the banner is visible in every screen of the demo path (DESIGN.md demo plan step 5 includes a live citation click-through).
 
@@ -31,4 +31,4 @@ As an independent organizer, I can see when the rules behind my plan were last v
 
 ## Answer-Key Scenarios Exercised
 
-All six indirectly (every plan line carries citations); Scenario B specifically exercises caveat rendering (`[VERIFY]` place-of-assembly and DOHMH-exemption notes).
+All six indirectly (every plan line carries citations); Scenario B exercises caveat rendering (assembly-threshold and DOHMH-exemption confirmations); Scenario D or the exactly-20 fixture exercises OFFICIAL_CONFLICT rendering.

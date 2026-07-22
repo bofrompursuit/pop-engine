@@ -1,113 +1,138 @@
-# PopEngine — Test Scenario Answer Key (v1)
+# PopEngine — Scenario Fixtures v3 (derived from ruleset nyc.v2.1)
 
-**Rules snapshot date:** July 21, 2026
-**Status legend:** `[VERIFIED]` = confirmed against official/primary source · `[VERIFY]` = drawn from secondary source, needs primary-source confirmation before demo
+**Status:** PROPOSED — pending verification-owner sign-off and team approval alongside `rules/nyc-rules.v2.1.json`.
+**Supersedes:** the v1 answer key (six scenarios, R1–R13; recoverable at git `28e937d`) and the unapproved v2 draft suite (preserved at `docs/proposals/regulatory-scenarios-v2-draft.md`).
+**Authority hierarchy:** approved primary source → published rule (`nyc-rules.v2.1.json`) → this fixture suite → engine output → UI copy. **This document is derived from the ruleset, not an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong; if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority.
+**Evidence:** every regulatory fact traces via the ruleset's `evidence` refs to fetch-confirmed quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2, 2026-07-22).
+**Fixture clock:** `today = 2026-07-22` (Wednesday). All dates computed from it. Business-day math is actual-calendar (no holidays fall in any fixture window; the pinned holiday calendar is a RESEARCH item for other dates).
 
-## How to Use This Document
+## Verdict model (approved 2026-07-22)
 
-This is the ground truth the rules engine is graded against (Success Metric #1: 100% of required permits, 0 false omissions, across 6 scenarios). Build the engine to reproduce these outputs. Every `[VERIFY]` row must be confirmed against the linked official source and promoted to `[VERIFIED]` before the demo — one teammate owns that task. If the engine and this key disagree, the key wins until a primary source says otherwise.
+Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE) sit underneath:
 
-## Part 1 — Rules Table Seed Data
+| Verdict | Computed when | Demo copy |
+|---|---|---|
+| FEASIBLE | all dated findings ON_TRACK, no material unknowns | "On track" |
+| FEASIBLE-AT-RISK | min slack < 14 days (labeled *internal planning buffer*, not an official threshold) | "At risk — apply within N days" |
+| CONDITIONAL | a material unknown changes the outcome; branches shown | "Depends on: [fact]" |
+| INFEASIBLE | a definitively-required finding is PUBLISHED_DEADLINE_MISSED | "Published deadline missed as scoped" — a missed filing window, **not** a claim of legal impossibility |
 
-Each row: TRIGGER CONDITION → PERMIT | AGENCY | LEAD TIME | FEE | SOURCE | STATUS
+## Scenario A — "Bushwick Street Activation" (THE DEMO ANCHOR, re-anchored)
 
-- **R1.** Event on street, sidewalk, or pedestrian plaza (any) → Street Activity Permit | SAPO (Mayor's Office CECM) | ~60 days | varies by event type | nyc.gov/sapo + practitioner guides | `[VERIFIED — scope; VERIFY exact fee schedule per event type]`
-- **R2.** Event in a park with 20+ attendees → Special Event Permit | NYC Parks | 30 days processing; **HARD FLOOR: applications within 21 days of event are NOT accepted** | $25 nonrefundable | nycgovparks.org/permits/special-events/faq + nyceventpermits.nyc.gov/parks | `[VERIFIED]`
-- **R3.** Amplified sound (public space) → Sound Device Permit | NYPD, filed in person at local precinct | ≥5 days before event | $45 (certified check/money order) | nyc.gov NYPD permits page | `[VERIFIED]`
-  - **DEPENDENCY RULE:** in parks, the Parks permit WITH amplified-sound permission must be obtained FIRST; sound permit is filed after. Engine must sequence deadlines accordingly.
-- **R4.** Food served/sold to the public → DOHMH permit (Temporary Food Service / vendor permits; food trucks need Mobile Food Vending permit + auto insurance copy) | DOHMH | lead time varies | varies | nycgovparks.org special event guide | `[VERIFY — exact permit class + lead time per food format]`
-- **R5.** Selling items (food or merchandise) at a Parks event → Temporary Use Authorization (TUA) (explicitly required for vending; FAQ ties TUA to events over 500 attendance — reconcile) | NYC Parks Revenue Division | apply with event permit | varies | nycgovparks.org FAQ + Fort Tryon guidance | `[VERIFY — attendance threshold vs. any-vending trigger]`
-- **R6.** Generator or battery power → FDNY permit + site inspection | FDNY (via FDNY Business online) | 45–60 days | fee applies | nycgovparks.org special event guide | `[VERIFIED — lead time; VERIFY fee amount]`
-- **R7.** Tent or temporary structure over 10x10 ft → structure permit | DOB and/or FDNY | varies | varies | practitioner guide (nyc-event-venues.com) | `[VERIFY — issuing agency + exact sq-ft threshold + lead time]`
-- **R8.** Open flame / cooking devices (grills, sterno, propane) → FDNY open-flame/cooking permit; propane restricted in parks; no BBQ on beaches | FDNY | varies | varies | nycgovparks.org BBQ guidance + practitioner guide | `[VERIFY — permit class + lead time for street/block-party grilling]`
-- **R9.** Alcohol served at a private venue event → venue's existing liquor license OR licensed caterer OR SLA temporary permit; coordinate ≥15 business days out | NY State Liquor Authority / venue | ≥15 business days | varies | practitioner guide | `[VERIFY — which SLA instrument applies per format]`
-- **R10.** Street events: commercial general liability insurance, $1M per occurrence, City of New York named as additional insured | requirement attached to SAPO-class permits | obtain before permit issuance | premium varies | Open Culture / SAPO program requirements | `[VERIFY — whether required for ALL SAPO event types]`
-- **R11.** Parks events: insurance/bond NOT automatically required — borough permit office determines case-by-case | NYC Parks | n/a | n/a | nycgovparks.org FAQ | `[VERIFIED]`
-  - **ENGINE NOTE:** output should say "insurance determined by borough office at review" — do NOT hard-require it for parks scenarios.
-- **R12.** Procession/parade/race on streets → Parade Permit | NYPD (E-Apply); + SAPO if touching a plaza; + Parks if touching a park | varies | varies | nyc.gov NYPD permits page | `[VERIFIED — scope]` *(Out of MVP scenario set; included for completeness.)*
-- **R13.** Private indoor venue, no public-space footprint, no amplified-sound-in-public, no food sales, no structures → NO city event permits required; venue's certificate of occupancy / place-of-assembly status governs capacity | n/a | `[VERIFIED by rule logic — VERIFY place-of-assembly threshold (commonly 75+ indoors) before asserting in UI copy]`
+*Replaces the v1 anchor, whose universal 60-day SAPO lead was contradicted by primary sources (VS RF-2). Same story: commercial street activation, 35 days out; now classified.*
 
-## Part 2 — The Six Scenarios
+**Inputs:** brooklyn · location_type=street · obstructs_public_way=yes · sapo_event_type=street_event · **street_event_size=large** (multi-block activation) · headcount=75 · event_date=**2026-08-26** (35 days out) · open_to_public=yes · food_present=yes, food_vendor_count=1 · selling_anything=yes · amplified_sound=yes · no structures · no flame · no generator · no alcohol
 
-### Scenario A — "Bushwick Sidewalk Pop-up" (THE DEMO ANCHOR)
-**Inputs:** Brooklyn · sidewalk (public) · 75 attendees · DJ (amplified) · 1 food vendor (hot food, sold) · no tent · no open flame · event date **35 days out**
-**Expected permit set:**
-1. SAPO Street Activity Permit — ~60-day lead [R1]
-2. NYPD Sound Device Permit — $45, ≥5 days, local precinct [R3]
-3. DOHMH food vendor permit (format-dependent) [R4]
-4. $1M GL insurance, City as additional insured [R10]
+**Expected findings:**
+1. SAPO-STREET-LARGE-001 — Street Event Permit (Large), 45-day deadline = **2026-07-12, already passed** → PUBLISHED_DEADLINE_MISSED
+2. NYPD-SOUND-001 — Sound Device Permit, $45 first day + $5/addl day, precinct, ≥5 days → ON_TRACK
+3. DOHMH-VENDOR-PERMIT-001 — acceptable permit per vendor (TFSE $70/yr) → NOT_CALCULABLE (lead: confirm with agency)
+4. DOHMH-ORGANIZER-NOTIFY-001 — organizer notifies DOHMH ≥30 days = by **2026-07-27** → DEADLINE_APPROACHING (5 days)
+5. SAPO-INSURANCE-001 — $1M liability, City additional insured, before issuance
 
-**EXPECTED VERDICT: ✗ INFEASIBLE** — blocking permit: SAPO (60-day lead vs. 35-day runway).
-**Expected rescope suggestions:** (a) move to private venue → drops SAPO + insurance; (b) push date ≥60 days out.
-**DEMO NOTE:** this is the live magic moment. Rehearse it.
+**EXPECTED VERDICT: ✗ INFEASIBLE (as scoped)** — blocking finding: SAPO Street Event (Large); copy: "the published 45-day filing deadline passed on July 12."
+**Expected rescopes (each a full re-evaluation):**
+- (a) **size=medium** → 30-day deadline = 2026-07-27 → FEASIBLE-AT-RISK, "apply within 5 days" (DOHMH notification also lands 07-27)
+- (b) **size=small** → 14-day deadline = 2026-08-12 (ON_TRACK) but DOHMH notification still 5 days out → FEASIBLE-AT-RISK, "notify DOHMH within 5 days"
+- (c) **private venue** → SAPO + insurance findings drop; venue-occupancy advisory + DOHMH findings remain
+**Demo notes:** the size-classification question IS the demo beat ("what counts as Large? that's why nobody can navigate this"). The rescope to (a) shows the deadline ladder live. Size *criteria* are not published on fetched pages (VS Round 2, unresolved) — the intake asks the user to classify per SAPO guidance, and `unknown` renders CONDITIONAL listing all three deadlines.
 
-### Scenario B — "Gallery Pop-up" (FALSE-POSITIVE TEST)
-**Inputs:** Manhattan · private venue (gallery) · 60 attendees · unamplified acoustic set · prepackaged snacks, free, no sales · no structures · 21 days out
-**Expected permit set:** **NONE** (city event permits) [R13]
-**Expected output notes:** venue certificate of occupancy governs capacity; below common place-of-assembly threshold `[VERIFY]`; prepackaged free food flagged as "confirm DOHMH exemption" `[VERIFY]`.
-**EXPECTED VERDICT: ✓ FEASIBLE.**
-**Engine test purpose:** the system must be able to say "you need nothing" — over-prescribing permits is a failure mode that destroys trust. A judge WILL try this case.
+## Scenario B — "Gallery Pop-up" (FALSE-POSITIVE / LOW-BURDEN TEST)
 
-### Scenario C — "Prospect Park Community Day" (DEPENDENCY-CHAIN TEST)
-**Inputs:** Brooklyn · public park · 150 attendees · amplified speeches + music · no sales, no food · no structures · 56 days out
-**Expected permit set:**
-1. NYC Parks Special Event Permit — $25, 30-day processing, 21-day hard floor [R2]
-2. NYPD Sound Device Permit — $45, ≥5 days, filed at precinct **AFTER** Parks permit grants amplified-sound permission [R3 + dependency]
-3. Insurance: "determined by borough office" note — not hard-required [R11]
+**Inputs:** manhattan · private_venue · headcount=60 · event_date=2026-08-12 (21 days out) · open_to_public=yes · food_present=yes (prepackaged snacks, free), food_vendor_count=1 (the gallery itself) · selling_anything=no · amplified_sound=no · no structures/flame/generator/alcohol
 
-**EXPECTED VERDICT: ✓ FEASIBLE** — timeline renders the dependency: apply Parks immediately → Parks decision ~day 30 → file sound permit → buffer.
-**Engine test purpose:** sequenced deadlines (permit B unlocks after permit A), not just parallel lead times.
+**Expected findings:**
+1. ADV-VENUE-OCCUPANCY-001 — CoO/legal use governs capacity; 60 < 75 assembly threshold [thresholds source-confirmed]
+2. DOHMH-VENDOR-PERMIT-001 — MAY apply: prepackaged free distribution to an invited public is *inside* Health Code Art. 88 scope (no general free-prepackaged exemption; VS RF-4) → NOT_CALCULABLE, "confirm with DOHMH"
+3. DOHMH-ORGANIZER-NOTIFY-001 — the 30-day notification date (2026-07-13) is already past **if** DOHMH treats the host as a food-service operator → surfaced inside the conditional, not as a definitive miss
+4. No SAPO, no sound permit, no assembly permit, no insurance findings.
 
-### Scenario D — "Queens Block Party" (TIGHT-BUT-FEASIBLE TEST)
-**Inputs:** Queens · residential street closure · 200 attendees · DJ (amplified) · charcoal grills (open flame) · no tent · 70 days out
-**Expected permit set:**
-1. SAPO Block Party Permit — ~60-day lead; community board review [R1]
-2. NYPD Sound Device Permit — $45, ≥5 days [R3]
-3. FDNY open-flame/cooking permit [R8] `[VERIFY class + lead]`
-4. $1M GL insurance [R10] `[VERIFY applicability to block parties]`
+**EXPECTED VERDICT: ⚠ CONDITIONAL — LOW IDENTIFIED PERMIT BURDEN.** Copy: "No street, park, sound, or assembly permits identified from your answers. Confirm: (1) the venue's occupancy/permitted use; (2) whether DOHMH food-service requirements apply to your free prepackaged snacks."
+**Test purpose:** the near-empty result stays trustworthy: the system says "almost nothing," names exactly what to confirm, and refuses to overclaim "nothing required." (v1 expected a flat NONE; corrected per Art. 88.)
 
-**EXPECTED VERDICT: ✓ FEASIBLE — WITH WARNING:** 10-day slack on the SAPO lead; engine should render "at risk: apply within 10 days."
-**Engine test purpose:** the yellow state. Feasibility is not binary; slack thresholds (e.g., <14 days slack = warning) make the verdict feel intelligent.
+## Scenario C — "Prospect Park Community Day" (DEPENDENCY-CHAIN TEST — strongest carryover)
 
-### Scenario E — "Plaza Brand Activation" (MAX-COMPLEXITY TEST)
-**Inputs:** Manhattan · pedestrian plaza · 300 attendees · amplified · food sampling (free) · 20x20 tent · generator · 135 days out
-**Expected permit set:**
-1. SAPO Street Activity/Plaza Permit — ~60 days [R1]
-2. Tent/structure permit (>10x10) — DOB/FDNY [R7] `[VERIFY]`
-3. FDNY generator permit — 45–60 days + site inspection [R6]
-4. DOHMH sampling permit [R4] `[VERIFY class for free sampling]`
-5. NYPD Sound Device Permit — $45, ≥5 days [R3]
-6. $1M GL insurance, City additional insured [R10]
+**Inputs:** brooklyn · park · headcount=150 · event_date=2026-09-16 (56 days out) · open_to_public=yes · no food · selling_anything=no · amplified_sound=yes · nothing else
 
-**EXPECTED VERDICT: ✓ FEASIBLE** — longest-lead items (SAPO 60d / FDNY generator up to 60d) both clear with ~75 days of slack.
-**Engine test purpose:** volume — six parallel obligations rendered as one coherent backward-computed timeline without collapsing into noise.
+**Expected findings:**
+1. PARKS-EVENT-001 — Special Event Permit, $25; hard floor 21 days (latest 2026-08-26); processing 21–30 days → ON_TRACK
+2. NYPD-SOUND-001 — Sound Device Permit → ON_TRACK, gated
+3. NYPD-SOUND-PARKS-DEP-001 — Parks amplified-sound permission first; strict sequencing unconfirmed → rendered as sequenced timeline: apply Parks now → decision ~day 21–30 → pursue sound permit → buffer
+4. PARKS-INSURANCE-NOTE-001 — "determined by borough office at review," never hard-required
 
-### Scenario F — "Rooftop Launch Party" (CONDITIONAL-VERDICT TEST)
-**Inputs:** Manhattan · private rooftop venue · 90 attendees · DJ (amplified, private property) · alcohol served · no food sales (catered) · 20 days out
-**Expected permit set:**
-1. Alcohol path: venue liquor license OR licensed caterer OR SLA temporary permit — ≥15 business days (~21 calendar) [R9]
-2. Place-of-assembly consideration at 90 indoors [R13 → `VERIFY` threshold]
-3. No SAPO/Parks (no public-space footprint); no NYPD sound permit expected on private property — noise code still applies; engine outputs advisory, not permit `[VERIFY]`
+**EXPECTED VERDICT: ✓ FEASIBLE.** Timeline renders the dependency chain; the sequencing caveat appears as a note, not a verdict change.
+**Test purpose:** sequenced deadlines. (150 > 20, so the exactly-20 OFFICIAL_CONFLICT rule stays dormant; a separate unit fixture pins headcount=20.)
 
-**EXPECTED VERDICT: ⚠ CONDITIONAL** — feasible ONLY IF venue already holds liquor license + assembly-compliant occupancy; infeasible if SLA temporary permit path is needed (15 business days ≈ 21 calendar > 20-day runway).
-**Engine test purpose:** verdicts that depend on facts the user must confirm — the engine asks "does your venue hold a liquor license?" and branches. The hardest and most impressive behavior in the set.
+## Scenario D — "Queens Block Party" (TIGHT-BUT-FEASIBLE + ELIGIBILITY TEST)
 
-## Part 3 — Verification Task List (assign one owner)
+**Inputs:** queens · street · obstructs_public_way=yes · sapo_event_type=block_party · has_amusement_ride=no · headcount=200 · event_date=2026-09-30 (70 days out) · open_to_public=yes · no public food service (neighbors' own grills; food_present=no) · selling_anything=no · amplified_sound=yes · open_flame_or_cooking=[charcoal_wood] · no alcohol
 
-Every `[VERIFY]` row, in priority order (demo-critical first):
-1. R7 tent threshold + agency (Scenario E depends on it)
-2. R8 open-flame permit class + lead (Scenario D)
-3. R4 DOHMH permit classes: sold hot food vs. free sampling vs. prepackaged-free (Scenarios A, B, E)
-4. R10 insurance scope: all SAPO event types or program-specific (Scenarios A, D, E)
-5. R9 SLA instrument per format (Scenario F)
-6. R13 place-of-assembly threshold (Scenarios B, F)
-7. R1 SAPO fee schedule by event type (display detail)
-8. R5 TUA trigger reconciliation (blocks any future vending scenario)
+**Expected findings:**
+1. SAPO-BLOCK-PARTY-001 — Block Party Permit, 60-day deadline = **2026-08-01** → DEADLINE_APPROACHING (10 days); community-board recommendation note
+2. SAPO-BLOCK-PARTY-SPONSOR-001 — block-association membership + neighbor permission → confirm
+3. NYPD-SOUND-001 — Sound Device Permit → ON_TRACK
+4. FDNY-FUEL-001 — Fuel Permit for charcoal (NOT an open-flame permit; v1 corrected) → NOT_CALCULABLE, confirm lead
+5. **No insurance finding** — block party without a ride is exempt (50 RCNY §1-08(b); v1's R10 line removed)
 
-**Method:** primary sources only (nyc.gov, Rules of the City of New York, agency pages). Record source URL + date checked in the rules table. Anything unresolvable by primary source gets rendered in the product as "confirm with agency" — honesty is a feature.
+**EXPECTED VERDICT: ✓ FEASIBLE-AT-RISK** — "apply within 10 days" (14-day internal buffer, labeled as PopEngine policy).
+**Fixture guard:** `selling_anything=no` and `alcohol=no` are load-bearing — a block party with either becomes PROHIBITED_OR_INELIGIBLE via SAPO-BLOCK-PARTY-ELIG-001 (separate unit fixture). `food_present=no` is deliberate: neighbors grilling their own food is not public food service; do not "enrich" this fixture.
 
-## Notes for the Engine Build
+## Scenario E — "Plaza Brand Activation" (MAX-COMPLEXITY TEST)
 
-- The interesting rules aren't the permits — they're the **21-day Parks hard floor** (a cliff, not a gradient), the **Parks→NYPD dependency** (sequenced deadlines), and the **slack-based warning state** (Scenario D). These three behaviors are what make the demo feel like software instead of a lookup table.
-- **Verdict states:** FEASIBLE / FEASIBLE-AT-RISK / CONDITIONAL (user fact required) / INFEASIBLE (named blocking permit + rescope options). Four states, all demoable.
-- **Snapshot honesty:** render "Rules verified as of [date]" in the UI. It converts the known risk into visible rigor.
+**Inputs:** manhattan · plaza · obstructs_public_way=yes · sapo_event_type=plaza_event · **plaza_level=a** · plaza_multiple_blocks=no · headcount=300 · event_date=**2026-12-04** (135 days out) · open_to_public=yes · food_present=yes (free sampling), food_vendor_count=2 · selling_anything=no · amplified_sound=yes · structure_types=[tent_canopy], tent_area_sqft=**400** (20×20), tent_days_in_place=1, structure_over_10ft_tall=unknown · generator_present=yes (gasoline 5 gal, 50 kW) · battery none · no alcohol
+
+**Expected findings:**
+1. SAPO-PLAZA-001 — Plaza Event Permit, Level A single-block = 45-day deadline (2026-10-20) → ON_TRACK (~90 days slack)
+2. SAPO-INSURANCE-001 — $1M liability, City additional insured
+3. NYPD-SOUND-001 — Sound Device Permit → ON_TRACK
+4. DOHMH-VENDOR-PERMIT-001 (2 vendors; sampling is food service — no separate "sampling permit" class exists; v1 corrected) → NOT_CALCULABLE lead
+5. DOHMH-ORGANIZER-NOTIFY-001 — notify by 2026-11-04 → ON_TRACK
+6. FDNY-GENERATOR-001 — 5 gal gasoline > 2.5 → permit; lead NOT_CALCULABLE (v1's universal 45–60d removed)
+7. DEP-GENERATOR-REG-001 — 50 kW ≥ 40 → DEP registration
+8. DOB-TENT-001 — **CONDITIONAL at the boundary**: 400 sq ft is not "more than 400"; render "confirm footprint calculation with DOB"; structure_over_10ft_tall=unknown keeps DOB-TALL-STRUCTURE-001 conditional too
+
+**EXPECTED VERDICT: ⚠ CONDITIONAL — ALL DATED DEADLINES ON TRACK.** Copy: "Every published deadline clears with ~90 days of slack; two items need confirmation (tent footprint at the 400 sq ft boundary; FDNY lead times)."
+**Test purpose:** volume + boundary honesty: eight findings, one coherent timeline, and the engine refuses to guess at an exact-boundary trigger.
+
+## Scenario F — "Rooftop Launch Party" (CONDITIONAL-BRANCH TEST, expanded)
+
+**Inputs:** manhattan · private_venue (rooftop) · headcount=90 · event_date=**2026-08-11** (20 days out) · open_to_public=no (invite-only) · food catered, nothing sold (food_present=yes, food_affinity_private_exception_claimed=unknown) · selling_anything=no · amplified_sound=yes, sound_audible_from_public_way=**unknown** · alcohol=yes, venue_license_covers_event_area=**unknown** · venue_has_assembly_approval=**unknown**
+
+**Expected findings:**
+1. DOB-ASSEMBLY-001 — 90 ≥ 75 **on a roof terrace** counts against the indoor threshold → PACO/TPA consideration, branch on venue_has_assembly_approval (TPA: "earlier than 10 days" per DOB code notes — wording variance flagged; min $250 + late surcharge)
+2. Alcohol branch on venue_license_covers_event_area:
+   - yes → SLA-VENUE-LICENSE-001: no new permit; confirm the license covers the exact rooftop area
+   - no → SLA-ONEDAY-001: 15 business days required; **only 14 business days remain to 2026-08-11** (actual count, no holidays in window) → PUBLISHED_DEADLINE_MISSED on this branch; SLA-CATERING-001 same window (and requires real food + a currently licensed caterer)
+3. NYPD-SOUND-001 — conditional on sound_audible_from_public_way: yes → permit in scope (§10-108(b)(3)); no → ADV-NOISE-CODE-001 advisory (noise code still applies) — a rooftop DJ is NOT automatically exempt (v1 corrected)
+4. DOHMH-EXEMPTION-001 — invite-only + catered → private-function exemption may apply; confirm
+
+**EXPECTED VERDICT: ⚠ CONDITIONAL** — branch table rendered: [license covers rooftop + assembly approval in place] → feasible path; [no license coverage] → infeasible path (SLA window missed by one business day); [sound audible from street] → add sound permit. Three follow-up questions, not one (v1 corrected).
+**Test purpose:** the hardest behavior: verdicts hinging on multiple user-confirmable facts, with real business-day math.
+
+## Boundary & Unit Fixtures (engine test suite, beyond the six)
+
+- headcount 20 in a park → PARKS-EVENT-EXACTLY-20-001 OFFICIAL_CONFLICT rendering; 21 → permit required; 19 → nothing.
+- Block party + selling_anything → PROHIBITED_OR_INELIGIBLE; block party + ride → insurance finding appears.
+- tent_area_sqft 401 → DOB-TENT-001 REQUIRED; 400 → CONDITIONAL; 399 → nothing (absent other triggers).
+- stage 2.0 ft / 120 sqft → no DOB-STAGE-001 (needs > 2 ft); 2.5 ft / 119 sqft → no; 2.5 ft / 120 sqft → yes.
+- generator 2.5 gal gasoline → no FDNY permit (needs > 2.5); 2.6 → yes; 39.9 kW → no DEP registration; 40 kW → yes (inclusive).
+- battery 20 kWh → no; 20.1 kWh → yes.
+- street_event_size=unknown → CONDITIONAL listing the 14/30/45-day ladder.
+- sapo_event_type=other_sapo_class → ADV-SAPO-OTHER-CLASS-001 coverage advisory with reference deadlines (incl. the Single Block Festival OFFICIAL_CONFLICT).
+- obstructs_public_way=no on a sidewalk → SAPO-SCOPE-001 no-new-requirement note.
+
+## v1 → v3 Correction Ledger (what changed and why)
+
+| v1 assertion | v3 treatment | Basis |
+|---|---|---|
+| Universal ~60-day SAPO lead (R1) | Per-class deadlines: street 14/30/45/up-to-60 by size; plaza by level; block party 60 | VS Round 2 #1, #3 |
+| Scenario A INFEASIBLE via 60-day lead | Re-anchored: Large street event misses its 45-day deadline; size classification explicit | VS Round 2 #1 |
+| R10 insurance for all street events | Block party without ride exempt; press/rally exempt; hardship waiver exists | VS §4 |
+| R7 tent "over 10x10 ft" | DOB triggers: >400 sq ft, ≥30 days, stage >2 ft & ≥120 sqft, prop/truss >10 ft, >10 ft tall; 10x10 was NY State parks | VS §1, Round 2 #7 |
+| R8 one "open-flame permit" for grills | FDNY Fuel Permit (charcoal/propane) split from Open Flame Permit (sterno/candles, $210) | VS §2 |
+| R6 universal 45–60d lead, any generator | Thresholds: >2.5 gal gas / >10 gal diesel / >20 kWh battery; DEP registration ≥40 kW; lead RESEARCH_REQUIRED | VS Round 2 #10 |
+| (absent from v1) | DOHMH 30-day organizer notification + vendor list + private-property contract — new requirement class | VS Round 2 #9 |
+| R5 TUA any-sale (reconcile note) | Kept as OFFICIAL_CONFLICT leaning any-sale (3 unhedged pages vs 1 hedged FAQ); the external critique's 500+-only reading rejected | VS Round 2 #12 |
+| R13 flat "no city permits" for private venues | Conditional low-burden result + occupancy/assembly/food/sound confirmations | VS §6, RF-4/RF-5 |
+| Sound permit never on private property | In scope when audible on a public way (§10-108(b)(3)); fully-indoor non-projecting exempt, noise code applies | VS §10 |
+| "The key wins" | This suite is derived from the ruleset; primary source > rule > fixture > engine > UI | Governance §2 (corrected ordering) |

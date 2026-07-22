@@ -1,65 +1,47 @@
-# PopEngine — Open Questions & Interpretation Register
+# PopEngine — Open Questions & Interpretation Register (v2)
 
-**Status:** Living document. Everything here is either (a) an encoding interpretation the team should ratify, (b) a `[VERIFY]` fact blocking the demo, or (c) a decision still owned by the team. Settled project decisions live in `DESIGN.md` (Decisions of 2026-07-21) and `ARCHITECTURE.md` (AD-1 through AD-8); they are not repeated here.
-**Last updated:** 2026-07-22. Decision-only items were resolved in review on 2026-07-22 (statuses below); items pending primary-source verification remain open.
+**Status:** Living document, rebuilt 2026-07-22 for the nyc.v2.1 baseline. The v1-era register (interpretations I-1–I-12, items S-1–S-5, P-1–P-5) is superseded; resolved decisions were carried into the ruleset, `ARCHITECTURE.md`, and `DESIGN.md`, and its history is in git. This register lists only what is genuinely open, with owners.
+**Rule:** nothing here is authority for implementation (`DOCUMENTATION-GOVERNANCE.md` §1). An open item means "don't guess" — render "confirm with agency," ask the team, or wait for the owner.
 
-## 1. Rules-Encoding Interpretations
+## 1. Blocking the baseline (resolve before feature branches; see BASELINE.md)
 
-Places where the answer key is silent or ambiguous and the encoding had to pick a behavior. Each is documented in the rules file's `interpretation_notes`.
-
-| # | Interpretation taken | Why | Risk if wrong | Status |
-|---|---|---|---|---|
-| I-1 | R9's ≥15-business-day lead applies to the **SLA-temporary path only**, not the venue-license or caterer paths | Scenario F's CONDITIONAL verdict requires the license-holding branch to be feasible at 20 days out | If the lead really applies to all paths, Scenario F's expected verdict itself is wrong | **OPEN** — pending R9 source verification (§2.5) |
-| I-2 | Business-day leads evaluate via the key's **calendar approximation** (15 business ≈ 21 calendar) | True business-day math is nondeterministic for relative-date fixtures and could flip Scenario F | Real-world accuracy off by ~1-2 days near boundaries | **RATIFIED 2026-07-22** |
-| I-3 | "Varies" lead times (R4/R7/R8/R12) get the `unverified` deadline type: listed, "confirm lead time with agency," **excluded from verdict/slack arithmetic** | Scenarios A/D/E expect these items present without affecting verdicts | A truly long unverified lead could make a FEASIBLE verdict wrong; mitigated by the VERIFY task list | **RATIFIED 2026-07-22** |
-| I-4 | Lead ranges compute `latest_apply_date` from the **max bound** (R6: 60, not 45) | Scenario E's "~75 days of slack" arithmetic = 135 − 60 | None for scenarios; conservative by construction | **RATIFIED 2026-07-22** |
-| I-5 | R2's undefined 22–29-day band renders **FEASIBLE-AT-RISK** ("processing may not complete before event") | Only the 21-day floor is a defined cliff; the band is untested by scenarios | Over- or under-trust in the yellow state | **OPEN** — confirm against Parks guidance during §2 verification |
-| I-6 | Park + headcount <20 + amplified sound: R3 fires **standalone**, its Parks dependency inert | The key's dependency note assumes a permitted parks event | If Parks permission is still prerequisite below 20 attendees, sequencing is wrong for this edge | **OPEN** — pending verification |
-| I-7 | R7's "over 10x10 ft" encoded as derived **area > 100 sqft** | One evaluable predicate was needed; the threshold is `[VERIFY]` anyway | Either-dimension interpretation would change borderline cases | **OPEN** — folded into R7 verification (§2.1) |
-| I-8 | R13 split into an **always-on private-venue advisory** plus an **emergent** "no permits required" finding | A single literal trigger cannot serve both Scenario B and Scenario F | None identified; pure encoding structure | **RATIFIED 2026-07-22** |
-| I-9 | Alcohol in public space: **A3 advisory on the plan AND an inline intake warning** the moment alcohol + public location is selected | R9 covers private venues only; silence would be a dangerous false negative. Neither surface asserts any requirement | Team may later research real rules into v1.1 (see P-4) | **RESOLVED 2026-07-22** — intake warning added to F-101 spec |
-| I-10 | Scenario A's rescope keeps the key's verbatim "push date ≥60 days out"; the engine's computed recommended date uses 60 + slack threshold (74 days) | The key's text and the slack model interact; acting on the computed date lands clean FEASIBLE | Demo copy must not promise "feasible" at exactly 60 | **RATIFIED 2026-07-22** |
-| I-11 | Slack for dependency-gated items = `latest_apply − apply_after` (window width, upstream filed immediately) | Conservative: the real room once the gate opens (Scenario C: 21 days) | Affects `min_slack_days` display only | **RATIFIED 2026-07-22** |
-| I-12 | R10/R11 ship in the day-one ruleset even though F-205 (dedicated insurance UI) is stretch | Scenarios A/C/D/E expect insurance lines from F-201; rules and UI are separate | None | **CONFIRMED 2026-07-22** |
-
-## 2. `[VERIFY]` Items Blocking the Demo (owner: Dev 4; primary sources only) — ALL OPEN
-
-**Candidate primary sources for every item below were collected on 2026-07-22: see `VERIFICATION-SOURCES.md`.** That dossier's Red Flags section lists seven findings where primary text appears to contradict encoded facts (including the R7 tent threshold and R1's universal 60-day lead, which touch Scenarios E and A); triage those with the team before the green gate.
-
-From answer key Part 3, priority order preserved, plus items added by this refinement:
-
-1. **R7** tent threshold + issuing agency (Scenario E) — also resolves interpretation I-7.
-2. **R8** open-flame permit class + lead time (Scenario D).
-3. **R4** DOHMH permit classes: sold hot food vs. free sampling vs. prepackaged-free (Scenarios A, B, E) — also covers advisory A1.
-4. **R10** insurance scope: all SAPO event types or program-specific (Scenarios A, D, E).
-5. **R9** SLA instrument per format (Scenario F) — also resolves interpretation I-1.
-6. **R13** place-of-assembly threshold (Scenarios B, F) — the ~75 value drives advisory wording only until verified.
-7. **R1** SAPO fee schedule by event type (display detail).
-8. **R5** TUA trigger reconciliation: any-vending vs. 500+ attendance (blocks future vending scenarios).
-9. **Portal URLs**: SAPO E-Apply entry point, FDNY Business URL (R6), DOHMH application path (R4), confirmation that `nyceventpermits.nyc.gov/parks` is the Parks application entry point (R2).
-10. **A2**: confirm no NYPD sound permit is required for amplified sound on private property (Scenario F note).
-11. **R2** site-diagram document requirement (currently practitioner-sourced, marked VERIFY in the rules file).
-
-## 3. Intake & Schema Decisions
-
-| # | Question | Decision | Status |
+| # | Item | Owner | Detail |
 |---|---|---|---|
-| S-1 | Add `selling_merchandise` to the intake? | Deferred to Phase 2; revisit when R5's threshold is reconciled | **RESOLVED 2026-07-22** |
-| S-2 | `street_event_kind` taxonomy | Ship the two-value enum (residential_block_party, other); expand after R1 fee-schedule verification surfaces the full SAPO type list | **RESOLVED 2026-07-22** |
-| S-3 | Food-truck distinction in intake | Deferred; add a `food_vendor_type` follow-up in Phase 2 | **RESOLVED 2026-07-22** |
-| S-4 | `events` schema sign-off | All four devs approve the migration PR before any lane codes (Phase 0, day 1) | **OPEN** — requires the full team |
-| S-5 | TypeScript vs. plain JavaScript | **TypeScript** across the monorepo; the engine package's exported types are the client/server contract (ARCHITECTURE AD-8) | **RESOLVED 2026-07-22** |
+| B-1 | Verification-owner sign-off of nyc.v2.1's SOURCE_CONFIRMED facts | Dev 4 | Evidence pre-collected with URLs + quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2); this is browser confirmation, not research. Flips BASELINE rows to APPROVED. |
+| B-2 | Team ratification of the corrected baseline | All 4 | Ruleset v2.1 + fixtures v3 + re-anchored demo. One sitting. |
+| B-3 | `events` schema sign-off | All 4 | The migration mirrors the ruleset's `intake_fields` registry (ARCHITECTURE schema section). Day-1 Phase 0 gate, unchanged. |
 
-## 4. Product & Delivery Decisions
+## 2. Regulatory research items (owner: Dev 4; primary sources only)
 
-| # | Question | Decision | Status |
+| # | Item | Blocks | Notes |
 |---|---|---|---|
-| P-1 | Digital entry pass priority | Stays P2 as an F-401 extension; revisit post-capstone | **RESOLVED 2026-07-22** |
-| P-2 | Twilio A2P 10DLC timing | Policy set: email alerts live in the demo + labeled SMS simulation, UNLESS A2P approval lands by day 5, in which case SMS goes live | **POLICY SET 2026-07-22** — track the approval date |
-| P-3 | Slack warning threshold value | Stays 14 days (`config.slack_warning_days`) | **RESOLVED 2026-07-22** |
-| P-4 | Public-space alcohol handling | Advisory + intake warning for MVP (see I-9); researching the actual rules is a Phase 2 ruleset task | **RESOLVED 2026-07-22** (research task remains Phase 2) |
-| P-5 | Demo scenario fixture dates | Pinned in the F-201 spec (`today = 2026-07-21`, computed event dates, Scenario D fixture comment) | **RESOLVED 2026-07-22** |
+| R-1 | SAPO street-event size CRITERIA (what makes Small vs Medium vs Large) | Demo anchor quality | Deadline/fee mapping per size is source-confirmed; the classification criteria are not published on fetched pages. Until resolved, the intake asks the user to classify per SAPO guidance, `unknown` → CONDITIONAL. Likely requires calling SAPO or reading the E-Apply flow. |
+| R-2 | FDNY lead times: fuel, open flame, generator | Timeline completeness (D, E) | No published lead located in two passes. v1's "45–60 days" cited the Parks special-event guide, which was not specifically re-checked for that sentence — one targeted look before declaring it wrong. |
+| R-3 | Parks→NYPD sound sequencing (permission vs. issued-before-filed) | C's timeline copy | Encoded as "permission precedes pursuit; confirm exact sequencing." |
+| R-4 | TPA lead wording: "earlier than 10 days" (DOB code notes) vs "10 business days" (external critique) | F's branch copy | Pin exact wording before UI copy ships. |
+| R-5 | Single Block Festival deadline OFFICIAL_CONFLICT (90 days vs Dec 31 prior year) | Nothing in MVP (out-of-scope class) | Render the conflict; resolve with CECM eventually. |
+| R-6 | Parks exactly-20 threshold OFFICIAL_CONFLICT ("more than 20" portal/311 vs "twenty or more" FAQ) | Boundary fixture copy | Encoded as MAY_BE_REQUIRED at exactly 20. |
+| R-7 | Parks TUA trigger OFFICIAL_CONFLICT (any-sale on 3 pages vs 500+ hedge in FAQ) | Future vending scenarios | Encoded leaning any-sale; confirm with Revenue Division (212) 360-1397. |
+| R-8 | SAPO insurance certificate-holder/additional-insured wording per class | F-205 card copy | $1M + City-as-additional-insured + exceptions are source-confirmed; exact certificate wording per class is not. |
+| R-9 | DOB instrument mapping for event tents (Alteration Type 2/3 vs Temporary Use Permit) | E's portal link | Both pages fetched; which instrument applies to a one-day event tent needs confirmation. |
+| R-10 | Holiday-calendar source for `us-ny-business-days@2026` | Business-day math beyond fixture windows | Fixture windows contain no holidays; a real calendar source (NYSE? NY courts? city holidays?) must be chosen and pinned before arbitrary user dates are trusted. |
+| R-11 | DOHMH vendor-permit lead times (TFSE issuance time) | A/B/E "confirm with agency" lines | Organizer's 30-day notification is confirmed; vendor permit issuance time is not. |
+
+## 3. Technical decisions still open (team)
+
+| # | Item | Owner | Recommendation |
+|---|---|---|---|
+| T-1 | Twilio A2P timing | Dev 4 | Policy set 2026-07-22: email live + labeled SMS simulation unless approval lands by day 5. Track the approval date. |
+| T-2 | Migration tool, deploy hosts, email provider — the "one answer each" list | Dev 4 + team | ARCHITECTURE names option sets (Railway/Render/Fly, Neon/Supabase, S3/R2); pick one of each at Phase 0 kickoff and record in BASELINE so agents can't choose differently (audit finding). |
+| T-3 | Demo access-gate mechanism (basic auth vs IP allowlist) | Dev 4 | Either satisfies AD-12; basic auth is simpler on most hosts. |
+
+## 4. Product questions (deferred, not blocking)
+
+- Digital entry pass stays P2 (F-401 extension), decided 2026-07-22 (v1 register P-1).
+- Public-space alcohol real rules: Phase 2 ruleset research (advisory + intake warning ship in MVP).
+- Full 59-rule coverage (`rules/proposals/nyc-rules.v2-full-draft.json`): post-capstone target; each adopted rule goes through the same evidence + sign-off path as v2.1.
+- `ARCHITECTURE-FUTURE.md` team read + approval: schedule after the demo.
 
 ## 5. Process Note
 
-Every `[VERIFY]` promotion follows the answer key's method: primary sources only (nyc.gov, Rules of the City of New York, agency pages), record source URL + date checked, update the rules file's `verification` block, and leave `status_verbatim` untouched except by the verification owner. Anything unresolvable renders in-product as "confirm with agency." Honesty is a feature.
+Every promotion to VERIFIED follows the governance rules: primary sources only, record URL + date checked, update the rules file's `verification` block, named reviewer. AI output (including the research dossier) is evidence to check, never a source that promotes a fact. Anything unresolvable renders in-product as "confirm with agency." Honesty is a feature.

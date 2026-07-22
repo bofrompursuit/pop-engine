@@ -2,6 +2,14 @@
 
 **Status:** Canonical companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
 
+## Decisions of 2026-07-22 (baseline correction)
+
+5. **Ruleset baseline is the corrected subset `nyc.v2.1`** (33 rules + 4 advisories, evidence-linked to `VERIFICATION-SOURCES.md`), after two fetch-confirmed verification passes contradicted several v1 facts. The 59-rule draft stays in `rules/proposals/` as the post-capstone target. Scenario fixtures v3 derive from the ruleset.
+6. **The demo anchor is re-anchored:** a Large street event 35 days out misses its verified 45-day deadline (the universal 60-day SAPO lead was contradicted by primary sources).
+7. **Verdict model:** the four-state verdict stays as the top-level summary, computed from per-finding deadline statuses (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE). INFEASIBLE copy = "published deadline missed as scoped." The 14-day slack threshold is labeled as internal policy.
+8. **Real business-day math** against a pinned holiday calendar replaces the calendar approximation (fixture dates are pinned, so determinism holds).
+9. **Governance adopted:** `DOCUMENTATION-GOVERNANCE.md` (authority-by-concern + conflict protocol), `AGENTS.md`, and `BASELINE.md` are in force. Authority for regulatory facts: primary source → published rule → approved fixture → engine output → UI copy.
+
 ## Decisions of 2026-07-21
 
 1. **The iron-clad MVP is permit planning:** F-101, F-201, F-102, F-206, F-202, F-203, F-204. Complete, real (no mocks), demoable. Everything else is a nice-to-have.
@@ -36,16 +44,16 @@ AI may draft and extract; it may never make the authoritative permit determinati
 
 ## Definition of Iron-Clad (Phase 1 quality bar)
 
-- Deterministic engine output: same event + same ruleset → same plan, every time.
-- Every plan line cites an official source and last-verified date.
-- 6/6 answer-key scenarios pass: 100% of required permits, zero false omissions, correct verdicts.
-- Zero fabricated permit facts; gaps render as "confirm with agency," never guesses.
-- All demo-critical [VERIFY] rows (answer key Part 3) resolved against primary sources by the verification owner before the demo.
+- Deterministic engine output: same event + same ruleset + same date → same plan, every time.
+- Every plan line cites an official source and its verification status.
+- The full fixture suite passes (6 scenarios + boundary fixtures, `test-scenario-answer-key.md` v3): 100% of expected findings, zero false omissions, zero false additions, correct verdicts.
+- Zero fabricated permit facts; RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders both readings.
+- The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.1 to APPROVED before the demo.
 - Nothing in the core path is mocked, seeded, or hardcoded to look like engine output.
 
 ## Green Gate (end of day 8)
 
-All 6 scenarios pass end-to-end through the real UI. Stretch work (Phase 1.5) may not begin before the gate is green. If the gate slips, stretch is cut entirely — the core always wins.
+The full fixture suite passes as unit tests and all 6 scenarios pass end-to-end through the real UI. Stretch work (Phase 1.5) may not begin before the gate is green. If the gate slips, stretch is cut entirely — the core always wins.
 
 Permitted demo fallbacks for stretch features: seeded RSVP data, simulated email send shown in-product. Never permitted: hardcoded permit plans presented as engine output, fake source citations, hardcoded verdicts.
 
@@ -53,10 +61,10 @@ Permitted demo fallbacks for stretch features: seeded RSVP data, simulated email
 
 One integration point (the `events` schema — agreed by all four devs before any lane codes); four lanes with minimal merge conflicts:
 
-- **Dev 1 — Rules engine + verdict:** F-201, F-102; owns `rules/nyc-rules.v1.json` fidelity to the answer key. Verify: 6/6 scenarios pass as automated tests.
+- **Dev 1 — Rules engine + verdict:** F-201, F-102; owns engine fidelity to `rules/nyc-rules.v2.1.json` and the fixture suite. Verify: full fixture suite (scenarios + boundaries) passes as automated tests.
 - **Dev 2 — Intake + plan UI:** F-101 (incl. contradiction checks, "I don't know"), F-206, plan rendering. Verify: Scenario A renders end-to-end with citations + snapshot banner.
 - **Dev 3 — Checklist + portals:** F-202, F-204. Verify: plan converts to checklist; every permit links to its portal with its document list.
-- **Dev 4 — Alerts + platform:** F-203, DB migrations, deploy, demo environment; **owns the [VERIFY] verification task list** (answer key Part 3, primary sources only). Verify: a seeded deadline fires a real email/SMS; all demo-critical [VERIFY] rows resolved.
+- **Dev 4 — Alerts + platform:** F-203, DB migrations, deploy, demo environment; **owns verification sign-off**: confirms the ruleset's SOURCE_CONFIRMED facts in a browser (evidence pre-collected in `VERIFICATION-SOURCES.md`) and works the open research items (OPEN-QUESTIONS §2). Verify: a seeded deadline fires a real email/SMS; `BASELINE.md` flips nyc.v2.1 to APPROVED.
 
 Stretch assignments after the green gate: Dev 4 → F-401/F-402 (QR + dashboard), Dev 3 → F-301/F-302, Dev 1 → F-205, Dev 2 → demo polish.
 
@@ -73,11 +81,11 @@ Stretch assignments after the green gate: Dev 4 → F-401/F-402 (QR + dashboard)
 
 ## Demo Plan (permit-planning deep dive)
 
-1. **Scenario A (anchor):** Bushwick sidewalk pop-up, 35 days out → intake → INFEASIBLE, SAPO named as blocker → rescope to private venue → plan passes → checklist → portal links.
-2. **Scenario B (the judge test):** gallery event → "no city event permits required" with the confirm-notes. The system that can say "nothing" is the system you trust.
-3. **Scenario D (the yellow state):** block party, 70 days out → FEASIBLE-AT-RISK, "apply within 10 days."
-4. **Scenario F (the branch):** rooftop party → CONDITIONAL, hinging on the venue's liquor license.
-5. Rules snapshot banner + a source citation click-through, live.
+1. **Scenario A (anchor):** Bushwick street activation, 35 days out, classified Large → INFEASIBLE: "the published 45-day deadline passed July 12" → the deadline ladder renders (Small 14 / Medium 30 / Large 45) → rescope to Medium → FEASIBLE-AT-RISK, "apply within 5 days" (the DOHMH 30-day notification lands the same day) → checklist → portal links.
+2. **Scenario B (the judge test):** gallery event → "no new city event requirement identified from your answers" plus exactly two confirmations. The system that says "almost nothing, and here's what to confirm" is the system you trust.
+3. **Scenario D (the yellow state):** block party, 70 days out → FEASIBLE-AT-RISK, "apply within 10 days" — and no insurance line (block parties without rides are exempt). The absence is a credibility beat.
+4. **Scenario F (the branch):** rooftop party → CONDITIONAL branch table: license coverage, assembly approval, sound audibility; the no-license branch misses the SLA window by one business day.
+5. Rules snapshot banner + a live source-citation click-through; an OFFICIAL_CONFLICT rendering (Parks exactly-20 or TUA) if time allows.
 6. If stretch is green: RSVP a seeded guest, then live QR check-in on audience phones.
 
 ## Rules Administration (until F-710–F-715 exist)
@@ -87,5 +95,5 @@ Performed manually: the rules JSON is versioned in git, the answer key is the te
 ## Spec-Driven Development
 
 - One spec per F-id in `/specs`, core first, in build order: F-101, F-201, F-102, F-206, F-202, F-203, F-204; then stretch: F-205, F-301, F-302, F-401, F-402. Phases 2+ get specs when scheduled, not now.
-- F-201's spec embeds the six answer-key scenarios verbatim as acceptance criteria; the answer key wins every disagreement until a primary source says otherwise.
-- `rules/nyc-rules.v1.json` is the crown jewel; version it like code. No fact enters it that is not in the answer key; gaps are [VERIFY] + TODO, never guesses.
+- F-201's acceptance suite is the fixture set in `test-scenario-answer-key.md` (v3, derived from the ruleset). Authority for any disagreement: primary source → published rule → approved fixture → engine output → UI copy; fix the lower level, never bend the engine to a broken expectation.
+- `rules/nyc-rules.v2.1.json` is the crown jewel; version it like code. No fact enters it without an evidence reference to `VERIFICATION-SOURCES.md`; gaps are RESEARCH_REQUIRED, conflicts are OFFICIAL_CONFLICT, never guesses.

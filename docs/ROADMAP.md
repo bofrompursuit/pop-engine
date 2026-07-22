@@ -9,7 +9,7 @@
 Prerequisites, not features:
 
 - Agree the `events` schema (the team's single integration point) — approved by all four devs before any lane codes.
-- Seed `rules/nyc-rules.v1.json` from the answer key Part 1 (13 rules, statuses verbatim).
+- Ratify `rules/nyc-rules.v2.1.json` (33 rules + 4 advisories: verification-owner sign-off + team approval per `BASELINE.md`); boot validation loads it.
 - Repo scaffold, deploy target, Twilio account + A2P registration started.
 
 ## Phase 1 — MVP Core (capstone; iron-clad, no mocks)
@@ -18,10 +18,10 @@ The permit-planning spine. Must pass all 6 answer-key scenarios; "iron-clad" is 
 
 **Week 1:**
 
-- **F-101 · Event Intake Questionnaire** — borough, location type, headcount, date, food, sound, structures + size, open flame; contradiction checks; "I don't know" allowed on branching facts.
-- **F-201 · Permit Plan Generator** — rules-engine output: permits, agencies, lead times, fees, documents, source citations + last-verified dates; ruleset version stored per plan.
-- **F-102 · Feasibility Verdict** — backward-computed timeline; FEASIBLE / FEASIBLE-AT-RISK / CONDITIONAL / INFEASIBLE + rescope suggestions; unknown facts propagate to CONDITIONAL.
-- **F-206 · Rules Snapshot Banner** — "rules verified as of [date]" in-product; per-line citations; ruleset version visible.
+- **F-101 · Event Intake Questionnaire** — conditional intake mirroring the ruleset's field registry (location/obstruction, SAPO class + size/plaza level, headcount, date, audience, food, sales, sound, structures, fuel, generator/battery, alcohol/license, assembly); contradiction checks; "I don't know" on branching facts.
+- **F-201 · Permit Plan Generator** — rules-engine output: typed findings (permits, insurance, notifications, registrations, eligibility, prohibitions, advisories) with agencies, typed deadlines, fees, portals, citations + verification statuses; ruleset version stored per plan.
+- **F-102 · Feasibility Verdict** — backward-computed timeline; per-finding deadline statuses under a four-state verdict (FEASIBLE / FEASIBLE-AT-RISK / CONDITIONAL / INFEASIBLE); INFEASIBLE = "published deadline missed as scoped"; rescopes are full re-evaluations; unknowns propagate to CONDITIONAL.
+- **F-206 · Rules Snapshot Banner** — "Rules snapshot [version] · published [date]" in-product (never "verified as of"); per-line citations + verification status.
 
 **Week 2:**
 
@@ -37,7 +37,7 @@ In order of retention; anything unfinished is dropped from the demo, never mocke
 - **F-402 · Live Ops Dashboard** — real-time check-in counts + capacity gauge (check-ins only, never occupancy).
 - **F-301 · Public Event Page** — auto-generated from intake; shareable URL with RSVP button.
 - **F-302 · RSVP / Guest List** — capacity-aware; exports to check-in.
-- **F-205 · Insurance Requirement Detector** — flags $1M GL + City-as-additional-insured where required; "borough office determines" note for parks.
+- **F-205 · Insurance Requirement Detector** — flags $1M liability + City-as-additional-insured where required (block parties without rides exempt); "borough office determines" note for parks.
 
 ## Phase 2 — Execution Hardening (post-capstone)
 

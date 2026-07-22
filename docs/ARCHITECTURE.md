@@ -1,19 +1,24 @@
 # PopEngine — Architecture (Canonical)
 
-**Status:** Canonical technical design for Phase 0–1.5. Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo). Permit facts referenced here trace to `test-scenario-answer-key.md`; none are asserted beyond it.
+**Status:** Canonical technical design for Phase 0–1.5 (per `BASELINE.md`). Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo), `ARCHITECTURE-FUTURE.md` (Phase 2+ target). Permit facts referenced here trace to `rules/nyc-rules.v2.1.json`; none are asserted beyond it.
 
-## Architecture Decisions (2026-07-21)
+## Architecture Decisions (2026-07-21, extended 2026-07-22)
 
 | # | Decision | Rationale |
 |---|---|---|
 | AD-1 | Separate Express API + Next.js frontend (two services) | Canonical stack; long-lived process hosts the alert poller in-process; decoupled lifecycles. Chosen after explicit tradeoff review vs. single Next.js app. |
-| AD-2 | `rules/nyc-rules.v1.json` in git is the authoritative ruleset; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true. |
+| AD-2 | The published ruleset file in git (`rules/nyc-rules.v2.1.json`) is authoritative; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true. |
 | AD-3 | S3-compatible object storage for F-202 document uploads (metadata in Postgres) | Production-correct from day one; survives redeploys. |
 | AD-4 | No Redis | Demo-scale check-in volume needs no queue layer (PRD appendix). Alerts run on a DB-backed poller. |
 | AD-5 | No auth in MVP | Demo runs single-tenant. F-701 is Phase 2. |
 | AD-6 | Rules engine is a pure module (no DB, no HTTP, no clock) | Deterministic; testable against the 6 scenarios as plain unit tests from day 3. `today` is a parameter, never `Date.now()` inside evaluation. |
 | AD-7 | Plans are immutable snapshots | Regeneration inserts a new plan row pinned to its ruleset version; history is reproducible even after rules change. |
 | AD-8 | TypeScript across the monorepo | The engine package's exported intake/plan/verdict types are the client/server contract; TS makes it enforced rather than conventional. Decided 2026-07-22 (OPEN-QUESTIONS S-5). |
+| AD-9 | Ruleset baseline: nyc.v2.1 (corrected subset), schema popengine-rules/v2 | Adopted 2026-07-22 after two fetch-confirmed verification passes; the 59-rule draft in `rules/proposals/` is the post-capstone target. |
+| AD-10 | Layered result model: finding kind + disposition + per-finding deadline status, summarized by the four-state verdict | Preserves demo vocabulary while never overclaiming; INFEASIBLE = "published deadline missed as scoped." |
+| AD-11 | Real business-day math against a pinned holiday calendar (`us-ny-business-days@2026`) | Fixture dates are pinned, so determinism holds; the calendar artifact versions with the ruleset. Holiday source is an open research item. |
+| AD-12 | Demo environment is access-gated with synthetic data only | The no-auth MVP must not hold real PII, documents, or notification destinations (audit finding B-07). A host-level gate (basic auth or IP allowlist) fronts the demo deploy; public RSVP/check-in routes open only for the rehearsal/demo window. |
+| AD-13 | `permit_rules` keyed by (ruleset_version, rule_id); alerts carry recipient + idempotency key; events carry a revision counter | Cheap correctness fixes adopted from the 2026-07-22 audit: version-safe rules read model, no duplicate sends after a crash, plans pinned to the exact intake revision they evaluated. |
 
 ## System Overview
 
@@ -22,7 +27,7 @@
 │  apps/web        │ ─────────────────▶ │  apps/api (Express)       │
 │  Next.js         │                    │  ├─ routes/validation     │
 │  (organizer UI,  │                    │  ├─ alert poller (60s)    │
-│   plan render,   │                    │  └─ packages/engine ◀── rules/nyc-rules.v1.json
+│   plan render,   │                    │  └─ packages/engine ◀── rules/nyc-rules.v2.1.json
 │   stretch pages) │                    └────────┬─────────┬───────┘
 └─────────────────┘                              │         │
                                           PostgreSQL   S3-compatible
@@ -40,7 +45,7 @@
 /apps/web          Next.js frontend (Dev 2 lane; stretch pages Dev 3/4)
 /apps/api          Express API + alert poller (Dev 1/3/4 lanes)
 /packages/engine   Pure rules engine module (Dev 1 lane)
-/rules             nyc-rules.v1.json (authoritative ruleset, versioned like code)
+/rules             nyc-rules.v2.1.json (published ruleset) + proposals/ (drafts; never build from these)
 /specs             One spec per F-id
 /docs              PRD, ROADMAP, DESIGN, this file, OPEN-QUESTIONS
 ```
@@ -60,44 +65,33 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 
 ### events
 
-| Column | Type | Notes |
+Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.1.json` is authoritative for names, enums, and asked-when conditions; the table below groups them):
+
+| Column group | Columns | Notes |
 |---|---|---|
-| id | uuid PK | |
-| name | text | event title (also feeds F-301) |
-| borough | text CHECK IN (manhattan, brooklyn, queens, bronx, staten_island) | |
-| location_type | text CHECK IN (street, sidewalk, plaza, park, private_venue) | drives R1/R2/R13 |
-| location_name | text | free text (venue/park/street name) |
-| headcount | integer | drives R2 (20+ in parks), capacity gauge |
-| event_date | date | anchor for backward timeline |
-| food_format | text CHECK IN (none, prepackaged_free, free_sampling, served_sold, catered_private) | drives R4; value set mirrors Scenarios A/B/E/F and must track R4's `[VERIFY]` permit classes. `catered_private` (Scenario F: catered, no public sales) deliberately triggers nothing |
-| street_event_kind | text CHECK IN (residential_block_party, other), nullable | asked only when location_type = street; drives R1's "Block Party Permit" display name + community-board note (Scenario D). Full SAPO type taxonomy is `[VERIFY]` |
-| amplified_sound | boolean | drives R3 |
-| structures | boolean | |
-| structure_length_ft / structure_width_ft | integer, nullable | dimensions stored, threshold evaluated in rules (R7 threshold is `[VERIFY]`) |
-| open_flame | boolean | drives R8 |
-| alcohol | boolean | drives R9 (Scenario F) |
-| venue_has_liquor_license | text CHECK IN (yes, no, unknown) | the Scenario F branch fact; `unknown` is first-class |
-| power_generator | boolean | drives R6 (Scenario E) |
-| status | text CHECK IN (draft, planned, live, done) | lifecycle stage marker |
-| created_at / updated_at | timestamptz | |
+| Identity | id (uuid PK), name, borough, location_type, location_name | location_type CHECK IN (street, sidewalk, plaza, park, private_venue) |
+| SAPO classification | obstructs_public_way (yes/no/unknown), sapo_event_type (street_event/block_party/plaza_event/other_sapo_class/unknown), street_event_size (small/medium/large/extra_large/unknown), plaza_level (a/b/c/d/unknown), plaza_multiple_blocks (bool), has_amusement_ride (bool) | asked conditionally per the registry; size/level drive per-class deadlines |
+| Scale + date | headcount (integer), capacity (integer, nullable), event_date (date) | capacity is the confirmed venue/event capacity for F-402's gauge — NOT headcount (audit fix); event_date anchors the backward timeline |
+| Audience + food | event_open_to_public (yes/no/unknown), food_present (bool), food_vendor_count (integer), food_affinity_private_exception_claimed (yes/no/unknown), selling_anything (bool) | drive DOHMH vendor/notification rules, Parks TUA, block-party eligibility |
+| Sound | amplified_sound (bool), sound_audible_from_public_way (yes/no/unknown) | audibility asked only at private venues (§10-108(b)(3) scope) |
+| Structures | structure_types (text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown) | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL) |
+| Flame + power | open_flame_or_cooking (text[]: charcoal_wood, propane_lpg, sterno_candles_heaters), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
+| Alcohol + assembly | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown) | the Scenario F branch facts; `unknown` is first-class |
+| Lifecycle | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13) |
 
-*Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field invalidates the current plan client-side and prompts regeneration (recalculate, don't patch).*
+*Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field bumps `revision_counter` server-side, marks the current plan stale, and prompts regeneration (recalculate, don't patch).*
 
-### permit_rules *(read model, seeded from `rules/nyc-rules.v1.json` at migration/boot; never hand-edited)*
+### permit_rules *(read model, seeded from `rules/nyc-rules.v2.1.json` at migration/boot; never hand-edited)*
 
 | Column | Type | Notes |
 |---|---|---|
-| rule_id | text PK ("R1"…"R13") | |
-| ruleset_version | text | e.g. "nyc.v1" |
-| permit_name / agency | text | |
+| ruleset_version + rule_id | text + text, composite PK | version-safe: two ruleset versions can coexist for comparison/rollback (AD-13) |
+| kind | text | permit, insurance, notification, registration, eligibility, prohibition, dependency, classification, advisory, note |
+| title / agency | text | |
 | trigger | jsonb | condition tree (see Rules Engine) |
-| deadline | jsonb | typed deadline spec |
-| fee | jsonb | amount or "varies" + verify TODO |
-| dependencies | jsonb | e.g. R3 depends_on R2 when location_type = park |
-| required_documents | jsonb | |
-| portal | jsonb | portal name + URL (`[VERIFY]` until confirmed) |
-| notes | text | engine notes (e.g. R11 borough-office wording) |
-| source_url / verified_status / last_verified_date | text / text / date | verbatim from the answer key |
+| output | jsonb | name/variants, typed deadline, fee, portal, paths, notes |
+| verification | jsonb | status (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP / VERIFIED), qualification, evidence ref into `VERIFICATION-SOURCES.md` |
+| source | jsonb | citation + URLs |
 
 ### permit_plans *(immutable; one row per generation)*
 
@@ -105,6 +99,7 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 |---|---|---|
 | id | uuid PK | |
 | event_id | uuid FK → events | |
+| event_revision | integer | the `events.revision_counter` value evaluated (AD-13) — a plan always names the exact intake it saw |
 | ruleset_version | text | pinned at generation (lean-plus) |
 | verdict | text CHECK IN (feasible, feasible_at_risk, conditional, infeasible) | |
 | verdict_detail | jsonb | blocking permit, missing facts + branches, min slack days, rescope suggestions |
@@ -126,7 +121,10 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 | required_documents | jsonb | |
 | portal_name / portal_url | text | |
 | source_url / verified_status / last_verified_date | text / text / date | rendered per line (F-206) |
-| item_kind | text CHECK IN (permit, insurance, advisory, note) | R10 is `insurance` (a requirement, not a permit); R11's borough-office line and Scenario F's noise-code advisory are `advisory`/`note`. Acceptance comparisons against the answer key count `permit` + `insurance` lines; advisories/notes compare as expected-output text |
+| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the rule's kind (e.g. DOHMH-ORGANIZER-NOTIFY-001 is `notification`, DEP-GENERATOR-REG-001 is `registration`) |
+| disposition | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement) | AD-10; fixture comparisons match on (kind, disposition, finding) |
+| deadline_status | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable) | per-finding; the verdict summarizes these |
+| verification_status | text | SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / VERIFIED, rendered per line (F-206) |
 
 ### checklist_items
 
@@ -158,8 +156,10 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 | checklist_item_id | uuid FK, nullable | |
 | alert_type | text CHECK IN (deadline_reminder, slack_warning, dependency_unlocked) | |
 | channel | text CHECK IN (email, sms) | |
+| recipient | text | the destination address/number (audit fix: was missing entirely) |
+| idempotency_key | text UNIQUE | e.g. `{event_id}:{checklist_item_id}:{alert_type}:{send_at}` — a crash between send and mark-sent cannot double-send (AD-13) |
 | send_at | timestamptz | |
-| status | text CHECK IN (pending, sent, failed) | |
+| status | text CHECK IN (pending, sent, failed, cancelled) | `cancelled` for alerts obsoleted by plan regeneration |
 | sent_at | timestamptz, nullable | |
 | payload | jsonb | rendered message content |
 
@@ -176,52 +176,52 @@ id uuid PK · event_id FK · rsvp_id FK nullable · name text · contact text (e
 A pure function, no I/O:
 
 ```
-evaluate(intake, ruleset, today) → {
-  items: [{rule_id, permit_name, agency, deadline, latest_apply_date,
-           apply_after_date?, fee, documents, portal, source, status,
-           item_kind, triggered_by: [field: value]}],
+evaluate(intake, ruleset, today, calendar) → {
+  findings: [{rule_ids, kind, disposition, name, agency, deadline,
+              latest_apply_date?, apply_after_date?, deadline_status,
+              fee, documents, portal, source, verification_status,
+              triggered_by: [field: value]}],
   verdict: FEASIBLE | FEASIBLE_AT_RISK | CONDITIONAL | INFEASIBLE,
-  verdict_detail: {blocking_permit?, min_slack_days?,
-                   missing_facts?: [{field, branches: [{value, verdict}]}],
-                   rescope_suggestions?: [{change, expected_effect}]}
+  verdict_detail: {blocking_finding?, min_slack_days?,
+                   missing_facts?: [{field, branches: [{value, verdict, reason}]}],
+                   rescope_suggestions?: [{change, reevaluated_verdict}]}
 }
 ```
 
 ### Rules as data
 
-Each rule in `rules/nyc-rules.v1.json` carries: `id`, `trigger` (condition tree over intake fields), `permit`, `agency`, `deadline` (typed), `fee`, `dependencies`, `required_documents`, `portal`, `notes`, `source_url`, `verified_status` (verbatim from the answer key), `last_verified_date`. Full schema ships with the rules file deliverable. A second city is a new JSON file, not new code (F-207): the engine knows condition operators and deadline types, never NYC specifics.
+Each rule in `rules/nyc-rules.v2.1.json` carries: `id`, `kind`, `trigger` (condition tree over the declared intake fields), `output` (name/variants, agency, typed deadline, fee, portal, paths for branchable rules), `verification` (status + evidence reference into `VERIFICATION-SOURCES.md`), and `source`. The file also declares its own `intake_fields` registry, `config` (slack threshold, calendar, assembly thresholds), and `engine_conventions`. A second city is a new JSON file, not a core-engine rewrite (F-207) — the engine knows condition operators and deadline types, never NYC specifics (jurisdiction-specific classification helpers live with the ruleset, per `ARCHITECTURE-FUTURE.md` §8.3).
 
 ### Condition evaluation (tri-state)
 
-- Triggers are trees of conditions `{field, op, value}` with `all` / `any` combinators; ops: `eq`, `in`, `gt`, `gte`, `bool`. Fields reference F-101 intake columns or declared derived values (e.g. structure area = length × width; null dimensions with `structures = true` evaluate to `unknown`, not `false`).
-- Collected-but-unknown answers (e.g. `venue_has_liquor_license: unknown`) evaluate tri-state `unknown` and drive CONDITIONAL. Fields the intake does not collect at all (declared `collected: false` in the rules file, e.g. `procession`, `selling_merchandise`) evaluate `false` with a coverage note on the rule; otherwise every plan would go CONDITIONAL on facts nobody was asked.
-- Evaluation is tri-state: `true` / `false` / `unknown`. An `unknown` input (e.g. `venue_has_liquor_license: unknown`) makes dependent requirements conditional rather than silently included or dropped.
-- The empty result is first-class: R13 events produce zero permit items plus their advisory notes (Scenario B). Over-prescribing is a failure mode.
-- `[VERIFY]`-status facts render as "confirm with agency" on the plan line; the engine never fills a gap.
+- Triggers are trees of conditions `{field, op, value}` with `all` / `any` combinators; ops: `eq`, `in`, `gt`, `gte`, `bool`, `contains`, `contains_any` (multi-enum fields). Null numeric answers on a selected structure/generator evaluate `unknown`, not `false`.
+- Evaluation is tri-state: `true` / `false` / `unknown`. Collected-but-unknown answers (e.g. `venue_license_covers_event_area: unknown`) make dependent findings conditional rather than silently included or dropped, and drive CONDITIONAL branches.
+- The near-empty result is first-class: "no new city event requirement identified from your answers" plus triggered advisories (Scenario B). Over-prescribing is a failure mode.
+- RESEARCH_REQUIRED facts render "confirm with agency"; OFFICIAL_CONFLICT rules render both readings with sources; the engine never fills a gap or resolves a conflict silently.
+- Findings sharing a `dedupe_key` merge deterministically, retaining every contributing rule and source (e.g. the DOB structure rules).
 
 ### Typed deadlines (never one number)
 
 | Type | Example | Semantics |
 |---|---|---|
-| `lead_days` (min/max) | R1 SAPO ~60 days; R6 FDNY 45–60 | latest_apply = event_date − conservative bound (**max** where a range is given; Scenario E's "~75 days of slack" uses R6's 60, not 45) |
-| `hard_floor_days` | R2 Parks: applications within 21 days NOT accepted | a cliff: past it → INFEASIBLE, no gradient |
-| `processing_days` | R2 Parks: 30-day processing | used for dependency sequencing; runway shorter than processing (the 22–29-day band) → FEASIBLE-AT-RISK (interpretation; the answer key is silent on this band, see OPEN-QUESTIONS) |
-| `business_days` | R9 SLA: ≥15 business days | v1 evaluates via the key's stated calendar approximation (15 business ≈ 21 calendar) so relative-date fixtures stay deterministic; true business-day calendar math deferred |
-| `dependency_gated` | R3 in parks: file after Parks grants sound permission | apply_after = Parks apply date + processing_days; slack for gated items = latest_apply − apply_after |
-| `unverified` | R4/R7/R8: lead time "varies" `[VERIFY]` | item is listed and rendered "confirm lead time with agency"; excluded from verdict and slack arithmetic (Scenarios A/D/E expect these items present without them affecting the verdict) |
-
-A rule's `deadline` may combine components: R2 carries both `hard_floor_days` and `processing_days`.
+| `published_minimum` | SAPO Street Event Large: 45 days; block party 60; DOHMH organizer notification 30 | latest_apply = event_date − calendar_days; past it → PUBLISHED_DEADLINE_MISSED |
+| `published_minimum_by_level` | SAPO plaza: A 45 (60 multi-block) / B 30 (45 multi) / C 30 / D 14 | level resolved from intake; `unknown` level → CONDITIONAL listing the range |
+| `hard_floor_days` (composite with `processing_range_days`) | Parks: inside 21 days NOT accepted; processing 21–30 | the floor is a cliff → PUBLISHED_DEADLINE_MISSED past it; runway shorter than the processing range → FEASIBLE-AT-RISK ("processing may not complete"; interpretation I-5) |
+| `business_days_minimum` | SLA: ≥15 business days; DOB TUP: 15 business days | actual business-day count against the pinned holiday calendar (AD-11); fixture dates are pinned so results are deterministic |
+| `dependency` | Parks amplified-sound permission precedes the NYPD sound pursuit | apply_after = upstream apply date + processing range; slack for gated items = latest_apply − apply_after |
+| `before_issuance` | SAPO insurance: obtain before permit issuance | listed with the parent permit; no independent date arithmetic |
+| `research_required` | FDNY fuel/open-flame/generator leads | listed, rendered "confirm with agency," excluded from verdict and slack arithmetic |
 
 ### Verdict algorithm
 
-1. Resolve required permits from triggers (tri-state).
-2. For each required permit, compute `latest_apply_date` backward from `event_date`; apply dependency sequencing to get `apply_after_date` where relevant.
-3. If any `unknown` fact changes the requirement set or the timeline, evaluate every branch fully (running steps 4–6 inside each branch). All branches agree → that verdict. Branches diverge → **CONDITIONAL**, listing the missing fact and each branch's verdict (Scenario F: license yes → feasible branch; license no → SLA ~21 calendar days > 20-day runway → infeasible branch). Unknown-conditioned items never trigger INFEASIBLE directly — ordering matters: checking windows before branching would wrongly render Scenario F INFEASIBLE.
-4. If any definitively-required permit's window is already impossible (`today` past latest_apply, a hard floor breached, or apply_after > latest_apply) → **INFEASIBLE**, naming the blocking permit; generate rescope suggestions by re-evaluating modified intakes (e.g. `location_type: private_venue`) — suggestions are re-evaluated scenarios, never assertions.
-5. Otherwise, if minimum slack across permits < warning threshold → **FEASIBLE-AT-RISK** with "apply within N days" (Scenario D: 10 days). Threshold is data in the rules file config (default 14 days — the answer key's "e.g." value; flagged in OPEN-QUESTIONS).
+1. Resolve findings from triggers (tri-state), merge by `dedupe_key`.
+2. For each dated finding, compute `latest_apply_date` backward from `event_date`, apply dependency sequencing, and assign a deadline status (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE).
+3. If any `unknown` fact changes the finding set or the timeline, evaluate every branch fully (running steps 4–6 inside each branch). All branches agree → that verdict. Branches diverge → **CONDITIONAL**, listing each missing fact and every branch's verdict (Scenario F: license coverage, assembly approval, sound audibility). Unknown-conditioned findings never trigger INFEASIBLE directly — checking windows before branching would wrongly render Scenario F INFEASIBLE.
+4. If any definitively-required finding is PUBLISHED_DEADLINE_MISSED → **INFEASIBLE**, copy "published deadline missed as scoped" (a missed filing window, never a claim of legal impossibility), naming the blocking finding; generate rescope suggestions by fully re-evaluating modified intakes (Scenario A: size=medium, size=small, private venue) — suggestions are re-evaluated scenarios, never assertions.
+5. Otherwise, if minimum slack across dated findings < warning threshold → **FEASIBLE-AT-RISK** with "apply within N days" (Scenario D: 10 days). Threshold is ruleset config (14 days), labeled in-product as PopEngine's internal planning buffer.
 6. Otherwise **FEASIBLE**.
 
-Determinism: same intake + same ruleset version + same `today` → identical output. `today` is injected; the engine never reads the clock. The six answer-key scenarios run as the engine's unit-test suite; the answer key wins every disagreement.
+Determinism: same intake + same ruleset version + same `today` + same calendar → identical output. `today` is injected; the engine never reads the clock. The fixture suite in `test-scenario-answer-key.md` (6 scenarios + boundary fixtures) is the engine's unit-test suite. Authority on disagreement: primary source → published rule → fixture → engine → UI; fix the lower level.
 
 ## API Surface (Phase 1; stretch marked)
 
@@ -257,13 +257,14 @@ Error principle: rule-evaluation failures return an explicit error; the API neve
 ## Deployment (Dev 4 lane)
 
 - Two services (web + api) on any node host (Railway / Render / Fly), managed Postgres (Neon / Supabase / host-provided), S3-compatible bucket (S3 / R2 / Supabase storage).
-- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v1.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
+- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v2.1.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
 - Demo environment is seeded via script (scenario events pre-loaded as drafts) and never redeployed on demo day after final rehearsal.
+- **Access gate + synthetic data (AD-12):** the demo deploy sits behind a host-level gate (basic auth or IP allowlist); all data is synthetic; no real identity documents, applications, or attendee PII enter the system before F-701 ships. Public RSVP/check-in routes are enabled only for the rehearsal/demo window.
 
 ## Cross-Cutting Notes
 
 - **CORS:** api allows the web origin only.
 - **Shared types:** `packages/engine` exports the intake/plan/verdict types; both apps import from it.
 - **Migrations:** plain SQL or a light tool (node-pg-migrate); the `events` migration is PR #1 and requires all-hands approval (Phase 0).
-- **Rules loading:** api boots by validating `rules/nyc-rules.v1.json` (schema check + all 13 rules present) and syncing `permit_rules`; a validation failure aborts boot loudly.
+- **Rules loading:** api boots by validating `rules/nyc-rules.v2.1.json` (schema check; 33 rules + 4 advisories present; every trigger field declared in the file's `intake_fields` registry) and syncing `permit_rules`; a validation failure aborts boot loudly.
 - **Observability (MVP-appropriate):** structured request logs + an engine-evaluation trace (rule → tri-state result) attached to each plan row in `verdict_detail`; nothing fancier until Phase 2.

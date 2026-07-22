@@ -14,12 +14,12 @@ In order:
 
 ## Golden Rules (project-specific, non-negotiable)
 
-1. **Never invent a permit fact.** Every lead time, fee, agency, and requirement comes from `rules/nyc-rules.v1.json`. If data is missing, the UI says "confirm with agency" and you flag it in `docs/OPEN-QUESTIONS.md`. Making up a plausible number is the one unforgivable failure in this project. This applies doubly to AI assistants: they will happily invent city regulations that sound real. Reject that output.
-2. **Never edit verification statuses.** The `status_verbatim` strings and `[VERIFY]`/`[VERIFIED]` markers in the rules file and answer key are changed by exactly one person (the verification owner, Dev 4) after checking a primary source. Not by you, not by your AI.
+1. **Never invent a permit fact.** Every lead time, fee, agency, and requirement comes from `rules/nyc-rules.v2.1.json`. If data is missing, the UI says "confirm with agency" (RESEARCH_REQUIRED) and you flag it in `docs/OPEN-QUESTIONS.md`. Making up a plausible number is the one unforgivable failure in this project. This applies doubly to AI assistants: they will happily invent city regulations that sound real. Reject that output. (This has already happened once in this project's history; the recovery took a full day.)
+2. **Never edit verification statuses.** The `verification` blocks in the rules file (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / VERIFIED) are changed by exactly one person (the verification owner, Dev 4) after checking a primary source. Not by you, not by your AI.
 3. **The `events` schema is a signed contract.** All four of us approved it (Phase 0). If your feature seems to need a schema change, stop and raise it with the team; do not add a column in your branch.
 4. **No mocks in the core path.** F-101 through F-204 must be real. Permitted demo fallbacks for stretch features are listed in `docs/DESIGN.md`; nothing else gets faked.
 5. **Stay inside your spec.** If you notice something broken elsewhere, open an issue; don't fix it in your feature branch. PRs that touch files outside their feature's footprint get bounced back.
-6. **The answer key wins.** `docs/test-scenario-answer-key.md` defines correct engine output. If your code and the key disagree, your code is wrong until a primary source says otherwise (and that decision goes through the team).
+6. **Authority runs downhill.** Approved primary source → published rule (`rules/nyc-rules.v2.1.json`) → fixture suite (`docs/test-scenario-answer-key.md`) → engine output → UI copy. When two levels disagree, the lower one is wrong: fix the fixture to match the rule, fix the rule to match the source (through Dev 4). Never bend the engine to reproduce a broken expectation, and never resolve a disagreement by picking the version you prefer — file a `SPEC-CONFLICT` issue (see `docs/DOCUMENTATION-GOVERNANCE.md` §5).
 
 ## Workflow
 
@@ -57,7 +57,7 @@ Conventions: booleans read as questions (`is…`, `has…`, `needs…`); functio
 
 - **Tooling:** Vitest across the monorepo. `pnpm test` runs everything; `pnpm test --coverage` shows coverage.
 - **Threshold:** 90% minimum for statements, branches, functions, and lines, enforced in the Vitest config and in CI. PRs that drop coverage below 90% fail automatically. Don't game it with meaningless tests; a test that asserts nothing real will get flagged in review.
-- **The engine is held higher:** the six answer-key scenarios (see `specs/F-201-permit-plan-generator.md` for exact fixtures, `today = 2026-07-21`) run as the engine's test suite and must always pass. Aim for 100% on verdict logic; a rules engine with an untested branch is a rules engine that lies.
+- **The engine is held higher:** the full fixture suite (6 scenarios + boundary fixtures in `docs/test-scenario-answer-key.md`, `today = 2026-07-22`) runs as the engine's test suite and must always pass. Aim for 100% on verdict logic; a rules engine with an untested branch is a rules engine that lies.
 - **Write tests from the spec, before or with the code.** Each acceptance criterion in your spec becomes at least one test. If you can't figure out how to test a criterion, that's a design question; ask before coding around it.
 - **What kind of test where:** engine and utilities → unit tests; API routes → integration tests (supertest against the Express app with a test database); UI → component tests with Testing Library for logic-bearing components. Don't write snapshot tests as a substitute for asserting behavior.
 - **Edge cases from the spec are tests**, not comments. Boundary tests are mandatory where the spec names one (headcount 19/20/21, the 21-day cliff at 20/21/22 days out).
