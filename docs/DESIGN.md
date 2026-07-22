@@ -9,6 +9,7 @@
 7. **Verdict model:** the four-state verdict stays as the top-level summary, computed from per-finding deadline statuses (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE). INFEASIBLE copy = "published deadline missed as scoped." The 14-day slack threshold is labeled as internal policy.
 8. **Real business-day math** against a pinned holiday calendar replaces the calendar approximation (fixture dates are pinned, so determinism holds).
 9. **Governance adopted:** `DOCUMENTATION-GOVERNANCE.md` (authority-by-concern + conflict protocol), `AGENTS.md`, and `BASELINE.md` are in force. Authority for regulatory facts: primary source → published rule → approved fixture → engine output → UI copy.
+10. **Two parallel tracks (supersedes the stretch-after-gate rule):** the MVP core (Track A: F-101, F-201, F-102, F-206, F-202, F-203, F-204) and the stretch set (Track B: F-301, F-302, F-401, F-402, F-205) are worked separately, so Track B doubles as the demo fallback if the core runs out of time. Invariants: core blockers always outrank stretch work for whoever holds them; Track B never touches core-path files; the green gate now gates the demo-narrative decision, not stretch start.
 
 ## Decisions of 2026-07-21
 
@@ -51,9 +52,14 @@ AI may draft and extract; it may never make the authoritative permit determinati
 - The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.1 to APPROVED before the demo.
 - Nothing in the core path is mocked, seeded, or hardcoded to look like engine output.
 
-## Green Gate (end of day 8)
+## Green Gate (target end of day 8) — the demo decision point
 
-The full fixture suite passes as unit tests and all 6 scenarios pass end-to-end through the real UI. Stretch work (Phase 1.5) may not begin before the gate is green. If the gate slips, stretch is cut entirely — the core always wins.
+The full fixture suite passes as unit tests and all 6 scenarios pass end-to-end through the real UI.
+
+Under the two-track model (Decision 10) the gate no longer gates stretch start; it gates the demo narrative:
+
+- **Gate green:** the permit-planning deep dive is the demo; finished Track B features become the finale.
+- **Gate red at final rehearsal:** the fallback demo leads with Track B (event page → RSVP → live QR check-in) plus however far the core honestly works — shown as-is, never mocked. The rules snapshot banner and any working plan generation still appear; a partial engine is presented as partial.
 
 Permitted demo fallbacks for stretch features: seeded RSVP data, simulated email send shown in-product. Never permitted: hardcoded permit plans presented as engine output, fake source citations, hardcoded verdicts.
 
@@ -66,7 +72,7 @@ One integration point (the `events` schema — agreed by all four devs before an
 - **Dev 3 — Checklist + portals:** F-202, F-204. Verify: plan converts to checklist; every permit links to its portal with its document list.
 - **Dev 4 — Alerts + platform:** F-203, DB migrations, deploy, demo environment; **owns verification sign-off**: confirms the ruleset's SOURCE_CONFIRMED facts in a browser (evidence pre-collected in `VERIFICATION-SOURCES.md`) and works the open research items (OPEN-QUESTIONS §2). Verify: a seeded deadline fires a real email/SMS; `BASELINE.md` flips nyc.v2.1 to APPROVED.
 
-Stretch assignments after the green gate: Dev 4 → F-401/F-402 (QR + dashboard), Dev 3 → F-301/F-302, Dev 1 → F-205, Dev 2 → demo polish.
+Track B staffing is the team's kickoff call (default suggestion: Dev 3 → F-301/F-302 and Dev 4 → F-401/F-402 as their core items complete; F-205 stays with Dev 1). The invariant from Decision 10: a dev holding an unmerged core blocker works the blocker first, and Track B branches never touch core-path files.
 
 ## Dependency Graph (build-order constraints)
 

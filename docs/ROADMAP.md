@@ -29,9 +29,9 @@ The permit-planning spine. Must pass all 6 answer-key scenarios; "iron-clad" is 
 - **F-203 · Deadline Alerts** — email/SMS (Twilio) on computed deadlines; deadline types stay distinct (published minimum, hard floor, business-day, dependency-gated).
 - **F-204 · Portal Deep Links + Prepared Packages** — each permit links to its correct portal (E-Apply / Survey123 / precinct / FDNY Business) with its document list.
 
-## Phase 1.5 — Demo Stretch (only after the green gate)
+## Phase 1.5 — Stretch Track (parallel; the demo fallback)
 
-In order of retention; anything unfinished is dropped from the demo, never mocked:
+Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fallback demo if the core runs out of time. In order of demo value; anything unfinished is dropped from the demo, never mocked:
 
 - **F-401 · App-less QR Check-in** — scan → 2-field mobile-web check-in (<20s, no install).
 - **F-402 · Live Ops Dashboard** — real-time check-in counts + capacity gauge (check-ins only, never occupancy).
