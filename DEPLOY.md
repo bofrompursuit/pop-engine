@@ -48,7 +48,7 @@ The gate is host-level; there is no in-app auth (AD-5).
 
 ## 6. Verify
 
-- `GET https://<api-host>/health` returns `{"status":"ok",...}` behind the gate.
+- `GET https://<api-host>/health` returns `{"status":"ok",...}` behind the gate. This is a liveness probe only: it does not attest that `RULES_FILE` is present, well-formed, or the expected version. The boot-time ruleset validation that aborts loudly on failure (`docs/ARCHITECTURE.md`, "Rules loading") lands with F-201; until then a green `/health` says nothing about ruleset validity.
 - The web service loads behind the gate.
 - A seeded deadline fires a real email (SMS labeled-simulation until A2P clears).
 

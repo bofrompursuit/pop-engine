@@ -7,7 +7,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["packages/*/src/**/*.test.ts", "apps/api/src/**/*.test.ts"],
+    // Discovery covers every workspace, so a new app's tests run the day they land.
+    // Coverage `include` below stays narrower on purpose (apps/web is deferred to F-101).
+    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}"],
     // Workspace packages export TypeScript source; force Vite to transform them.
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
