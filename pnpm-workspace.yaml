@@ -1,0 +1,12 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Native build scripts approved to run on install.
+# esbuild backs vitest + tsx; sharp is Next.js image optimization for `next build`.
+allowBuilds:
+  esbuild: true
+  sharp: true
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
