@@ -5,6 +5,22 @@ import { describeEngine } from "@pop-engine/engine";
 // can drive it with supertest without opening a port.
 export function createApp(): Express {
   const app = express();
+
+  // The web app is served from a different origin than the api in both local dev and on
+  // Railway (DEPLOY.md), so browser calls need CORS. Single allowed origin per
+  // ARCHITECTURE.md; CORS is not authorization (AD-5, the gate is Cloudflare Access).
+  const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", webOrigin);
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   app.use(express.json());
 
   // Liveness probe for Railway / Cloudflare health checks. The `engine` field also
