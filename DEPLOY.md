@@ -45,6 +45,7 @@ The gate is host-level; there is no in-app auth (AD-5).
 2. Zero Trust, Access, Applications: add a self-hosted app per hostname.
 3. Policy: allow the team's emails (email-OTP), or an IP allowlist. Everything else is denied.
 4. For the rehearsal and demo window only, open the public routes the demo needs (`/e/:eventId`, RSVP, check-in) with a bypass policy, then close them again.
+5. Because the api sits on a different hostname from the web app, browser JSON calls send CORS preflights, and Access returns 403 on `OPTIONS` by default. On the api's Access application enable the CORS settings (allow the web origin, allow credentials so the `CF_Authorization` cookie passes) or bypass `OPTIONS` to the origin. Without this the Express CORS handler never runs and cross-origin POST/PATCH/DELETE fail behind the gate even though they pass locally. See Cloudflare's authorization-cookie CORS guide.
 
 ## 6. Verify
 

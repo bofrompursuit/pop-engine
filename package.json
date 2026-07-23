@@ -8,6 +8,7 @@
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
+    "build": "pnpm --filter web build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

@@ -21,6 +21,7 @@ describe("api scaffold", () => {
     process.env.WEB_ORIGIN = "https://web.example.com";
     const res = await request(createApp()).get("/health");
     expect(res.headers["access-control-allow-origin"]).toBe("https://web.example.com");
+    expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
 
   it("defaults the allowed origin to the local web dev server", async () => {

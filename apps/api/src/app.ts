@@ -12,6 +12,10 @@ export function createApp(): Express {
   const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", webOrigin);
+    // Behind Cloudflare Access the web host calls the api with credentials so the
+    // CF_Authorization cookie rides along; credentialed CORS requires this header and a
+    // single non-wildcard origin (which `webOrigin` already is).
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     if (req.method === "OPTIONS") {
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
