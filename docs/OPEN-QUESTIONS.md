@@ -32,8 +32,8 @@
 | # | Item | Owner | Recommendation |
 |---|---|---|---|
 | T-1 | Twilio A2P timing | Dev 4 | Policy set 2026-07-22: email live + labeled SMS simulation unless approval lands by day 5. Track the approval date. |
-| T-2 | Migration tool, deploy hosts, email provider — the "one answer each" list | Dev 4 + team | ARCHITECTURE names option sets (Railway/Render/Fly, Neon/Supabase, S3/R2); pick one of each at Phase 0 kickoff and record in BASELINE so agents can't choose differently (audit finding). |
-| T-3 | Demo access-gate mechanism (basic auth vs IP allowlist) | Dev 4 | Either satisfies AD-12; basic auth is simpler on most hosts. |
+| T-2 | Migration tool, deploy hosts, email provider — the "one answer each" list | Dev 4 + team | **RESOLVED 2026-07-23 (issue #1):** Railway (host) · Supabase (Postgres + S3-compatible storage) · Resend (email) · node-pg-migrate (migrations). Recorded in `BASELINE.md`; setup in `DEPLOY.md`. |
+| T-3 | Demo access-gate mechanism (basic auth vs IP allowlist) | Dev 4 | **RESOLVED 2026-07-23 (issue #1):** Cloudflare Access (host-level gate, email-OTP) chosen; satisfies AD-12 with no in-app auth (AD-5). Recorded in `BASELINE.md`; setup in `DEPLOY.md`. |
 
 ## 4. Product questions (deferred, not blocking)
 
