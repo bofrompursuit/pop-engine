@@ -183,7 +183,8 @@ export function up(pgm: MigrationBuilder): void {
       notNull: true,
       references: "permit_plans",
     },
-    rule_id: { type: "text", notNull: true },
+    rule_ids: { type: "text[]", notNull: true },
+    triggered_by: { type: "jsonb", notNull: true },
     permit_name: { type: "text" },
     agency: { type: "text" },
     deadline: { type: "jsonb" },
@@ -193,6 +194,7 @@ export function up(pgm: MigrationBuilder): void {
     required_documents: { type: "jsonb" },
     portal_name: { type: "text" },
     portal_url: { type: "text" },
+    sources: { type: "jsonb", notNull: true },
     source_url: { type: "text" },
     verified_status: { type: "text" },
     last_verified_date: { type: "date" },
@@ -256,6 +258,7 @@ export function up(pgm: MigrationBuilder): void {
     plan_item_id: {
       type: "uuid",
       notNull: true,
+      unique: true,
       references: "permit_plan_items",
     },
     status: {
@@ -324,46 +327,54 @@ export function up(pgm: MigrationBuilder): void {
     payload: { type: "jsonb", notNull: true },
   });
 
-  pgm.createTable("rsvps", {
-    id: { type: "uuid", primaryKey: true },
-    event_id: {
-      type: "uuid",
-      notNull: true,
-      references: "events",
+  pgm.createTable(
+    "rsvps",
+    {
+      id: { type: "uuid", primaryKey: true },
+      event_id: {
+        type: "uuid",
+        notNull: true,
+        references: "events",
+      },
+      name: { type: "text", notNull: true },
+      email: { type: "text", notNull: true },
+      phone: { type: "text" },
+      status: {
+        type: "text",
+        notNull: true,
+        default: "confirmed",
+        check: oneOf("status", ["confirmed", "cancelled"]),
+      },
+      created_at: {
+        type: "timestamptz",
+        notNull: true,
+        default: currentTimestamp(pgm),
+      },
     },
-    name: { type: "text", notNull: true },
-    email: { type: "text", notNull: true },
-    phone: { type: "text" },
-    status: {
-      type: "text",
-      notNull: true,
-      default: "confirmed",
-      check: oneOf("status", ["confirmed", "cancelled"]),
-    },
-    created_at: {
-      type: "timestamptz",
-      notNull: true,
-      default: currentTimestamp(pgm),
-    },
-  });
+    { constraints: { unique: [["event_id", "email"]] } },
+  );
 
-  pgm.createTable("checkins", {
-    id: { type: "uuid", primaryKey: true },
-    event_id: {
-      type: "uuid",
-      notNull: true,
-      references: "events",
+  pgm.createTable(
+    "checkins",
+    {
+      id: { type: "uuid", primaryKey: true },
+      event_id: {
+        type: "uuid",
+        notNull: true,
+        references: "events",
+      },
+      rsvp_id: {
+        type: "uuid",
+        references: "rsvps",
+      },
+      name: { type: "text", notNull: true },
+      contact: { type: "text", notNull: true },
+      checked_in_at: {
+        type: "timestamptz",
+        notNull: true,
+        default: currentTimestamp(pgm),
+      },
     },
-    rsvp_id: {
-      type: "uuid",
-      references: "rsvps",
-    },
-    name: { type: "text", notNull: true },
-    contact: { type: "text", notNull: true },
-    checked_in_at: {
-      type: "timestamptz",
-      notNull: true,
-      default: currentTimestamp(pgm),
-    },
-  });
+    { constraints: { unique: [["event_id", "contact"]] } },
+  );
 }

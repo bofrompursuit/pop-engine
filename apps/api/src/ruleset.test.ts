@@ -337,6 +337,98 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
     expect(walkIn.rows[0]?.rsvp_id).toBeNull();
   });
 
+  it("stores plan provenance and rejects duplicate checklist and attendee identities", async () => {
+    const eventId = randomUUID();
+    await database.query(
+      `INSERT INTO events
+        (id, name, borough, location_type, headcount, event_date,
+         event_open_to_public, food_present, selling_anything, amplified_sound,
+         structure_types, open_flame_or_cooking, generator_present, alcohol)
+       VALUES ($1, 'Constraint test', 'manhattan', 'private_venue', 100, '2026-10-01',
+               'yes', false, false, false, ARRAY['none'], ARRAY['none'], false, false)`,
+      [eventId],
+    );
+
+    const planId = randomUUID();
+    await database.query(
+      `INSERT INTO permit_plans
+        (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
+       VALUES ($1, $2, 1, $3, 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+      [planId, eventId, ruleset.rulesetVersion],
+    );
+
+    const contributingRules = ruleset.rules.filter(({ id }) =>
+      ["DOB-TENT-001", "DOB-TALL-STRUCTURE-001"].includes(id),
+    );
+    expect(contributingRules).toHaveLength(2);
+    const ruleIds = contributingRules.map(({ id }) => id);
+    const triggeredBy = [
+      { field: "structure_types", value: ["tent_canopy"] },
+      { field: "structure_over_10ft_tall", value: "yes" },
+    ];
+    const sources = contributingRules.map(({ id, source }) => ({ rule_id: id, source }));
+    const planItemId = randomUUID();
+    const planItem = await database.query<{
+      rule_ids: string[];
+      sources: JsonObject[];
+      triggered_by: JsonObject[];
+    }>(
+      `INSERT INTO permit_plan_items
+        (id, plan_id, rule_ids, triggered_by, sources, kind, disposition,
+         deadline_status, verification_status)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'permit', 'may_be_required',
+               'not_applicable', 'SOURCE_CONFIRMED')
+       RETURNING rule_ids, triggered_by, sources`,
+      [planItemId, planId, ruleIds, JSON.stringify(triggeredBy), JSON.stringify(sources)],
+    );
+    expect(planItem.rows[0]).toEqual({
+      rule_ids: ruleIds,
+      triggered_by: triggeredBy,
+      sources,
+    });
+
+    await database.query(
+      `INSERT INTO checklist_items (id, event_id, plan_item_id)
+       VALUES ($1, $2, $3)`,
+      [randomUUID(), eventId, planItemId],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO checklist_items (id, event_id, plan_item_id)
+         VALUES ($1, $2, $3)`,
+        [randomUUID(), eventId, planItemId],
+      ),
+    ).rejects.toThrow(/unique constraint/);
+
+    const email = "guest@example.com";
+    await database.query(
+      `INSERT INTO rsvps (id, event_id, name, email)
+       VALUES ($1, $2, 'Guest', $3)`,
+      [randomUUID(), eventId, email],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO rsvps (id, event_id, name, email)
+         VALUES ($1, $2, 'Duplicate Guest', $3)`,
+        [randomUUID(), eventId, email],
+      ),
+    ).rejects.toThrow(/unique constraint/);
+
+    const contact = "walkin@example.com";
+    await database.query(
+      `INSERT INTO checkins (id, event_id, name, contact)
+       VALUES ($1, $2, 'Walk In', $3)`,
+      [randomUUID(), eventId, contact],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO checkins (id, event_id, name, contact)
+         VALUES ($1, $2, 'Duplicate Walk In', $3)`,
+        [randomUUID(), eventId, contact],
+      ),
+    ).rejects.toThrow(/unique constraint/);
+  });
+
   it("syncs all 37 rules and repairs same-version drift", async () => {
     await syncPermitRules(database, ruleset);
 

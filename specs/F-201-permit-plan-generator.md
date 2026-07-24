@@ -15,7 +15,7 @@ As an independent organizer, I get the complete list of requirements my specific
 
 ## Outputs
 
-- One immutable `permit_plans` row (verdict via F-102, `ruleset_version`, `event_revision`, `intake_snapshot`) + `permit_plan_items` findings: kind (permit / insurance / notification / registration / eligibility / prohibition / dependency / advisory / note), disposition (required / may_be_required / prohibited_or_ineligible / advisory / no_new_requirement), agency, typed deadline + `latest_apply_date` + deadline_status, fee display, portal, source citation + verification status, and the rule + triggering answers.
+- One immutable `permit_plans` row (verdict via F-102, `ruleset_version`, `event_revision`, `intake_snapshot`) + `permit_plan_items` findings: kind (permit / insurance / notification / registration / eligibility / prohibition / dependency / advisory / note), disposition (required / may_be_required / prohibited_or_ineligible / advisory / no_new_requirement), agency, typed deadline + `latest_apply_date` + deadline_status, fee display, portal, complete source snapshots + verification status, every contributing rule ID, and the triggering answers.
 - API: `POST /api/events/:id/plan` → plan + findings; `GET /api/events/:id/plan` → latest.
 
 ## Acceptance Criteria — General

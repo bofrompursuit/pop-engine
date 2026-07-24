@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "dev": "pnpm migrate up && tsx watch --env-file-if-exists=.env src/index.ts",
     "migrate": "node-pg-migrate -j ts -m migrations",
     "start": "pnpm migrate up && tsx src/index.ts",
     "typecheck": "tsc --noEmit"

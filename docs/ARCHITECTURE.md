@@ -112,7 +112,8 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 |---|---|---|
 | id | uuid PK | |
 | plan_id | uuid FK → permit_plans | |
-| rule_id | text | provenance link |
+| rule_ids | text[] | provenance links; dedupe-merged findings retain every contributing rule |
+| triggered_by | jsonb | exact intake field/value pairs that triggered the finding |
 | permit_name / agency | text | |
 | deadline | jsonb | typed deadline snapshot |
 | latest_apply_date | date | computed backward from event_date |
@@ -120,7 +121,8 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | fee_display | text | |
 | required_documents | jsonb | |
 | portal_name / portal_url | text | |
-| source_url / verified_status / last_verified_date | text / text / date | rendered per line (F-206) |
+| sources | jsonb | immutable citation + URL snapshots for every contributing rule; OFFICIAL_CONFLICT retains every source |
+| source_url / verified_status / last_verified_date | text / text / date | primary click-through + status projection rendered per line (F-206) |
 | kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the rule's kind (e.g. DOHMH-ORGANIZER-NOTIFY-001 is `notification`, DEP-GENERATOR-REG-001 is `registration`) |
 | disposition | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement) | AD-10; fixture comparisons match on (kind, disposition, finding) |
 | deadline_status | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable) | per-finding; the verdict summarizes these |
@@ -132,7 +134,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 |---|---|---|
 | id | uuid PK | |
 | event_id | uuid FK | |
-| plan_item_id | uuid FK → permit_plan_items | keeps status linked to rule + source |
+| plan_item_id | uuid FK → permit_plan_items, UNIQUE | keeps status linked to rule + source; one checklist row per plan item |
 | status | text CHECK IN (not_started, in_progress, submitted, approved, rejected) | |
 | notes | text | |
 | updated_at | timestamptz | |
@@ -165,11 +167,11 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 
 ### rsvps *(stretch, F-302 — in the day-1 schema so stretch needs no migration)*
 
-id uuid PK · event_id FK · name text · email text · phone text nullable · status CHECK IN (confirmed, cancelled) · created_at
+id uuid PK · event_id FK · name text · email text · phone text nullable · status CHECK IN (confirmed, cancelled) · created_at · UNIQUE (event_id, email)
 
 ### checkins *(stretch, F-401)*
 
-id uuid PK · event_id FK · rsvp_id FK nullable · name text · contact text (email or phone) · checked_in_at timestamptz
+id uuid PK · event_id FK · rsvp_id FK nullable · name text · contact text (normalized email or phone) · checked_in_at timestamptz · UNIQUE (event_id, contact)
 
 ## Rules Engine (packages/engine)
 
