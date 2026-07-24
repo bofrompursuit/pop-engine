@@ -46,6 +46,7 @@ describe("ruleset validation", () => {
 
     expect(ruleset.schema).toBe("popengine-rules/v2");
     expect(ruleset.rulesetVersion).toBe("nyc.v2.1");
+    expect(ruleset.snapshotDate).toBe("2026-07-22");
     expect(ruleset.intakeFields).toHaveLength(32);
     expect(ruleset.rules).toHaveLength(33);
     expect(ruleset.advisories).toHaveLength(4);
@@ -89,6 +90,13 @@ describe("ruleset validation", () => {
         ruleset.ruleset_version = "nyc.v3";
       },
       error: /expected ruleset version/,
+    },
+    {
+      name: "invalid snapshot date",
+      mutate: (ruleset) => {
+        ruleset.snapshot_date = "2026-02-31";
+      },
+      error: /snapshot_date must be an ISO date/,
     },
     {
       name: "unapproved status",
@@ -317,6 +325,20 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
         ...values.slice(4),
       ]),
     ).rejects.toThrow(/check constraint/);
+
+    const invalidMultiSelects: Array<[string[], string[]]> = [
+      [[], ["none"]],
+      [["none", "tent_canopy"], ["none"]],
+      [["none"], []],
+      [["none"], ["none", "charcoal_wood"]],
+    ];
+    for (const [structureTypes, flameTypes] of invalidMultiSelects) {
+      const invalidValues = [...values];
+      invalidValues[0] = randomUUID();
+      invalidValues[10] = structureTypes;
+      invalidValues[11] = flameTypes;
+      await expect(database.query(insert, invalidValues)).rejects.toThrow(/check constraint/);
+    }
   });
 
   it("supports cancelled alerts, unique sends, and walk-in check-ins", async () => {
@@ -432,11 +454,42 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
       ),
     ).rejects.toThrow(/unique constraint/);
 
+    const otherEventId = randomUUID();
+    await database.query(
+      `INSERT INTO events
+        (id, name, borough, location_type, headcount, event_date,
+         event_open_to_public, food_present, selling_anything, amplified_sound,
+         structure_types, open_flame_or_cooking, generator_present, alcohol)
+       VALUES ($1, 'Other event', 'brooklyn', 'private_venue', 50, '2026-10-02',
+               'yes', false, false, false, ARRAY['none'], ARRAY['none'], false, false)`,
+      [otherEventId],
+    );
+
+    await database.query(
+      `INSERT INTO alerts
+        (id, event_id, checklist_item_id, alert_type, channel, recipient,
+         idempotency_key, send_at, payload)
+       VALUES ($1, $2, $3, 'deadline_reminder', 'email', 'demo@example.com',
+               $4, current_timestamp, '{}'::jsonb)`,
+      [randomUUID(), eventId, checklistItemId, `${eventId}:checklist`],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO alerts
+          (id, event_id, checklist_item_id, alert_type, channel, recipient,
+           idempotency_key, send_at, payload)
+         VALUES ($1, $2, $3, 'deadline_reminder', 'email', 'demo@example.com',
+                 $4, current_timestamp, '{}'::jsonb)`,
+        [randomUUID(), otherEventId, checklistItemId, `${otherEventId}:wrong-checklist`],
+      ),
+    ).rejects.toThrow(/alert checklist item must belong to event/);
+
     const email = "guest@example.com";
+    const rsvpId = randomUUID();
     await database.query(
       `INSERT INTO rsvps (id, event_id, name, email)
        VALUES ($1, $2, 'Guest', $3)`,
-      [randomUUID(), eventId, email],
+      [rsvpId, eventId, email],
     );
     await expect(
       database.query(
@@ -445,6 +498,19 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
         [randomUUID(), eventId, email],
       ),
     ).rejects.toThrow(/unique constraint/);
+
+    await database.query(
+      `INSERT INTO checkins (id, event_id, rsvp_id, name, contact)
+       VALUES ($1, $2, $3, 'Guest', $4)`,
+      [randomUUID(), eventId, rsvpId, email],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO checkins (id, event_id, rsvp_id, name, contact)
+         VALUES ($1, $2, $3, 'Wrong Event Guest', 'wrong-event@example.com')`,
+        [randomUUID(), otherEventId, rsvpId],
+      ),
+    ).rejects.toThrow(/foreign key constraint/);
 
     const contact = "walkin@example.com";
     await database.query(

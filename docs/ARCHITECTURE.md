@@ -74,8 +74,8 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | Scale + date | headcount (integer), capacity (integer, nullable), event_date (date) | capacity is the confirmed venue/event capacity for F-402's gauge — NOT headcount (audit fix); event_date anchors the backward timeline |
 | Audience + food | event_open_to_public (yes/no/unknown), food_present (bool), food_vendor_count (integer), food_affinity_private_exception_claimed (yes/no/unknown), selling_anything (bool) | drive DOHMH vendor/notification rules, Parks TUA, block-party eligibility |
 | Sound | amplified_sound (bool), sound_audible_from_public_way (yes/no/unknown) | audibility asked only at private venues (§10-108(b)(3) scope) |
-| Structures | structure_types (text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown) | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL) |
-| Flame + power | open_flame_or_cooking (text[]: charcoal_wood, propane_lpg, sterno_candles_heaters), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
+| Structures | structure_types (nonempty text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable, or exclusive none), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown) | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL) |
+| Flame + power | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
 | Alcohol + assembly | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown) | the Scenario F branch facts; `unknown` is first-class |
 | Lifecycle | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13) |
 
@@ -154,7 +154,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 |---|---|---|
 | id | uuid PK | |
 | event_id | uuid FK | |
-| checklist_item_id | uuid FK, nullable | |
+| checklist_item_id | uuid FK, nullable | when present, its plan must belong to `event_id` |
 | alert_type | text CHECK IN (deadline_reminder, slack_warning, dependency_unlocked) | |
 | channel | text CHECK IN (email, sms) | |
 | recipient | text | the destination address/number (audit fix: was missing entirely) |
@@ -170,7 +170,7 @@ id uuid PK · event_id FK · name text · email text · phone text nullable · s
 
 ### checkins *(stretch, F-401)*
 
-id uuid PK · event_id FK · rsvp_id FK nullable · name text · contact text (normalized email or phone) · checked_in_at timestamptz · UNIQUE (event_id, contact)
+id uuid PK · event_id FK · rsvp_id FK nullable (must belong to the same event when present) · name text · contact text (normalized email or phone) · checked_in_at timestamptz · UNIQUE (event_id, contact)
 
 ## Rules Engine (packages/engine)
 

@@ -17,6 +17,7 @@ export type PublishedRule = {
 export type PublishedRuleset = {
   schema: string;
   rulesetVersion: string;
+  snapshotDate: string;
   status: string;
   intakeFields: string[];
   rules: PublishedRule[];
@@ -172,6 +173,16 @@ export function validateRuleset(value: unknown): PublishedRuleset {
     );
   }
 
+  const snapshotDate = requireString(ruleset, "snapshot_date", "ruleset");
+  const parsedSnapshotDate = Date.parse(`${snapshotDate}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate) ||
+    Number.isNaN(parsedSnapshotDate) ||
+    new Date(parsedSnapshotDate).toISOString().slice(0, 10) !== snapshotDate
+  ) {
+    validationError("ruleset.snapshot_date must be an ISO date");
+  }
+
   const status = requireString(ruleset, "status", "ruleset");
   if (!status.startsWith("APPROVED")) {
     validationError("ruleset status must be APPROVED");
@@ -220,6 +231,7 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   return {
     schema,
     rulesetVersion,
+    snapshotDate,
     status,
     intakeFields,
     rules,

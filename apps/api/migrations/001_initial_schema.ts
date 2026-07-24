@@ -5,6 +5,11 @@ export const shorthands: ColumnDefinitions | undefined = undefined;
 const oneOf = (column: string, values: readonly string[]): string =>
   `"${column}" IN (${values.map((value) => `'${value}'`).join(", ")})`;
 
+const nonEmptyMultiSelect = (column: string, values: readonly string[]): string =>
+  `cardinality("${column}") > 0 AND ` +
+  `"${column}" <@ ARRAY[${values.map((value) => `'${value}'`).join(", ")}]::text[] AND ` +
+  `NOT ("${column}" @> ARRAY['none']::text[] AND cardinality("${column}") > 1)`;
+
 const currentTimestamp = (pgm: MigrationBuilder) => pgm.func("current_timestamp");
 
 export function up(pgm: MigrationBuilder): void {
@@ -69,10 +74,13 @@ export function up(pgm: MigrationBuilder): void {
     structure_types: {
       type: "text[]",
       notNull: true,
-      check:
-        '"structure_types" <@ ARRAY[' +
-        "'tent_canopy', 'stage_platform_scaffold', 'prop_truss', " +
-        "'bleachers_inflatable', 'none']::text[]",
+      check: nonEmptyMultiSelect("structure_types", [
+        "tent_canopy",
+        "stage_platform_scaffold",
+        "prop_truss",
+        "bleachers_inflatable",
+        "none",
+      ]),
     },
     tent_area_sqft: { type: "integer" },
     tent_days_in_place: { type: "integer" },
@@ -85,9 +93,12 @@ export function up(pgm: MigrationBuilder): void {
     open_flame_or_cooking: {
       type: "text[]",
       notNull: true,
-      check:
-        '"open_flame_or_cooking" <@ ARRAY[' +
-        "'charcoal_wood', 'propane_lpg', 'sterno_candles_heaters', 'none']::text[]",
+      check: nonEmptyMultiSelect("open_flame_or_cooking", [
+        "charcoal_wood",
+        "propane_lpg",
+        "sterno_candles_heaters",
+        "none",
+      ]),
     },
     generator_present: { type: "boolean", notNull: true },
     generator_gasoline_gallons: { type: "numeric" },
@@ -322,6 +333,31 @@ export function up(pgm: MigrationBuilder): void {
     payload: { type: "jsonb", notNull: true },
   });
 
+  pgm.createTrigger(
+    "alerts",
+    "enforce_alert_checklist_event",
+    {
+      when: "BEFORE",
+      operation: ["INSERT", "UPDATE"],
+      level: "ROW",
+      condition: "NEW.checklist_item_id IS NOT NULL",
+      language: "plpgsql",
+    },
+    `BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM checklist_items AS checklist
+        JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+        JOIN permit_plans AS plan ON plan.id = item.plan_id
+        WHERE checklist.id = NEW.checklist_item_id
+          AND plan.event_id = NEW.event_id
+      ) THEN
+        RAISE EXCEPTION 'alert checklist item must belong to event';
+      END IF;
+      RETURN NEW;
+    END;`,
+  );
+
   pgm.createTable(
     "rsvps",
     {
@@ -346,7 +382,14 @@ export function up(pgm: MigrationBuilder): void {
         default: currentTimestamp(pgm),
       },
     },
-    { constraints: { unique: [["event_id", "email"]] } },
+    {
+      constraints: {
+        unique: [
+          ["event_id", "email"],
+          ["event_id", "id"],
+        ],
+      },
+    },
   );
 
   pgm.createTable(
@@ -360,7 +403,6 @@ export function up(pgm: MigrationBuilder): void {
       },
       rsvp_id: {
         type: "uuid",
-        references: "rsvps",
       },
       name: { type: "text", notNull: true },
       contact: { type: "text", notNull: true },
@@ -370,6 +412,14 @@ export function up(pgm: MigrationBuilder): void {
         default: currentTimestamp(pgm),
       },
     },
-    { constraints: { unique: [["event_id", "contact"]] } },
+    {
+      constraints: {
+        unique: [["event_id", "contact"]],
+        foreignKeys: {
+          columns: ["event_id", "rsvp_id"],
+          references: "rsvps(event_id, id)",
+        },
+      },
+    },
   );
 }
