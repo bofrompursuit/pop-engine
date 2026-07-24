@@ -9,7 +9,7 @@ As an independent organizer, I can see when the rules behind my plan were last v
 ## Inputs
 
 - `GET /api/rules/meta` → `{ruleset_version, snapshot_date}` from the loaded rules file.
-- Per-line immutable `sources` snapshot (citation + every URL), primary `source_url`, `verified_status`, and `last_verified_date` on `permit_plan_items`.
+- Per-line immutable `sources` snapshot (citation + every URL), primary `source_url`, `verification_status` (the badge value; canonical, NOT NULL, constrained), and `last_verified_date` on `permit_plan_items`. (The nullable `verified_status` column is a deprecated duplicate, do not use it; see ARCHITECTURE and issue #76.)
 
 ## Outputs
 
