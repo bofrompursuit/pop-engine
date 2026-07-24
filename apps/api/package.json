@@ -4,17 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "pnpm migrate up && tsx watch --env-file-if-exists=.env src/index.ts",
+    "migrate": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js -j ts -m migrations --advisory-lock-mode=wait",
+    "start": "pnpm migrate up && tsx --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@pop-engine/engine": "workspace:*",
     "express": "^4.21.2",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.22.0",
     "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "@types/pg": "^8.20.0",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0"
   }
