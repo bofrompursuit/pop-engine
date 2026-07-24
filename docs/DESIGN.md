@@ -1,6 +1,6 @@
 # PopEngine — Delivery Design (Canonical)
 
-**Status:** Canonical companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
+**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`). Companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
 
 ## Decisions of 2026-07-22 (baseline correction)
 

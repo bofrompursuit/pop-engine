@@ -23,4 +23,11 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Repo tooling scripts run under Node, not the app/DOM environment.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { console: "readonly", process: "readonly" },
+    },
+  },
 );

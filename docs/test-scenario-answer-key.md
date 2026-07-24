@@ -1,6 +1,6 @@
 # PopEngine — Scenario Fixtures v3 (derived from ruleset nyc.v2.1)
 
-**Status:** PROPOSED — pending verification-owner sign-off and team approval alongside `rules/nyc-rules.v2.1.json`.
+**Status:** APPROVED (2026-07-22, ratified with `rules/nyc-rules.v2.1.json`; see `docs/BASELINE.md`). Now the green-gate acceptance suite. Individual regulatory facts still promote SOURCE_CONFIRMED → VERIFIED during the build via the ruleset's `verification` blocks (OPEN-QUESTIONS §2); that promotion is the verification owner's, per CONTRIBUTING Golden Rule 2.
 **Supersedes:** the v1 answer key (six scenarios, R1–R13; recoverable at git `28e937d`) and the unapproved v2 draft suite (preserved at `docs/proposals/regulatory-scenarios-v2-draft.md`).
 **Authority hierarchy:** approved primary source → published rule (`nyc-rules.v2.1.json`) → this fixture suite → engine output → UI copy. **This document is derived from the ruleset, not an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong; if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority.
 **Evidence:** every regulatory fact traces via the ruleset's `evidence` refs to fetch-confirmed quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2, 2026-07-22).

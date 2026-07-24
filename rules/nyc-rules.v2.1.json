@@ -4,7 +4,7 @@
   "jurisdiction": "US-NY-NYC",
   "snapshot_date": "2026-07-22",
   "supersedes": ["nyc.v1"],
-  "status": "PROPOSED — pending verification-owner sign-off (Dev 4) and team approval; see docs/BASELINE.md once created",
+  "status": "APPROVED — team ratification 2026-07-22 (docs/BASELINE.md). Published artifact for the capstone build. Per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build via each rule's verification block (OPEN-QUESTIONS §2); only the verification owner (Dev 4) changes a per-fact verification status (CONTRIBUTING Golden Rule 2). The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
   "provenance": "Demo-scoped corrected subset. Structure follows the nyc.v2 draft (rules/proposals/); every fact carries an evidence reference to a fetch-confirmed primary-source quote in docs/VERIFICATION-SOURCES.md (Round 1 or Round 2, 2026-07-22) or an explicit RESEARCH_REQUIRED/OFFICIAL_CONFLICT status. No fact is asserted beyond fetched text. The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
   "status_legend": {
     "SOURCE_CONFIRMED": "fetch-confirmed primary-source quote on file in VERIFICATION-SOURCES.md; pending verification-owner promotion to VERIFIED",
@@ -15,7 +15,7 @@
   },
   "config": {
     "slack_warning_days": { "value": 14, "note": "PopEngine internal planning buffer — NOT an official threshold; UI must label it as internal policy." },
-    "business_day_math": { "mode": "actual_calendar", "calendar": "us-ny-business-days@2026.draft", "note": "Real business-day computation against a pinned holiday calendar. Holiday list source is RESEARCH_REQUIRED; fixtures pin dates in windows without contested holidays. Supersedes v1's calendar approximation (OPEN-QUESTIONS I-2 revisited with team approval 2026-07-22)." },
+    "business_day_math": { "mode": "actual_calendar", "calendar": "us-ny-business-days@2026.1", "note": "Real business-day computation against a pinned holiday calendar. The holiday list itself remains RESEARCH_REQUIRED (Dev 4); fixtures pin dates in windows with no contested holidays so it does not affect the capstone. Renamed off the '.draft' suffix at ruleset approval (2026-07-22); the identifier is now pinned even though the holiday source is still being verified. Supersedes v1's calendar approximation (OPEN-QUESTIONS I-2, team approval 2026-07-22)." },
     "assembly_thresholds": { "indoor_or_rooftop": 75, "outdoor": 200, "status": "SOURCE_CONFIRMED", "evidence": "VS §6 R13 + Round2 #7" }
   },
   "intake_fields": [
