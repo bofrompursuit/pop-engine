@@ -133,8 +133,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid PK | |
-| event_id | uuid FK | |
-| plan_item_id | uuid FK → permit_plan_items, UNIQUE | keeps status linked to rule + source; one checklist row per plan item |
+| plan_item_id | uuid FK → permit_plan_items, UNIQUE | keeps status linked to rule + source; event is derived through the plan item and plan |
 | status | text CHECK IN (not_started, in_progress, submitted, approved, rejected) | |
 | notes | text | |
 | updated_at | timestamptz | |

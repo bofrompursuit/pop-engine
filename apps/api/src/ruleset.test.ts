@@ -182,6 +182,27 @@ describe("ruleset validation", () => {
       error: /source is required/,
     },
     {
+      name: "source without a citation",
+      mutate: (ruleset) => {
+        firstRule(ruleset).source = {};
+      },
+      error: /source.citation must be a non-empty string/,
+    },
+    {
+      name: "source without URLs",
+      mutate: (ruleset) => {
+        firstRule(ruleset).source = { citation: "Source", urls: [] };
+      },
+      error: /source.urls must not be empty/,
+    },
+    {
+      name: "source with an invalid URL entry",
+      mutate: (ruleset) => {
+        firstRule(ruleset).source = { citation: "Source", urls: [null] };
+      },
+      error: /source.urls\[0\] must be a non-empty string/,
+    },
+    {
       name: "unsupported verification status",
       mutate: (ruleset) => {
         object(firstRule(ruleset).verification).status = "UNREVIEWED";
@@ -387,16 +408,27 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
       sources,
     });
 
+    const checklistItemId = randomUUID();
     await database.query(
-      `INSERT INTO checklist_items (id, event_id, plan_item_id)
-       VALUES ($1, $2, $3)`,
-      [randomUUID(), eventId, planItemId],
+      `INSERT INTO checklist_items (id, plan_item_id)
+       VALUES ($1, $2)`,
+      [checklistItemId, planItemId],
     );
+    const checklistEvent = await database.query<{ event_id: string }>(
+      `SELECT plans.event_id
+       FROM checklist_items AS checklist
+       JOIN permit_plan_items AS items ON items.id = checklist.plan_item_id
+       JOIN permit_plans AS plans ON plans.id = items.plan_id
+       WHERE checklist.id = $1`,
+      [checklistItemId],
+    );
+    expect(checklistEvent.rows[0]?.event_id).toBe(eventId);
+
     await expect(
       database.query(
-        `INSERT INTO checklist_items (id, event_id, plan_item_id)
-         VALUES ($1, $2, $3)`,
-        [randomUUID(), eventId, planItemId],
+        `INSERT INTO checklist_items (id, plan_item_id)
+         VALUES ($1, $2)`,
+        [randomUUID(), planItemId],
       ),
     ).rejects.toThrow(/unique constraint/);
 
@@ -459,6 +491,26 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
       kind: "permit",
       verification_status: "SOURCE_CONFIRMED",
     });
+  });
+
+  it("serializes concurrent same-version rules syncs", async () => {
+    await syncPermitRules(database, ruleset);
+    const concurrentDatabase = new Client({ connectionString: databaseUrl });
+    await concurrentDatabase.connect();
+    try {
+      await Promise.all([
+        syncPermitRules(database, ruleset),
+        syncPermitRules(concurrentDatabase, ruleset),
+      ]);
+    } finally {
+      await concurrentDatabase.end();
+    }
+
+    const count = await database.query<{ count: string }>(
+      "SELECT count(*) FROM permit_rules WHERE ruleset_version = $1",
+      [ruleset.rulesetVersion],
+    );
+    expect(Number(count.rows[0]?.count)).toBe(37);
   });
 
   it("rolls back a failed sync without erasing the prior read model", async () => {

@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm migrate up && tsx watch --env-file-if-exists=.env src/index.ts",
-    "migrate": "node-pg-migrate -j ts -m migrations",
-    "start": "pnpm migrate up && tsx src/index.ts",
+    "migrate": "node --env-file-if-exists=.env node_modules/node-pg-migrate/bin/node-pg-migrate.js -j ts -m migrations",
+    "start": "pnpm migrate up && tsx --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

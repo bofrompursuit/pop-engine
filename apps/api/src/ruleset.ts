@@ -78,6 +78,21 @@ function requireString(object: JsonObject, key: string, label: string): string {
   return value;
 }
 
+function parseSource(value: unknown, label: string): JsonObject {
+  const source = requireObject(value, label);
+  requireString(source, "citation", label);
+  const urls = requireArray(source.urls, `${label}.urls`);
+  if (urls.length === 0) {
+    validationError(`${label}.urls must not be empty`);
+  }
+  for (const [index, url] of urls.entries()) {
+    if (typeof url !== "string" || url.length === 0) {
+      validationError(`${label}.urls[${index}] must be a non-empty string`);
+    }
+  }
+  return source;
+}
+
 function collectTriggerFields(value: unknown, label: string): string[] {
   const trigger = requireObject(value, label);
   const nodeKeys = ["field", "all", "any"].filter((key) => Object.hasOwn(trigger, key));
@@ -135,7 +150,7 @@ function parseRule(
     validationError(`${label}.verification.status has unsupported value "${verificationStatus}"`);
   }
 
-  const source = rule.source === undefined ? null : requireObject(rule.source, `${label}.source`);
+  const source = rule.source === undefined ? null : parseSource(rule.source, `${label}.source`);
   if (requiresSource && source === null) {
     validationError(`${label}.source is required`);
   }
@@ -243,6 +258,9 @@ function ruleTitle(rule: PublishedRule): string | null {
 export async function syncPermitRules(client: Client, ruleset: PublishedRuleset): Promise<void> {
   await client.query("BEGIN");
   try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('pop-engine'), hashtext($1))", [
+      ruleset.rulesetVersion,
+    ]);
     await client.query("DELETE FROM permit_rules WHERE ruleset_version = $1", [
       ruleset.rulesetVersion,
     ]);

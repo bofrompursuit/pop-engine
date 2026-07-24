@@ -250,11 +250,6 @@ export function up(pgm: MigrationBuilder): void {
 
   pgm.createTable("checklist_items", {
     id: { type: "uuid", primaryKey: true },
-    event_id: {
-      type: "uuid",
-      notNull: true,
-      references: "events",
-    },
     plan_item_id: {
       type: "uuid",
       notNull: true,
