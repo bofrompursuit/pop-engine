@@ -123,10 +123,12 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | portal_name / portal_url | text | |
 | sources | jsonb | immutable citation + URL snapshots for every contributing rule; OFFICIAL_CONFLICT retains every source |
 | source_url / verified_status / last_verified_date | text / text / date | primary click-through + status projection rendered per line (F-206) |
-| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the rule's kind (e.g. DOHMH-ORGANIZER-NOTIFY-001 is `notification`, DEP-GENERATOR-REG-001 is `registration`) |
+| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the **finding's** kind, which usually equals the rule's kind (DOHMH-ORGANIZER-NOTIFY-001 → `notification`). Exception: a `classification`-kind rule persists as `note` (see below). `classification` is a rule role, not a persisted finding kind, so it is absent here by design |
 | disposition | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement) | AD-10; fixture comparisons match on (kind, disposition, finding) |
 | deadline_status | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable) | per-finding; the verdict summarizes these |
 | verification_status | text | SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / VERIFIED, rendered per line (F-206) |
+
+**Rule kind vs finding kind (resolves #73).** A rule's `kind` describes what the rule *is*; a plan item's `kind` describes the finding it *emits*. For almost every rule these are equal. The exception is `classification`: `SAPO-SCOPE-001` (`kind: classification`) is a scope check that, when it fires with `obstructs_public_way=no`, emits a no-requirement finding. It persists as `kind = note`, `disposition = no_new_requirement`, with its `rule_ids` retaining `SAPO-SCOPE-001` for provenance. `classification` therefore appears in `permit_rules.kind` (the ruleset read model, line 89) but not in `permit_plan_items.kind`.
 
 ### checklist_items
 
