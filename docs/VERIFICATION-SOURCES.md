@@ -166,6 +166,55 @@ A second fetch-confirmed pass run to verify the external (Codex) assessment of r
 - **Farmers Markets is its own event-type category** on this schedule ($15 per day), listed alongside Street Events / Block Parties, not as a Street Event size. Ruleset v2.1 does not model it separately; it currently folds into `other_sapo_class`. Breaking it out is a candidate for the post-capstone 59-rule set, sourced here.
 - Cross-check on file: 50 RCNY §1-08 (codelibrary.amlegal.com) codifies a matching fee/deadline table (Round 1 item 7). Both were fetched; align any concrete fee added to a rule against both.
 
+## Round 4 — 2026-07-24 (agency attribution for the 13 rules missing `output.agency`, issue #77)
+
+**Purpose:** locate published agency attribution for the 13 published rules/advisories whose `output.agency` is absent, so issue #77 can be decided against fetched text rather than inference. **This is fetched evidence, not a status promotion.** No `verification` block, `output.agency` value, or answer-key entry is changed here.
+
+**Method:** four pages retrieved 2026-07-24 with a browser user-agent (nyc.gov and nycgovparks.org return HTTP 403 to plain fetchers). None of the four shows a "last updated" date; treat the retrieval date as the as-of date.
+
+- `https://www.nyc.gov/site/cecm/support/supporting-permitting-agencies.page` ("Supporting Permitting Agencies")
+- `https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page` ("Block Parties - CECM")
+- `https://www.nycgovparks.org/permits/special-events/faq` and `/guide` (NYC Parks special events)
+- `https://portal.311.nyc.gov/article/?kanumber=KA-02228` ("Barbecuing - NYC311", already on file from Round 1)
+
+**Primary find: CECM publishes its own agency-to-requirement map.** The Supporting Permitting Agencies page attributes each supporting requirement to a named agency, verbatim:
+
+- **DOB** — "You must obtain a DOB permit if you intend to build a stage over two feet tall or erect a temporary structure over 10 feet tall. Also if your event expects 200 or more people to gather in a tent outdoors, then you must also obtain a DOB Temporary Place of Assembly permit. **If your event has a ride or inflatable, you must provide a DOB Inspection Certificate and insurance.**"
+- **DEP** — "If you are interested using a fire hydrant or a generator over 40kw for your event, you must obtain a permit from the Department of Environmental Protection."
+- **FDNY** — "When your event uses dangerous flammable materials such as fuel, generators, or pyrotechnics, you must obtain a permit from FDNY."
+- **DOHMH** — "If your event will serve food or will have petting zoos, pony rides, and other animal exhibits, a permit from DOHMH is required."
+- **NYPD** — "When using amplified sound for a musical performance or speaking program, you will also need to obtain a sound permit from the NYPD."
+- **SLA** — "If your event includes selling or distributing alcohol, you must have a special event permit from The New York State Liquor Authority SLA."
+- Also named, not currently modeled in v2.1: **DCWP** (games of chance), **DSNY** (no permits issued; billed for post-event cleanup), **DOT** (oversized trucks, cranes, electrical wiring, horse drawn carriages, banners), **HRA** (soliciting charitable funds; nonprofit street-fair vendors), **SDOH** (New York State Department of Health, "peak attendance will reach 5,000 attendees").
+
+**Per-rule attribution located (candidate, not promoted):**
+
+| Rule | Published text located | Candidate agency |
+|---|---|---|
+| `SAPO-BLOCK-PARTY-ELIG-001` | Block Parties: "A block party is a community sponsored, public event where there are no sales of goods or services"; "Alcohol, vendors, commercial branding and sponsorships are not permitted at block parties" | SAPO (Mayor's Office CECM) |
+| `SAPO-BLOCK-PARTY-SPONSOR-001` | Block Parties, verbatim: "Applicants must be a member of a block association and given permission by their neighbors" | SAPO (Mayor's Office CECM) |
+| `SAPO-INSURANCE-BLOCK-PARTY-RIDE-001` | Block Parties: "Rides and inflatables, such as truck mounted rides and bounce houses require a DOB Inspection Certificate and insurance. The ride company that you hire should provide this documentation." Supporting Agencies repeats the DOB certificate. The insurance condition attaches to the SAPO permit ("All other agency permits must be obtained before we can grant your street activity permit") | SAPO (Mayor's Office CECM) imposes the insurance; the certificate is DOB's — see the coverage note below |
+| `NYPD-SOUND-PARKS-DEP-001` | Parks FAQ: "there are restrictions on where and when we can grant permission to apply for amplified Sound Permits with the NYPD." Parks guide: "you will need to get a Sound Permit from the New York City Police Department (NYPD) in person at the local precinct" | NYC Parks (the action this finding directs; the NYPD filing is already carried by `NYPD-SOUND-001`) |
+| `PARKS-INSURANCE-NOTE-001` | Parks FAQ, verbatim: "Not necessarily, the borough permit offices will let you know if insurance or a bond is required for your event" | NYC Parks |
+| `PARKS-PROPANE-001` | NYC311 KA-02228: "Barbecuing is only allowed in designated areas of certain City parks... Propane grills are prohibited." "The Department of Parks and Recreation has designated areas for barbecuing in certain parks and beaches" | NYC Parks |
+| `DOHMH-EXEMPTION-001` | Health Code Art. 88 is DOHMH's own code (already on file, Round 1 §3); the exemption is DOHMH's to apply | DOHMH |
+| `SLA-VENUE-LICENSE-001` | On-premises licensing is SLA's; matches the string already used by `SLA-ONEDAY-001` / `SLA-CATERING-001` | NY State Liquor Authority |
+| `ADV-VENUE-OCCUPANCY-001` | Certificate of occupancy / legal use is DOB-issued (Supporting Agencies, DOB entry) | DOB |
+| `SAPO-SCOPE-001` | Rule's own note text directs "confirm scope with SAPO for borderline setups" | SAPO (Mayor's Office CECM), if a `classification` finding carries one at all |
+| `ADV-SAPO-OTHER-CLASS-001` | Advisory's own text directs "Confirm with SAPO" | SAPO (Mayor's Office CECM), if a COVERAGE_GAP advisory carries one at all |
+
+**No single agency located (2 of 13):**
+
+- `ADV-NOISE-CODE-001` — DEP and NYPD share Noise Code enforcement (DEP primary for commercial and vehicle noise, NYPD for residential and by-ear complaints). The advisory directs no filing, so no acting agency is named. Not located: any published text assigning a single agency to §24-244 / §24-231 compliance for events.
+- `ADV-ALCOHOL-PUBLIC-001` — COVERAGE_GAP whose own text says "Confirm with the relevant agency" precisely because the path was not evaluated. Naming an agency would assert coverage this ruleset version does not have.
+
+**Notes for rule authoring (candidate, not promoted):**
+
+- **Possible missing DOB rule.** The DOB Inspection Certificate for rides and inflatables is published as a requirement in its own right on two CECM pages, but v2.1 mentions it only inside `SAPO-INSURANCE-BLOCK-PARTY-RIDE-001`'s note text. There is no DOB ride/inflatable rule alongside `DOB-TENT-001` / `DOB-STAGE-001` / `DOB-PROP-TRUSS-001` / `DOB-TALL-STRUCTURE-001` / `DOB-ASSEMBLY-001`. Candidate new rule for the team; adding one is an answer-key change (Scenario D has a ride).
+- **`SAPO-INSURANCE-001` carries prose, not an agency.** Its current value is `Requirement attached to SAPO permits (50 RCNY §1-08(b))`. If `agency` is rendered as a label, that value will not read like the others (`DOB`, `FDNY`, `NYPD`). Normalizing it is a display decision, not a regulatory one; the citation belongs in `source`, which already holds it.
+- **Agency vocabulary in use**, for anyone adding values: `SAPO (Mayor's Office CECM)`, `DOB`, `DOB (+ FDNY Public Assembly Permit)`, `FDNY`, `NYC Parks`, `NYC Parks Revenue Division`, `DOHMH`, `NYPD`, `NYC DEP`, `NY State Liquor Authority`.
+- Four agencies named by CECM are unmodeled in v2.1 (DCWP, DOT, HRA, SDOH). The SDOH 5,000-attendee threshold in particular has no corresponding rule and no intake field. Candidates for the post-capstone 59-rule set, sourced here.
+
 ## Suggested Dev 4 Workflow
 
 1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.
