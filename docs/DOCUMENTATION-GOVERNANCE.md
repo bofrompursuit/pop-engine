@@ -1,6 +1,6 @@
 # PopEngine — Documentation Governance
 
-**Status:** Proposed. Approve and place at `docs/DOCUMENTATION-GOVERNANCE.md`.  
+**Status:** APPROVED (adopted 2026-07-22; see `docs/BASELINE.md`). Authority-by-concern and the conflict protocol are in force.  
 **Purpose:** Ensure humans and coding agents resolve scope and specification questions the same way.
 
 ## 1. There is no universal “one document wins” rule

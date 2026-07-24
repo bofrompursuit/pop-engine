@@ -1,6 +1,6 @@
 # PopEngine — Architecture (Canonical)
 
-**Status:** Canonical technical design for Phase 0–1.5 (per `BASELINE.md`). Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo), `ARCHITECTURE-FUTURE.md` (Phase 2+ target). Permit facts referenced here trace to `rules/nyc-rules.v2.1.json`; none are asserted beyond it.
+**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`). Technical design for Phase 0–1.5. Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo), `ARCHITECTURE-FUTURE.md` (Phase 2+ target). Permit facts referenced here trace to `rules/nyc-rules.v2.1.json`; none are asserted beyond it.
 
 ## Architecture Decisions (2026-07-21, extended 2026-07-22)
 
