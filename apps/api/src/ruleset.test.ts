@@ -141,6 +141,18 @@ describe("ruleset validation", () => {
       error: /op has unsupported value/,
     },
     {
+      name: "mixed trigger node",
+      mutate: (ruleset) => {
+        firstRule(ruleset).trigger = {
+          field: "borough",
+          op: "eq",
+          value: "brooklyn",
+          all: [{ field: "undeclared", op: "eq", value: true }],
+        };
+      },
+      error: /exactly one of all, any, or field/,
+    },
+    {
       name: "condition without a value",
       mutate: (ruleset) => {
         delete firstCondition(ruleset).value;

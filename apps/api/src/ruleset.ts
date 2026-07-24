@@ -80,8 +80,12 @@ function requireString(object: JsonObject, key: string, label: string): string {
 
 function collectTriggerFields(value: unknown, label: string): string[] {
   const trigger = requireObject(value, label);
+  const nodeKeys = ["field", "all", "any"].filter((key) => Object.hasOwn(trigger, key));
+  if (nodeKeys.length !== 1) {
+    validationError(`${label} must contain exactly one of all, any, or field`);
+  }
 
-  if (Object.hasOwn(trigger, "field")) {
+  if (nodeKeys[0] === "field") {
     const field = requireString(trigger, "field", label);
     const operator = requireString(trigger, "op", label);
     if (!CONDITION_OPERATORS.has(operator)) {
@@ -93,12 +97,7 @@ function collectTriggerFields(value: unknown, label: string): string[] {
     return [field];
   }
 
-  const combinators = ["all", "any"].filter((key) => Object.hasOwn(trigger, key));
-  if (combinators.length !== 1) {
-    validationError(`${label} must contain exactly one of all, any, or field`);
-  }
-
-  const combinator = combinators[0]!;
+  const combinator = nodeKeys[0]!;
   const children = requireArray(trigger[combinator], `${label}.${combinator}`);
   if (children.length === 0) {
     validationError(`${label}.${combinator} must not be empty`);
