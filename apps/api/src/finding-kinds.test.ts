@@ -1,44 +1,60 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { Client } from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadRuleset } from "./ruleset";
 
 // Regression guard for issue #73: the published rule kinds and the persisted
 // finding-kind contract must not drift apart. A rule's `kind` describes what the
 // rule IS; a plan item's `kind` describes the finding it EMITS. They are equal for
-// every rule except `classification`, which persists as a `note` finding. This test
-// derives both enum sets from their authoritative sources (the migration CHECKs and
-// the published ruleset) rather than hard-coding a fourth copy, so any new rule kind
-// forces an explicit persistence decision here.
+// every rule except `classification`, which persists as a `note` finding.
+//
+// The allowed kind sets are read from the live database's CHECK constraints after
+// the full migration chain has run (CI applies `migrate up` before tests), not from
+// a specific migration file. That way a correctly-added future migration is honored
+// and nobody is pushed to edit a merged migration. Runs only when a database is
+// configured, matching the other schema-backed suites.
 
-const migrationFile = fileURLToPath(
-  new URL("../migrations/001_initial_schema.ts", import.meta.url),
-);
+const databaseUrl = process.env.DATABASE_URL ?? "";
 
 // A classification rule is not persisted with its own kind; it becomes a note.
 // Add an entry here (with review) if a future rule kind is also non-persistable.
 const RULE_KIND_TO_FINDING_KIND: Record<string, string> = { classification: "note" };
 
-/** Extract the string list from the `oneOf("kind", [...])` CHECK inside one createTable block. */
-function kindCheckFor(source: string, tableName: string): Set<string> {
-  const tableStart = source.search(new RegExp(`createTable\\(\\s*"${tableName}"`));
-  if (tableStart === -1) throw new Error(`table ${tableName} not found in migration`);
-  const region = source.slice(tableStart);
-  const match = region.match(/oneOf\("kind",\s*\[([^\]]*)\]/);
-  if (!match || match[1] === undefined) throw new Error(`no kind CHECK found for ${tableName}`);
-  return new Set([...match[1].matchAll(/"([^"]+)"/g)].flatMap((m) => (m[1] ? [m[1]] : [])));
+/** Read the allowed values of a table's `kind` CHECK constraint from the current schema. */
+async function allowedKinds(db: Client, table: string): Promise<Set<string>> {
+  const { rows } = await db.query<{ def: string }>(
+    `SELECT pg_get_constraintdef(c.oid) AS def
+       FROM pg_constraint c
+       JOIN pg_class t ON t.oid = c.conrelid
+      WHERE c.contype = 'c' AND t.relname = $1
+        AND pg_get_constraintdef(c.oid) ~ 'kind ='`,
+    [table],
+  );
+  if (rows.length === 0) throw new Error(`no kind CHECK constraint found on ${table}`);
+  const kinds = new Set<string>();
+  for (const { def } of rows) {
+    for (const match of def.matchAll(/'([^']+)'/g)) if (match[1]) kinds.add(match[1]);
+  }
+  return kinds;
 }
 
-describe("rule kind vs persisted finding kind (#73)", () => {
-  it("keeps rule kinds and finding kinds consistent across ruleset and migration", async () => {
-    const migration = await readFile(migrationFile, "utf8");
-    const ruleKindsDb = kindCheckFor(migration, "permit_rules");
-    const findingKinds = kindCheckFor(migration, "permit_plan_items");
+describe.runIf(databaseUrl.length > 0)("rule kind vs persisted finding kind (#73)", () => {
+  let db: Client;
+
+  beforeAll(async () => {
+    db = new Client({ connectionString: databaseUrl });
+    await db.connect();
+  });
+
+  afterAll(async () => {
+    await db.end();
+  });
+
+  it("keeps rule kinds and finding kinds consistent across ruleset and current schema", async () => {
+    const ruleKindsDb = await allowedKinds(db, "permit_rules");
+    const findingKinds = await allowedKinds(db, "permit_plan_items");
 
     const ruleset = await loadRuleset();
-    const usedKinds = new Set(
-      [...ruleset.rules, ...ruleset.advisories].map((rule) => rule.kind),
-    );
+    const usedKinds = new Set([...ruleset.rules, ...ruleset.advisories].map((rule) => rule.kind));
 
     // Every kind the ruleset actually uses must be accepted by the rules read model.
     for (const kind of usedKinds) {
@@ -55,8 +71,8 @@ describe("rule kind vs persisted finding kind (#73)", () => {
     }
 
     // The mapping may not carry stale entries: every mapped source kind must be one
-    // the ruleset uses and one the plan-item table rejects. This forces the mapping to
-    // stay minimal and current.
+    // the ruleset uses and one the plan-item table rejects. This keeps the mapping
+    // minimal and forces a decision when a new non-persistable kind appears.
     for (const source of Object.keys(RULE_KIND_TO_FINDING_KIND)) {
       expect(usedKinds, `mapping source "${source}" is unused by the ruleset`).toContain(source);
       expect(findingKinds, `mapping source "${source}" is already a finding kind`).not.toContain(
