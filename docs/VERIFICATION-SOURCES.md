@@ -132,6 +132,40 @@ A second fetch-confirmed pass run to verify the external (Codex) assessment of r
 - TPA lead wording: DOB code notes say "earlier than 10 days"; the critique says "10 business days." Pin down before UI copy.
 - Exact SAPO insurance certificate-holder wording per class.
 
+## Round 3 — 2026-07-24 (full CECM fee schedule capture)
+
+**Purpose:** complete transcription of the CECM fee table, expanding Round 1 item 7 (which quoted only a partial set). **This is fetched evidence, not a status promotion.** No `verification` block or answer-key status changes on the basis of this capture.
+
+**Method:** `https://www.nyc.gov/site/cecm/permitting/fees.page` ("Fees - CECM"), retrieved 2026-07-24 with a browser user-agent (plain fetch returns HTTP 403). The page shows **no "last updated" date**; treat the retrieval date as the as-of date and re-check before demo.
+
+**Verbatim intro:** "All applicants are required to pay a non-refundable processing fee of $25." / "Additional fees occur for Farmers Markets, Production Events, Plaza Events and Street Events. Single Block Festivals and Street Festivals have fees determined by the vendor's participation fee."
+
+**Full "Street Activity Permit Fees" table (Event Type — Fee — Notes), verbatim:**
+
+| Event Type | Fee | Notes |
+|---|---|---|
+| Block Parties | Application fee only | |
+| Clean Ups | Application fee only | |
+| Farmers Markets | $15 per day | |
+| Health Fairs | Application fee only | |
+| Plaza Events | $1,000 to $31,000 | Fees based on Plaza Level and Event Size (see Plaza Fees page) |
+| Press Conference, Rally or Stationary Demonstration | Application fee only | |
+| Production Events (with curb lane or sidewalk only) | $290 per day | Capped at $1,000 if over 3 days |
+| Production Events (with curb lane and sidewalk) | $700 per day | |
+| Street Event - Small | $3,100 | |
+| Street Event - Medium | $11,000 | |
+| Street Event - Large | $25,000 | |
+| Extra Large Event | Up to $66,000 | |
+| Single Block Festival | 20% of the total fees paid by vendors to participate | |
+| Street Festival | 20% of the total fees paid by vendors to participate | |
+| Open Culture Event | Application fee only | |
+
+**Findings for rule authoring (candidate, not promoted):**
+
+- **Application-fee-only types** (the $25 processing fee is the entire charge, no additional fee): Block Parties, Clean Ups, Health Fairs, Press Conference/Rally/Stationary Demonstration, Open Culture Event. Distinct from `SAPO-SCOPE-001` (no permit and therefore no $25 at all): these are real permits that happen to carry no fee beyond the application fee.
+- **Farmers Markets is its own event-type category** on this schedule ($15 per day), listed alongside Street Events / Block Parties, not as a Street Event size. Ruleset v2.1 does not model it separately; it currently folds into `other_sapo_class`. Breaking it out is a candidate for the post-capstone 59-rule set, sourced here.
+- Cross-check on file: 50 RCNY §1-08 (codelibrary.amlegal.com) codifies a matching fee/deadline table (Round 1 item 7). Both were fetched; align any concrete fee added to a rule against both.
+
 ## Suggested Dev 4 Workflow
 
 1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.
