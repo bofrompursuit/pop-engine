@@ -6,7 +6,13 @@ import { addCalendarDays, differenceInCalendarDays, subtractBusinessDays } from 
 import type { ScopeResolver } from "./conditions";
 import { UNKNOWN_ANSWER } from "./conditions";
 import { LEVEL_DEADLINE_BINDING } from "./proposals";
-import type { Deadline, DeadlineStatus, EventIntake, HolidayCalendar } from "./types";
+import type {
+  Deadline,
+  DeadlineBoundary,
+  DeadlineStatus,
+  EventIntake,
+  HolidayCalendar,
+} from "./types";
 
 export const CONFIRM_WITH_AGENCY = "confirm with agency";
 
@@ -49,6 +55,21 @@ function statusFromSlack(
 ): DeadlineStatus {
   if (slackDays < 0 || (missedAtZero && slackDays === 0)) return "published_deadline_missed";
   return slackDays < slackWarningDays ? "deadline_approaching" : "on_track";
+}
+
+/**
+ * The last valid filing date for a published bound. An exclusive bound ("earlier than N days
+ * before the event") makes day N itself too late, so the last valid day is one earlier; an
+ * inclusive bound ("at least N days before") keeps day N. Shifting the date rather than only the
+ * comparison keeps `latest_apply_date` honest for the copy, the alerts and the checklist, all of
+ * which read the date rather than re-deriving it.
+ */
+function lastValidFilingDate(
+  bound: string,
+  boundary: DeadlineBoundary,
+  stepBack: (date: string, units: number) => string,
+): string {
+  return boundary === "exclusive" ? stepBack(bound, 1) : bound;
 }
 
 function dateBackFrom(
@@ -151,7 +172,14 @@ export function computeDeadline(
   switch (deadline.type) {
     case "published_minimum":
       return {
-        ...dateBackFrom(addCalendarDays(context.eventDate, -deadline.calendarDays), context),
+        ...dateBackFrom(
+          lastValidFilingDate(
+            addCalendarDays(context.eventDate, -deadline.calendarDays),
+            deadline.boundary,
+            (date, units) => addCalendarDays(date, -units),
+          ),
+          context,
+        ),
         deadlineDisplay: deadline.display,
       };
 
@@ -167,7 +195,14 @@ export function computeDeadline(
         return undatable("not_calculable", levelRangeDisplay(deadline));
       }
       return {
-        ...dateBackFrom(addCalendarDays(context.eventDate, -resolution.days), context),
+        ...dateBackFrom(
+          lastValidFilingDate(
+            addCalendarDays(context.eventDate, -resolution.days),
+            deadline.boundary,
+            (date, units) => addCalendarDays(date, -units),
+          ),
+          context,
+        ),
         deadlineDisplay: null,
       };
     }
@@ -211,12 +246,14 @@ export function computeDeadline(
             `"${context.calendar.id}" holiday list; no list is published for it`,
         );
       }
+      const publishedCalendar = { ...context.calendar, holidays };
       return {
         ...dateBackFrom(
-          subtractBusinessDays(context.eventDate, deadline.businessDays, {
-            ...context.calendar,
-            holidays,
-          }),
+          lastValidFilingDate(
+            subtractBusinessDays(context.eventDate, deadline.businessDays, publishedCalendar),
+            deadline.boundary,
+            (date, units) => subtractBusinessDays(date, units, publishedCalendar),
+          ),
           context,
         ),
         deadlineDisplay: deadline.display,

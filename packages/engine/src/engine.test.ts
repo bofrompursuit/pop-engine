@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./t
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.2.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.3.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.2 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.3 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -334,6 +334,71 @@ describe("typed deadlines", () => {
   });
 });
 
+describe("published bound inclusivity", () => {
+  const rooftop = (eventDate: string): EventIntake => ({
+    ...parkIntake,
+    location_type: "private_venue",
+    headcount: 90,
+    amplified_sound: false,
+    event_date: eventDate,
+  });
+  const assemblyIn = (eventDate: string) =>
+    evaluate(rooftop(eventDate), ruleset, TODAY, calendar).findings.find((finding) =>
+      finding.ruleIds.includes("DOB-ASSEMBLY-001"),
+    );
+
+  it("treats an exclusive published bound as closed on the boundary day itself", () => {
+    // DOB-ASSEMBLY-001 publishes boundary "exclusive" for its 10-day TPA window, because the DOB
+    // code note it already carried says the application "must be submitted earlier than 10 days
+    // before the event". Exactly 10 days out is therefore already too late.
+    const onTheBoundary = assemblyIn("2026-08-01"); // TODAY is 2026-07-22: exactly 10 days out
+    expect(onTheBoundary?.latestApplyDate).toBe("2026-07-21");
+    expect(onTheBoundary?.deadlineStatus).toBe("published_deadline_missed");
+  });
+
+  it("keeps the day before the exclusive bound valid", () => {
+    const dayBefore = assemblyIn("2026-08-02"); // eleven days out: the last valid filing day
+    expect(dayBefore?.latestApplyDate).toBe("2026-07-22");
+    expect(dayBefore?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(dayBefore?.slackDays).toBe(0);
+  });
+
+  it("leaves inclusive bounds alone, so 'at least N days' still includes day N", () => {
+    // NYPD-SOUND-001 publishes "file at least 5 days before use" and declares no boundary, so the
+    // default keeps day 5 valid. A blanket exclusive reading would wrongly close it.
+    const sound = evaluate(
+      { ...parkIntake, event_date: "2026-07-27" },
+      ruleset,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    expect(sound?.latestApplyDate).toBe("2026-07-22");
+    expect(sound?.deadlineStatus).not.toBe("published_deadline_missed");
+  });
+
+  it("rejects an unsupported or misplaced boundary rather than ignoring it", () => {
+    const withDeadline = (deadline: Record<string, unknown>) => () =>
+      syntheticRuleset([
+        {
+          id: "RULE-BOUND",
+          kind: "permit",
+          trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+          output: { permit_name: "x", agency: "DOB", deadline },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ]);
+    expect(
+      withDeadline({ type: "published_minimum", calendar_days: 10, boundary: "loose" }),
+    ).toThrow(/boundary has unsupported value "loose"/);
+    // A type with no single filing bound cannot be exclusive; ignoring it would hide the
+    // authoring mistake behind a plausible-looking date.
+    expect(withDeadline({ type: "research_required", boundary: "exclusive" })).toThrow(
+      /boundary cannot be exclusive on a "research_required" deadline/,
+    );
+  });
+});
+
 describe("business-day arithmetic against the pinned calendar", () => {
   it("skips weekends when counting backward", () => {
     expect(subtractBusinessDays("2026-08-11", 15, calendar)).toBe("2026-07-21");
@@ -522,7 +587,7 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.2");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.3");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });

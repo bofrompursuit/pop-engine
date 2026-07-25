@@ -8,6 +8,7 @@ import type {
   Condition,
   ConditionOperator,
   Deadline,
+  DeadlineBoundary,
   Disposition,
   EngineRule,
   EngineRuleset,
@@ -122,6 +123,30 @@ function parseTrigger(value: unknown, label: string): TriggerNode {
   return combinator === "all" ? { all: parsed } : { any: parsed };
 }
 
+/** Deadline types that express a single filing bound, so an exclusive boundary has a meaning. */
+const BOUNDED_DEADLINE_TYPES = new Set([
+  "published_minimum",
+  "published_minimum_by_level",
+  "business_days_minimum",
+]);
+
+/**
+ * Whether the published number is an inclusive or exclusive bound. Absent means inclusive, which
+ * is what every rule that says "at least N days" means. A rule that declares `exclusive` on a type
+ * with no single bound is a ruleset error rather than something to ignore quietly.
+ */
+function parseBoundary(deadline: JsonObject, type: string, label: string): DeadlineBoundary {
+  const declared = deadline.boundary;
+  if (declared === undefined) return "inclusive";
+  if (declared !== "inclusive" && declared !== "exclusive") {
+    fail(`${label}.boundary has unsupported value "${String(declared)}"`);
+  }
+  if (declared === "exclusive" && !BOUNDED_DEADLINE_TYPES.has(type)) {
+    fail(`${label}.boundary cannot be exclusive on a "${type}" deadline`);
+  }
+  return declared;
+}
+
 function parseDeadline(value: unknown, label: string): Deadline | null {
   if (value === undefined || value === null) return null;
   const deadline = asObject(value, label);
@@ -130,6 +155,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
   // The published caveat on the number itself (which instrument applies, calendar vs business
   // days). Dropping it presents a computed date as more definitive than its source is.
   const qualification = optionalString(deadline, "qualification");
+  const boundary = parseBoundary(deadline, type, label);
 
   switch (type) {
     case "published_minimum":
@@ -138,6 +164,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         calendarDays: asNumber(deadline.calendar_days, `${label}.calendar_days`),
         display,
         qualification,
+        boundary,
       };
     case "published_minimum_by_level": {
       const levels = asObject(deadline.levels, `${label}.levels`);
@@ -160,6 +187,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         levels: parsedLevels,
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
         qualification,
+        boundary,
       };
     }
     case "composite": {
@@ -174,6 +202,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         ],
         display,
         qualification,
+        boundary,
       };
     }
     case "business_days_minimum":
@@ -182,11 +211,12 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         businessDays: asNumber(deadline.business_days, `${label}.business_days`),
         display,
         qualification,
+        boundary,
       };
     case "before_issuance":
-      return { type, display, qualification };
+      return { type, display, qualification, boundary };
     case "research_required":
-      return { type, display, qualification };
+      return { type, display, qualification, boundary };
     default:
       return fail(`${label}.type has unsupported value "${type}"`);
   }

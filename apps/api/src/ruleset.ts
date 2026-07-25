@@ -25,11 +25,11 @@ export type PublishedRuleset = {
 };
 
 const EXPECTED_SCHEMA = "popengine-rules/v2";
-const EXPECTED_RULESET_VERSION = "nyc.v2.2";
+const EXPECTED_RULESET_VERSION = "nyc.v2.3";
 const EXPECTED_RULE_COUNT = 33;
 const EXPECTED_ADVISORY_COUNT = 4;
 const DEFAULT_RULES_FILE = fileURLToPath(
-  new URL("../../../rules/nyc-rules.v2.2.json", import.meta.url),
+  new URL("../../../rules/nyc-rules.v2.3.json", import.meta.url),
 );
 
 export const RULE_KINDS = new Set([

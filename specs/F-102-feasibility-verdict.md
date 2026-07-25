@@ -2,7 +2,7 @@
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-201 (same engine invocation) · **Feeds:** plan UI, F-203 slack warnings
-**Updated:** 2026-07-22 for the nyc.v2.2 baseline (layered status model, AD-10).
+**Updated:** 2026-07-22 for the nyc.v2.3 baseline (layered status model, AD-10).
 
 ## User Story
 
