@@ -107,14 +107,14 @@
     {
       "id": "SAPO-BLOCK-PARTY-ELIG-001", "kind": "eligibility",
       "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" }, { "any": [ { "field": "selling_anything", "op": "bool", "value": true }, { "field": "alcohol", "op": "bool", "value": true } ] } ] },
-      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "requirement_name": "Block party eligibility conflict", "note_text": "A block party is a community-sponsored public event with no sales of goods or services; alcohol, vendors, commercial branding, and sponsorships are not permitted. This event's inputs conflict with block-party eligibility — rescope or apply under a different SAPO class." },
+      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "requirement_name": "Block party eligibility conflict", "agency": "SAPO (Mayor's Office CECM)", "note_text": "A block party is a community-sponsored public event with no sales of goods or services; alcohol, vendors, commercial branding, and sponsorships are not permitted. This event's inputs conflict with block-party eligibility — rescope or apply under a different SAPO class." },
       "source": { "citation": "CECM block-parties page; FAQ alcohol prohibition", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" }, "exercised_by_scenarios": []
     },
     {
       "id": "SAPO-BLOCK-PARTY-SPONSOR-001", "kind": "eligibility",
       "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Block association sponsorship + neighbor permission", "note_text": "Applicants must be a member of a block association and have permission from their neighbors. Confirm before applying." },
+      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Block association sponsorship + neighbor permission", "agency": "SAPO (Mayor's Office CECM)", "note_text": "Applicants must be a member of a block association and have permission from their neighbors. Confirm before applying." },
       "source": { "citation": "CECM block-parties page", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" }, "exercised_by_scenarios": ["D"]
     },
@@ -135,7 +135,7 @@
     {
       "id": "SAPO-INSURANCE-BLOCK-PARTY-RIDE-001", "kind": "insurance",
       "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" }, { "field": "has_amusement_ride", "op": "bool", "value": true } ] },
-      "output": { "requirement_name": "Insurance required (block party WITH ride)", "note_text": "Block parties are exempt from the baseline $1M requirement, but 'block parties wishing to have rides must also provide insurance' (CECM FAQ); rides/inflatables also need a DOB inspection certificate." },
+      "output": { "requirement_name": "Insurance required (block party WITH ride)", "agency": "SAPO (Mayor's Office CECM)", "note_text": "Block parties are exempt from the baseline $1M requirement, but 'block parties wishing to have rides must also provide insurance' (CECM FAQ); rides/inflatables also need a DOB inspection certificate." },
       "source": { "citation": "CECM FAQ + block-parties page", "urls": ["https://www.nyc.gov/site/cecm/support/frequently-asked-questions.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §4 (Round 1)" }, "exercised_by_scenarios": []
     },
@@ -149,7 +149,7 @@
     {
       "id": "NYPD-SOUND-PARKS-DEP-001", "kind": "dependency",
       "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "park" } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Parks amplified-sound permission precedes NYPD pursuit", "note_text": "NYC Parks controls amplified-sound permission through its event review; obtain it before pursuing the NYPD sound permit. A strict issued-before-filed sequence is not confirmed by located primary text — confirm exact sequencing with the Parks permit office or precinct." },
+      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Parks amplified-sound permission precedes NYPD pursuit", "agency": "NYC Parks", "note_text": "NYC Parks controls amplified-sound permission through its event review; obtain it before pursuing the NYPD sound permit. A strict issued-before-filed sequence is not confirmed by located primary text — confirm exact sequencing with the Parks permit office or precinct." },
       "source": { "citation": "nycgovparks.org special event guidance", "urls": ["https://www.nycgovparks.org/permits/special-events/guide"] },
       "verification": { "status": "SOURCE_CONFIRMED", "qualification": "sequencing detail RESEARCH_REQUIRED", "evidence": "VS Round2 unresolved list" }, "exercised_by_scenarios": ["C"]
     },
@@ -219,7 +219,7 @@
     {
       "id": "PARKS-PROPANE-001", "kind": "prohibition",
       "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "open_flame_or_cooking", "op": "contains_any", "value": ["propane_lpg"] } ] },
-      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "note_text": "Propane grills are prohibited in NYC parks. Barbecuing is limited to designated areas in certain parks and beaches; cooking outside designated areas is not allowed." },
+      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "agency": "NYC Parks", "note_text": "Propane grills are prohibited in NYC parks. Barbecuing is limited to designated areas in certain parks and beaches; cooking outside designated areas is not allowed." },
       "source": { "citation": "NYC311 barbecuing article KA-02228", "urls": ["https://portal.311.nyc.gov/article/?kanumber=KA-02228"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §2 (Round 1); 'designated areas' wording per RF-7" }, "exercised_by_scenarios": []
     },
@@ -311,12 +311,14 @@
       "id": "ADV-NOISE-CODE-001", "kind": "advisory",
       "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "sound_audible_from_public_way", "op": "in", "value": ["no", "unknown"] } ] },
       "output": { "advisory_text": "No NYPD sound permit identified for fully-indoor, non-projecting amplified sound — the NYC noise code still applies (Admin Code §24-244; commercial music 42 dB(A) limit inside receiving dwellings, §24-231). If sound will be audible on an adjacent street, park, or public place, the sound-device permit is in scope." },
+      "source": { "citation": "NYC Admin Code §24-244 (sound reproduction devices) + §24-231 (commercial music limit)", "urls": ["https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209196", "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209184"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §10 (Round 1)" }, "exercised_by_scenarios": ["F"]
     },
     {
       "id": "ADV-VENUE-OCCUPANCY-001", "kind": "advisory",
       "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "private_venue" } ] },
       "output": { "advisory_text": "The venue's certificate of occupancy / legal use governs capacity regardless of permits. Below 75 indoors, ordinary assembly certification is typically not triggered [thresholds source-confirmed]; confirm the venue's permitted use and occupancy." },
+      "source": { "citation": "DOB Place of Assembly Certificate of Operation (PACO) thresholds", "urls": ["https://www.nyc.gov/site/buildings/dob/project-categories-paco.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §6 (Round 1)" }, "exercised_by_scenarios": ["B", "F"]
     }
   ],

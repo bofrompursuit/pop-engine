@@ -31,6 +31,16 @@ function firstCondition(ruleset: JsonObject): JsonObject {
   return object(array(object(firstRule(ruleset).trigger).all)[0]);
 }
 
+function ruleById(ruleset: JsonObject, id: string): JsonObject {
+  const found = [...array(ruleset.rules), ...array(ruleset.advisories)]
+    .map(object)
+    .find((rule) => rule.id === id);
+  if (found === undefined) {
+    throw new Error(`fixture expects rule ${id} to exist in the published ruleset`);
+  }
+  return found;
+}
+
 afterEach(() => {
   if (originalRulesFile === undefined) {
     delete process.env.RULES_FILE;
@@ -50,6 +60,33 @@ describe("ruleset validation", () => {
     expect(ruleset.intakeFields).toHaveLength(32);
     expect(ruleset.rules).toHaveLength(33);
     expect(ruleset.advisories).toHaveLength(4);
+  });
+
+  it("pins which published rules are exempt from agency and source", async () => {
+    // The exemptions are deliberate, so they are named here rather than merely
+    // permitted. A future rule that quietly joins either list has to change this test.
+    delete process.env.RULES_FILE;
+    const { rules, advisories } = await loadRuleset();
+    const all = [...rules, ...advisories];
+
+    // Issue #77: advisory / note / classification describe a condition rather than a
+    // filing, so they may omit the agency. Everything else must name one.
+    expect(all.filter((rule) => rule.output.agency === undefined).map((rule) => rule.id)).toEqual([
+      "SAPO-SCOPE-001",
+      "PARKS-INSURANCE-NOTE-001",
+      "DOHMH-EXEMPTION-001",
+      "SLA-VENUE-LICENSE-001",
+      "ADV-ALCOHOL-PUBLIC-001",
+      "ADV-SAPO-OTHER-CLASS-001",
+      "ADV-NOISE-CODE-001",
+      "ADV-VENUE-OCCUPANCY-001",
+    ]);
+
+    // Issue #75: only a COVERAGE_GAP advisory, which asserts nothing, may omit its source.
+    expect(all.filter((rule) => rule.source === null).map((rule) => rule.id)).toEqual([
+      "ADV-ALCOHOL-PUBLIC-001",
+      "ADV-SAPO-OTHER-CLASS-001",
+    ]);
   });
 
   it("honors RULES_FILE", async () => {
@@ -216,6 +253,22 @@ describe("ruleset validation", () => {
         object(firstRule(ruleset).verification).status = "UNREVIEWED";
       },
       error: /verification.status has unsupported value/,
+    },
+    {
+      // Issue #77: a finding that directs the organizer to act with a body must name it.
+      name: "an agency-required kind with no agency",
+      mutate: (ruleset) => {
+        delete object(ruleById(ruleset, "PARKS-PROPANE-001").output).agency;
+      },
+      error: /output.agency must be a non-empty string/,
+    },
+    {
+      // Issue #75: only a COVERAGE_GAP advisory, which asserts nothing, may omit its source.
+      name: "a non-COVERAGE_GAP advisory with no source",
+      mutate: (ruleset) => {
+        delete ruleById(ruleset, "ADV-NOISE-CODE-001").source;
+      },
+      error: /source is required unless verification.status is COVERAGE_GAP/,
     },
   ])("rejects $name", async ({ mutate, error }) => {
     const ruleset = await readRawRuleset();

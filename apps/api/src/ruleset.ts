@@ -44,6 +44,20 @@ const RULE_KINDS = new Set([
   "advisory",
   "note",
 ]);
+// Kinds whose finding directs the organizer to act with a specific body, so the
+// agency must be published (issue #77). advisory / note / classification describe a
+// condition rather than a filing and may omit it; ADV-NOISE-CODE-001 has no single
+// acting agency (DEP and NYPD share Noise Code enforcement) and ADV-ALCOHOL-PUBLIC-001
+// deliberately names none.
+const AGENCY_REQUIRED_KINDS = new Set([
+  "permit",
+  "insurance",
+  "notification",
+  "registration",
+  "eligibility",
+  "prohibition",
+  "dependency",
+]);
 const CONDITION_OPERATORS = new Set(["eq", "in", "gt", "gte", "bool", "contains", "contains_any"]);
 const VERIFICATION_STATUSES = new Set([
   "SOURCE_CONFIRMED",
@@ -128,7 +142,6 @@ function parseRule(
   value: unknown,
   label: string,
   declaredFields: ReadonlySet<string>,
-  requiresSource: boolean,
 ): PublishedRule {
   const rule = requireObject(value, label);
   const id = requireString(rule, "id", label);
@@ -145,6 +158,10 @@ function parseRule(
   }
 
   const output = requireObject(rule.output, `${label}.output`);
+  if (AGENCY_REQUIRED_KINDS.has(kind)) {
+    requireString(output, "agency", `${label}.output`);
+  }
+
   const verification = requireObject(rule.verification, `${label}.verification`);
   const verificationStatus = requireString(verification, "status", `${label}.verification`);
   if (!VERIFICATION_STATUSES.has(verificationStatus)) {
@@ -152,10 +169,9 @@ function parseRule(
   }
 
   const source = rule.source === undefined ? null : parseSource(rule.source, `${label}.source`);
-  if (requiresSource && source === null) {
-    validationError(`${label}.source is required`);
+  if (source === null && verificationStatus !== "COVERAGE_GAP") {
+    validationError(`${label}.source is required unless verification.status is COVERAGE_GAP`);
   }
-
   return { id, kind, trigger, output, verification, source };
 }
 
@@ -214,10 +230,10 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   }
 
   const rules = ruleValues.map((rule, index) =>
-    parseRule(rule, `ruleset.rules[${index}]`, declaredFields, true),
+    parseRule(rule, `ruleset.rules[${index}]`, declaredFields),
   );
   const advisories = advisoryValues.map((rule, index) =>
-    parseRule(rule, `ruleset.advisories[${index}]`, declaredFields, false),
+    parseRule(rule, `ruleset.advisories[${index}]`, declaredFields),
   );
 
   const ids = new Set<string>();
