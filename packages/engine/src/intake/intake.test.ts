@@ -423,15 +423,34 @@ describe("the six scenario fixtures are enterable (spec #1)", () => {
     // the registry. This test is expected to change when #88 is resolved.
     const asWritten = scenarioFixture("F").intake;
     expect(scenarioFixture("F").inferred).toEqual({
+      battery_present: { value: false, conflictIssue: 106 },
       food_vendor_count: { value: 1, conflictIssue: 88 },
     });
-    expect(codesFor(asWritten)).toEqual({ food_vendor_count: "required" });
+    expect(codesFor(asWritten)).toEqual({
+      battery_present: "required",
+      food_vendor_count: "required",
+    });
   });
 
-  it("states no inferred value for the five scenarios the key specifies in full", () => {
-    for (const fixture of SCENARIO_INTAKE_FIXTURES.filter((entry) => entry.scenario !== "F")) {
-      expect(fixture.inferred, `scenario ${fixture.scenario}`).toBeUndefined();
-    }
+  it("marks every supplied answer as inferred, and nothing the key states", () => {
+    // The register of what the fixtures supply beyond the approved key, asserted exactly so a new
+    // supplied value cannot arrive unlisted. Both entries here are open conflicts: #88 is Scenario
+    // F's food_vendor_count; #106 is battery_present, which nyc.v2.5 asks of every event while the
+    // key states an answer for E only ("battery none") and C only by "nothing else".
+    const supplied = Object.fromEntries(
+      SCENARIO_INTAKE_FIXTURES.map((fixture) => [
+        fixture.scenario,
+        Object.keys(fixture.inferred ?? {}).sort(),
+      ]),
+    );
+    expect(supplied).toEqual({
+      A: ["battery_present"],
+      B: ["battery_present"],
+      C: [],
+      D: ["battery_present"],
+      E: [],
+      F: ["battery_present", "food_vendor_count"],
+    });
   });
 
   it("stores every question the scenario was not asked as null", () => {

@@ -481,6 +481,13 @@ function parseRule(
     dedupeKey: optionalString(output, "dedupe_key"),
     verificationStatus,
     verificationQualification: optionalString(verification, "qualification"),
+    // Parsed and carried on the rule, and deliberately no further: `buildFinding` does not copy it
+    // to `Finding` and `insertPlan` still writes null to permit_plan_items.last_verified_date. It
+    // is null for every rule in nyc.v2.5, so nothing is lost today, and carrying it through would
+    // require deciding what a dedupe-merged finding's last-verified date is when two rules disagree
+    // — the older, the newer, or neither. No approved artifact says, so that is a contract to
+    // publish rather than a line to guess at here. F-206 should read this as: the schema accepts
+    // the field, the plan pipeline does not carry it yet.
     verificationLastVerifiedDate: optionalString(verification, "last_verified_date"),
     source: parseSource(rule.source, `${label}.source`),
   };

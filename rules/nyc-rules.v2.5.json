@@ -5,7 +5,7 @@
   "snapshot_date": "2026-07-25",
   "supersedes": ["nyc.v1", "nyc.v2.1", "nyc.v2.2", "nyc.v2.3", "nyc.v2.4"],
   "status": "APPROVED — team ratification 2026-07-22 (docs/BASELINE.md); republished as nyc.v2.2, nyc.v2.3 and nyc.v2.4 on 2026-07-25, and as nyc.v2.5 on 2026-07-25 after a scoping correction the product owner authorized. Published artifact for the capstone build. Per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build via each rule's verification block (OPEN-QUESTIONS §2); only the verification owner (Dev 4) changes a per-fact verification status (CONTRIBUTING Golden Rule 2). The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
-  "provenance": "Demo-scoped corrected subset. Structure follows the nyc.v2 draft (rules/proposals/); every fact carries a verification status and an evidence reference into docs/VERIFICATION-SOURCES.md. CHANGE FROM nyc.v2.4, and unlike v2.2–v2.4 this one MOVES APPROVED ANSWER-KEY OUTPUT. (1) SCOPING: a new collected boolean battery_present gates battery_system_kwh, which previously had no asked_when and is nullable, so it was in scope and unanswered for every event. That made FDNY-GENERATOR-001's battery disjunct tri-state unknown and the whole any(...) unknown, and the rule was reported as MAY_BE_REQUIRED in the five approved scenarios that have no generator at all (A, B, C, D, F). Over-prescribing is a named failure mode (F-201 AC 4). battery_present = false now resolves that disjunct to false through the not-asked path, and the five scenarios lose the finding; docs/test-scenario-answer-key.md is updated in the same change. No threshold moves: 2.5 gallons, 10 gallons and 20 kWh are unchanged, and Scenario E still fires the rule on gasoline alone. The alternative of gating battery_system_kwh on generator_present was rejected: it would stop a battery-only event being asked at all, turning an over-prescription into a false omission, which F-201 AC 7 ranks worse. (2) SCHEMA: verification.last_verified_date is accepted as an optional per-rule field, restoring a field the nyc.v1 schema carried (docs/VERIFICATION-SOURCES.md §next steps) and the v2 schema dropped. permit_plan_items.last_verified_date and F-206's per-line date have had a column and a writer since migration 001 with no source to read. It is populated for NO rule here: every fact is still pre-VERIFIED and a date this repo cannot evidence would be an invented permit fact. The schema can carry it when verification rounds resume. CARRIED FORWARD from nyc.v2.4: SAPO-PLAZA-001's by-level deadline publishes level_field and multi_block_field, and DOB-TENT-001's 400 sq ft threshold publishes boundary \"conditional\". From nyc.v2.3: DOB-ASSEMBLY-001 publishes boundary \"exclusive\". From nyc.v2.2: DOHMH-ORGANIZER-NOTIFY-001 publishes output.disposition MAY_BE_REQUIRED. snapshot_date stays 2026-07-25: no source was re-fetched.",
+  "provenance": "Demo-scoped corrected subset. Structure follows the nyc.v2 draft (rules/proposals/); every fact carries a verification status and an evidence reference into docs/VERIFICATION-SOURCES.md. CHANGE FROM nyc.v2.4. Unlike v2.2–v2.4 this one CHANGES EVALUATED OUTPUT; it does not move approved answer-key output. The answer key lists FDNY-GENERATOR-001 in Scenario E only, so the engine was emitting a finding the approved key does not document, and this bump removes that false addition (F-201 AC 7). No expected-finding block changes. (1) SCOPING: a new collected boolean battery_present gates battery_system_kwh, which previously had no asked_when and is nullable, so it was in scope and unanswered for every event. That made FDNY-GENERATOR-001's battery disjunct tri-state unknown and the whole any(...) unknown, and the rule was reported as MAY_BE_REQUIRED in the five approved scenarios that have no generator at all (A, B, C, D, F). Over-prescribing is a named failure mode (F-201 AC 4). battery_present = false now resolves that disjunct to false through the not-asked path, and the five scenarios stop reporting a finding their expected-findings blocks never listed. No threshold moves: 2.5 gallons, 10 gallons and 20 kWh are unchanged, and Scenario E still fires the rule on gasoline alone. The alternative of gating battery_system_kwh on generator_present was rejected: it would stop a battery-only event being asked at all, turning an over-prescription into a false omission, which F-201 AC 7 ranks worse. The mechanism, recorded here rather than in the questionnaire an organizer reads: battery_system_kwh had no asked_when and is nullable, so it was in scope and unanswered for every event; that made the battery arm of FDNY-GENERATOR-001's any(...) tri-state unknown and the whole trigger with it. (2) METADATA: ADV-VENUE-OCCUPANCY-001, DOB-ASSEMBLY-001 and ADV-NOISE-CODE-001 gain \"A-rescope\" in exercised_by_scenarios. Scenario A's private-venue rescope reaches all three, and the answer key already documents that at line 37 (\"venue-occupancy advisory + DOHMH findings remain\"), so this makes the metadata match a claim the approved key already makes. exercised_by_scenarios is test-coverage metadata: no engine code reads it — only the fixture-agreement guard does — so it moves no verdict and no regulatory content. Published under v2.5 because it lives in this file. (3) SCHEMA: verification.last_verified_date is accepted as an optional per-rule field, restoring a field the nyc.v1 schema carried (docs/VERIFICATION-SOURCES.md §next steps) and the v2 schema dropped. permit_plan_items.last_verified_date and F-206's per-line date have had a column and a writer since migration 001 with no source to read. It is populated for NO rule here: every fact is still pre-VERIFIED and a date this repo cannot evidence would be an invented permit fact. The schema can carry it when verification rounds resume. CARRIED FORWARD from nyc.v2.4: SAPO-PLAZA-001's by-level deadline publishes level_field and multi_block_field, and DOB-TENT-001's 400 sq ft threshold publishes boundary \"conditional\". From nyc.v2.3: DOB-ASSEMBLY-001 publishes boundary \"exclusive\". From nyc.v2.2: DOHMH-ORGANIZER-NOTIFY-001 publishes output.disposition MAY_BE_REQUIRED. snapshot_date stays 2026-07-25: no source was re-fetched.",
   "status_legend": {
     "SOURCE_CONFIRMED": "fetch-confirmed primary-source quote on file in VERIFICATION-SOURCES.md; pending verification-owner promotion to VERIFIED",
     "VERIFIED": "verification owner confirmed against primary source (none at publication; only the verification owner assigns this)",
@@ -222,7 +222,7 @@
       "field": "battery_present",
       "type": "boolean",
       "collected": true,
-      "note": "Asked of every event, like generator_present: an unanswered battery question left FDNY-GENERATOR-001's battery disjunct unknown, so every organizer with no generator was told a fire-department permit may be required."
+      "note": "A rechargeable battery system used to power the event — a portable power station or battery pack you bring to run equipment. Phone chargers and laptop batteries do not count."
     },
     {
       "field": "battery_system_kwh",
@@ -1514,7 +1514,7 @@
         "qualification": "lead wording variance",
         "evidence": "VS §6 (Round 1)"
       },
-      "exercised_by_scenarios": ["F"]
+      "exercised_by_scenarios": ["F", "A-rescope"]
     },
     {
       "id": "SLA-VENUE-LICENSE-001",
@@ -1733,7 +1733,7 @@
         "status": "SOURCE_CONFIRMED",
         "evidence": "VS §10 (Round 1)"
       },
-      "exercised_by_scenarios": ["F"]
+      "exercised_by_scenarios": ["F", "A-rescope"]
     },
     {
       "id": "ADV-VENUE-OCCUPANCY-001",
@@ -1758,7 +1758,7 @@
         "status": "SOURCE_CONFIRMED",
         "evidence": "VS §6 (Round 1)"
       },
-      "exercised_by_scenarios": ["B", "F"]
+      "exercised_by_scenarios": ["B", "F", "A-rescope"]
     }
   ],
   "reference_tables": {

@@ -6,12 +6,19 @@
 // structures" / "no flame" are the registry's exclusive `none` option (the columns are
 // NOT NULL).
 //
-// One value is NOT from the answer key. Scenario F states catered food but no
-// `food_vendor_count`, which the registry makes mandatory whenever food is present, so
-// the scenario cannot be entered exactly as written. That contradiction between two
-// APPROVED artifacts is filed as SPEC-CONFLICT #88 and is not resolved here; the
-// inferred value is listed separately below so no test can claim the scenario is
-// entered as written while it stands.
+// Two kinds of value are NOT from the answer key, and both are listed separately below so no
+// test can claim a scenario is entered as written while the contradiction stands.
+//
+// Scenario F states catered food but no `food_vendor_count`, which the registry makes mandatory
+// whenever food is present, so the scenario cannot be entered exactly as written. Filed as
+// SPEC-CONFLICT #88.
+//
+// Scenarios A, B, D and F state no battery answer at all, and nyc.v2.5 asks `battery_present` of
+// every event. This one matters more than a missing fact usually would: it is the input that
+// decides whether FDNY-GENERATOR-001 fires, so a supplied `false` would have the green-gate suite
+// proving a ruleset change with an input the key never documents. Filed as SPEC-CONFLICT #106.
+// Scenario E is transcribed, not inferred — the key states "battery none" at line 82 — and
+// Scenario C's Inputs line ends "nothing else", which covers it.
 //
 // Imported as `@pop-engine/engine/fixtures`.
 
@@ -60,8 +67,10 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       structure_types: ["none"],
       open_flame_or_cooking: ["none"],
       generator_present: false,
-      battery_present: false,
       alcohol: false,
+    },
+    inferred: {
+      battery_present: { value: false, conflictIssue: 106 },
     },
   },
   {
@@ -81,8 +90,10 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       structure_types: ["none"],
       open_flame_or_cooking: ["none"],
       generator_present: false,
-      battery_present: false,
       alcohol: false,
+    },
+    inferred: {
+      battery_present: { value: false, conflictIssue: 106 },
     },
   },
   {
@@ -124,8 +135,10 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       structure_types: ["none"],
       open_flame_or_cooking: ["charcoal_wood"],
       generator_present: false,
-      battery_present: false,
       alcohol: false,
+    },
+    inferred: {
+      battery_present: { value: false, conflictIssue: 106 },
     },
   },
   {
@@ -176,7 +189,6 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       structure_types: ["none"],
       open_flame_or_cooking: ["none"],
       generator_present: false,
-      battery_present: false,
       alcohol: true,
       venue_license_covers_event_area: "unknown",
       venue_has_assembly_approval: "unknown",
@@ -184,6 +196,9 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
     // Not in the answer key. The scenario says the food is catered and stops there,
     // while the registry requires a count whenever food is present (SPEC-CONFLICT #88).
     // One caterer is the reading that lets the fixture run; it is not an approved value.
-    inferred: { food_vendor_count: { value: 1, conflictIssue: 88 } },
+    inferred: {
+      battery_present: { value: false, conflictIssue: 106 },
+      food_vendor_count: { value: 1, conflictIssue: 88 },
+    },
   },
 ];

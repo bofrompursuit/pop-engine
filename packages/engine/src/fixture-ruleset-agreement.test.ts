@@ -258,30 +258,6 @@ const KNOWN_DISAGREEMENTS: readonly {
   issue: string;
 }[] = [
   {
-    scenarios: ["A-rescope"],
-    ruleId: "ADV-VENUE-OCCUPANCY-001",
-    kind: "reaches-scenario-it-omits",
-    issue:
-      "#89: Scenario A's private-venue rescope newly reaches this advisory — the key's own rescope " +
-      "(c) says the venue-occupancy advisory remains — but its exercised_by_scenarios does not name " +
-      "A-rescope. Surfaced by evaluating the rescopes rather than only admitting the name.",
-  },
-  {
-    scenarios: ["A-rescope"],
-    ruleId: "DOB-ASSEMBLY-001",
-    kind: "reaches-scenario-it-omits",
-    issue:
-      "#89: same private-venue rescope, same omission. The rescope moves the event indoors, which " +
-      "is what reaches the assembly rule; whether a rescope-only rule should carry A-rescope at all " +
-      "is the product decision, so both are recorded rather than resolved here.",
-  },
-  {
-    scenarios: ["A-rescope"],
-    ruleId: "ADV-NOISE-CODE-001",
-    kind: "reaches-scenario-it-omits",
-    issue: "#89: same private-venue rescope, same omission.",
-  },
-  {
     scenarios: ["F"],
     ruleId: "ADV-VENUE-OCCUPANCY-001",
     kind: "reaches-but-key-omits",
