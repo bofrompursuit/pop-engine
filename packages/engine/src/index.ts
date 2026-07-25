@@ -25,6 +25,7 @@ export type { IntakeIssue, IntakeRecord, IntakeValidation } from "./intake/valid
 export {
   intakeColumnNames,
   intakeWarnings,
+  isIntakeUnchanged,
   mergeIntakeEdit,
   validateIntake,
 } from "./intake/validate";

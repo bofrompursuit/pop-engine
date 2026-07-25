@@ -578,6 +578,22 @@ describe("editing a saved event", () => {
     expect(edit.headcount).toBe(75);
   });
 
+  it("drops a warning as soon as its answer stops applying, before any save", async () => {
+    // A published regulatory notice must not stand against a scope the event no longer
+    // has. The organizer sees the rescope take effect immediately; waiting for a
+    // successful save would leave a block-party notice on a park event in between.
+    const user = renderForm();
+    await answerSellingStreetEvent(user, "block_party");
+    expect(screen.getByRole("status").textContent).toContain(
+      contract.blockPartyEligibilityNotice.text,
+    );
+
+    await chooseOption(user, "location_type", "park");
+    expect(questionsOnScreen()).not.toContain("Sapo event type");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("drops a warning whose answers the save cleared", async () => {
     // The stored row is what the plan will be built from, so a warning about answers
     // the row no longer holds is a false alarm the organizer cannot act on.
@@ -598,6 +614,74 @@ describe("editing a saved event", () => {
     await waitFor(() => expect(screen.getByText(/Saved as revision 2/)).toBeDefined());
     expect(requestBody(fetchMock, 1).sapo_event_type).toBeNull();
     expect(screen.queryByText(contract.blockPartyEligibilityNotice.text)).toBeNull();
+  });
+
+  it("keeps what was typed while the save was in flight", async () => {
+    // The rebuild from the stored row must not roll back edits the organizer made
+    // after pressing Save: those answers are newer than the response.
+    const user = renderForm();
+    await answerParkEvent(user);
+    await fillField(user, "capacity", "400");
+
+    let releaseSave: (response: Response) => void = () => {};
+    let submitted: RequestInit | undefined;
+    fetchMock.mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          submitted = init;
+          releaseSave = resolve;
+        }),
+    );
+    await save(user);
+
+    // Still editing while the request is open: one answer changed, one cleared.
+    await fillField(user, "headcount", "175");
+    await fillField(user, "location_name", "Long Meadow");
+    await user.clear(document.querySelector<HTMLInputElement>('input[name="capacity"]')!);
+    releaseSave(echoSavedEvent(201, submitted as RequestInit));
+
+    await waitFor(() => expect(screen.getByText(/Saved as revision 1/)).toBeDefined());
+    expect(document.querySelector<HTMLInputElement>('input[name="headcount"]')?.value).toBe("175");
+    expect(document.querySelector<HTMLInputElement>('input[name="location_name"]')?.value).toBe(
+      "Long Meadow",
+    );
+    // The response carried capacity 400; clearing it after the submission wins.
+    expect(document.querySelector<HTMLInputElement>('input[name="capacity"]')?.value).toBe("");
+
+    // And the next save sends the newer answers, not the ones the response carried.
+    await save(user);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(requestBody(fetchMock, 1).headcount).toBe(175);
+    expect(requestBody(fetchMock, 1).location_name).toBe("Long Meadow");
+    expect(requestBody(fetchMock, 1).capacity).toBeNull();
+  });
+
+  it("still takes the stored value for answers left alone during the save", async () => {
+    const user = renderForm();
+    await answerSellingStreetEvent(user);
+
+    let releaseSave: (response: Response) => void = () => {};
+    let submitted: RequestInit | undefined;
+    fetchMock.mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          submitted = init;
+          releaseSave = resolve;
+        }),
+    );
+    await save(user);
+    await fillField(user, "headcount", "80");
+
+    // The api normalises an answer the organizer did not touch during the request.
+    releaseSave(
+      echoSavedEvent(201, submitted as RequestInit, { name: "Bushwick Street Activation (SAPO)" }),
+    );
+
+    await waitFor(() => expect(screen.getByText(/Saved as revision 1/)).toBeDefined());
+    expect(document.querySelector<HTMLInputElement>('input[name="name"]')?.value).toBe(
+      "Bushwick Street Activation (SAPO)",
+    );
+    expect(document.querySelector<HTMLInputElement>('input[name="headcount"]')?.value).toBe("80");
   });
 
   it("shows a re-revealed question as cleared, not as it was before the save", async () => {

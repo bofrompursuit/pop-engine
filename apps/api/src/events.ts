@@ -4,6 +4,7 @@ import { types, type Pool } from "pg";
 import {
   intakeColumnNames,
   intakeWarnings,
+  isIntakeUnchanged,
   mergeIntakeEdit,
   validateIntake,
   type IntakeAnswers,
@@ -170,7 +171,14 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
         res.status(400).json({ errors, warnings });
         return;
       }
-      await respondWithEvent(dependencies, res, await update(stored.id, values), 200);
+      // A save that changes no answer is not an edit (AD-13), so it leaves the revision
+      // counter alone. Bumping it would report a plan as stale against an intake it
+      // still matches exactly, forcing a regeneration that can only produce the same
+      // plan. Checked here rather than in the client so it holds for every caller.
+      const event = isIntakeUnchanged(intakeContract, stored, values)
+        ? stored
+        : await update(stored.id, values);
+      await respondWithEvent(dependencies, res, event, 200);
     }),
   );
 

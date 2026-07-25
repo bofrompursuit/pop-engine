@@ -202,6 +202,50 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       expect((await request(api).get(`/api/events/${event.id}`)).body.plan_stale).toBe(true);
     });
 
+    it("leaves the revision and the plan alone when a save changes nothing", async () => {
+      // A no-op save is not an edit (AD-13). Bumping the counter would report a plan as
+      // stale against an intake it still matches exactly, forcing a regeneration that
+      // could only produce the same plan.
+      const event = await createStreetEvent();
+      await database.query(
+        `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, verdict,
+                                   verdict_detail, intake_snapshot)
+         VALUES ($1, $2, 1, 'nyc.v2.1', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+        [randomUUID(), event.id],
+      );
+
+      const stored = await request(api).get(`/api/events/${event.id}`);
+      const resaved = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send(
+          Object.fromEntries(
+            Object.entries(stored.body.event).filter(
+              ([column]) =>
+                !["id", "status", "revision_counter", "created_at", "updated_at"].includes(column),
+            ),
+          ),
+        );
+
+      expect(resaved.status).toBe(200);
+      expect(resaved.body.event.revision_counter).toBe(1);
+      expect(resaved.body.plan_stale).toBe(false);
+      expect(resaved.body.event.updated_at).toBe(stored.body.event.updated_at);
+      expect((await request(api).get(`/api/events/${event.id}`)).body.plan_stale).toBe(false);
+    });
+
+    it("reads a re-ticked multi-select as unchanged but a different one as an edit", async () => {
+      const event = await createStreetEvent();
+      const reordered = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ open_flame_or_cooking: ["none"] });
+      expect(reordered.body.event.revision_counter).toBe(1);
+
+      const changed = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ open_flame_or_cooking: ["charcoal_wood"] });
+      expect(changed.body.event.revision_counter).toBe(2);
+    });
+
     it("saves a rescope that hides questions, without the client clearing them", async () => {
       // Regression: a street event moved to a park used to be unsavable. The merge kept
       // the stored SAPO answers, validation rejected them as not_applicable, and their

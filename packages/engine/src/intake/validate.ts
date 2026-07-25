@@ -174,16 +174,58 @@ export function mergeIntakeEdit(
   return merged;
 }
 
-/** The spec's inline warnings for a set of answers. Never blocking; safe to recompute. */
+/**
+ * Whether two answers to the same question say the same thing. Multi-selects are sets,
+ * so the order the options were ticked in is not part of the answer.
+ */
+function isSameAnswer(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    const sorted = (values: unknown[]) => [...values].map(String).sort();
+    return sorted(left).every((value, index) => value === sorted(right)[index]);
+  }
+  return (left ?? null) === (right ?? null);
+}
+
+/**
+ * Whether a validated intake says anything the stored row does not already say.
+ *
+ * A save that changes no answer is not an edit, so it must not bump the revision
+ * counter or make a plan stale (AD-13: the counter increments on an intake edit).
+ */
+export function isIntakeUnchanged(
+  contract: IntakeContract,
+  stored: Readonly<Record<string, unknown>>,
+  values: IntakeRecord,
+): boolean {
+  return intakeColumnNames(contract).every((column) =>
+    isSameAnswer(stored[column], values[column]),
+  );
+}
+
+/**
+ * The spec's inline warnings for a set of answers. Never blocking; safe to recompute.
+ *
+ * Only answers to questions this event is currently asked count. An answer whose
+ * question is no longer asked is not an answer, and a published regulatory notice must
+ * never be shown for a scope the event no longer has — the moment a street event is
+ * moved to a park, its block-party classification stops applying, whether or not the
+ * row has been saved yet.
+ */
 export function intakeWarnings(contract: IntakeContract, answers: IntakeAnswers): IntakeIssue[] {
   const warnings: IntakeIssue[] = [];
+  const asked = askedFieldNames(contract.fields, answers);
+  const applicable = (field: string): IntakeValue =>
+    asked.has(field) ? (answers[field] ?? null) : null;
 
   // Spec #4: a block party that sells or serves alcohol conflicts with block-party
   // eligibility. Warn inline, store the answers as given; the plan renders the
   // PROHIBITED_OR_INELIGIBLE finding.
   if (
-    answers.sapo_event_type === "block_party" &&
-    (answers.selling_anything === true || answers.alcohol === true)
+    applicable("sapo_event_type") === "block_party" &&
+    (applicable("selling_anything") === true || applicable("alcohol") === true)
   ) {
     warnings.push(
       noticeIssue(
@@ -197,10 +239,11 @@ export function intakeWarnings(contract: IntakeContract, answers: IntakeAnswers)
   // Spec #5: alcohol in public space is outside this ruleset version's coverage. The
   // public location types are every location type other than the private venue; the
   // engine tests pin this against ADV-ALCOHOL-PUBLIC-001's own trigger.
+  const locationType = applicable("location_type");
   if (
-    answers.alcohol === true &&
-    typeof answers.location_type === "string" &&
-    answers.location_type !== "private_venue"
+    applicable("alcohol") === true &&
+    typeof locationType === "string" &&
+    locationType !== "private_venue"
   ) {
     warnings.push(noticeIssue("alcohol", "coverage_gap", contract.alcoholInPublicSpaceNotice));
   }

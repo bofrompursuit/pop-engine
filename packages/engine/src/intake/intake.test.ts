@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseIntakeContract } from "./registry";
 import { askedFields } from "./visibility";
-import { mergeIntakeEdit, validateIntake } from "./validate";
+import { isIntakeUnchanged, mergeIntakeEdit, validateIntake } from "./validate";
 import {
   FIXTURE_TODAY,
   SCENARIO_INTAKE_FIXTURES,
@@ -710,6 +710,100 @@ describe("inline warnings do not block submission (spec #4, #5)", () => {
     );
     expect(result.values).toBeNull();
     expect(result.warnings).toHaveLength(1);
+  });
+
+  it("stops warning the moment the answer behind it stops applying", () => {
+    // A published notice must never be shown for a scope the event no longer has. The
+    // block-party classification is not asked of a park, so it cannot be what makes a
+    // park event ineligible — regardless of whether the change has been saved yet.
+    const sellingBlockParty = { ...scenario("D"), selling_anything: true };
+    expect(warningsFor(sellingBlockParty).map((warning) => warning.code)).toEqual([
+      "block_party_eligibility_conflict",
+    ]);
+
+    // The block-party answer is still sitting in the submission; a park is simply not
+    // asked it, so it no longer says anything about this event.
+    const movedToAPark: Record<string, unknown> = {
+      ...sellingBlockParty,
+      location_type: "park",
+    };
+    expect(movedToAPark.sapo_event_type).toBe("block_party");
+    expect(warningsFor(movedToAPark)).toEqual([]);
+  });
+
+  it("stops warning about alcohol once the location is no longer public", () => {
+    const alcoholInAPark = { ...scenario("C"), alcohol: true };
+    expect(warningsFor(alcoholInAPark).map((warning) => warning.code)).toEqual(["coverage_gap"]);
+    expect(warningsFor({ ...alcoholInAPark, location_type: "private_venue" })).toEqual([]);
+  });
+});
+
+describe("recognising a save that changes nothing (AD-13)", () => {
+  const storedRow = (id: string): Record<string, unknown> => {
+    const values = validateIntake(contract, scenario(id), FIXTURE_TODAY).values;
+    if (values === null) throw new Error(`fixture ${id} does not validate`);
+    return { ...values };
+  };
+  const validated = (submission: Record<string, unknown>) => {
+    const values = validateIntake(contract, submission, FIXTURE_TODAY).values;
+    if (values === null) throw new Error("submission does not validate");
+    return values;
+  };
+
+  it("sees a resubmitted intake as unchanged", () => {
+    expect(isIntakeUnchanged(contract, storedRow("E"), validated(scenario("E")))).toBe(true);
+  });
+
+  it("sees a changed answer of every shape", () => {
+    const stored = storedRow("E");
+    for (const edit of [
+      { headcount: 301 },
+      { plaza_level: "b" },
+      { plaza_multiple_blocks: true },
+      { tent_area_sqft: 401 },
+      { structure_over_10ft_tall: "no" },
+      { location_name: "Flatiron Plaza" },
+    ]) {
+      expect(
+        isIntakeUnchanged(contract, stored, validated({ ...scenario("E"), ...edit })),
+        Object.keys(edit)[0],
+      ).toBe(false);
+    }
+  });
+
+  it("sees a cleared answer and a newly given one as changes", () => {
+    const stored = storedRow("E");
+    expect(
+      isIntakeUnchanged(contract, stored, validated({ ...scenario("E"), tent_area_sqft: null })),
+    ).toBe(false);
+    expect(
+      isIntakeUnchanged(contract, stored, validated({ ...scenario("E"), capacity: 500 })),
+    ).toBe(false);
+  });
+
+  it("treats a multi-select as a set, not as an order", () => {
+    const stored = { ...storedRow("D"), open_flame_or_cooking: ["charcoal_wood", "propane_lpg"] };
+    const values = validated({
+      ...scenario("D"),
+      open_flame_or_cooking: ["propane_lpg", "charcoal_wood"],
+    });
+    expect(isIntakeUnchanged(contract, stored, values)).toBe(true);
+
+    const dropped = validated({ ...scenario("D"), open_flame_or_cooking: ["charcoal_wood"] });
+    expect(isIntakeUnchanged(contract, stored, dropped)).toBe(false);
+  });
+
+  it("ignores the columns intake does not own", () => {
+    // status, revision_counter and the timestamps are not answers, so they cannot make
+    // a resubmitted intake look changed.
+    const stored = {
+      ...storedRow("C"),
+      id: "event-1",
+      status: "planned",
+      revision_counter: 7,
+      created_at: "2026-07-24T00:00:00.000Z",
+    };
+    expect(isIntakeUnchanged(contract, stored, validated(scenario("C")))).toBe(true);
   });
 });
 

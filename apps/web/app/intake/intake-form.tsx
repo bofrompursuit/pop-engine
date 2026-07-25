@@ -74,6 +74,35 @@ function answersFromEvent(contract: IntakeContract, event: SavedEvent): Answers 
   return answers;
 }
 
+const sameAnswer = (left: IntakeValue, right: IntakeValue): boolean =>
+  Array.isArray(left) || Array.isArray(right)
+    ? Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      [...left].sort().every((value, index) => value === [...right].sort()[index])
+    : left === right;
+
+/**
+ * Fold a saved row back into the form without discarding anything typed while the save
+ * was in flight.
+ *
+ * The answers as they stood when Save was pressed are the base of a three-way merge:
+ * a question the organizer has answered differently since then keeps their newer
+ * answer, and every other question takes the stored row, which is the answer of record.
+ * The alternative — freezing all 32 controls for the length of the request — prevents
+ * the edits rather than keeping them.
+ */
+function reconcileAnswers(current: Answers, atSubmit: Answers, stored: Answers): Answers {
+  const merged: Answers = { ...stored };
+  for (const field of new Set([...Object.keys(current), ...Object.keys(atSubmit)])) {
+    const now = current[field] ?? null;
+    if (sameAnswer(now, atSubmit[field] ?? null)) continue;
+    if (now === null) delete merged[field];
+    else merged[field] = now;
+  }
+  return merged;
+}
+
 export function IntakeForm({
   contract,
   apiBaseUrl,
@@ -154,6 +183,8 @@ export function IntakeForm({
   const save = async () => {
     setSaving(true);
     setFailure(null);
+    // The answers as they stand at the click, which the response is reconciled against.
+    const answersAtSubmit = answers;
     try {
       const target = saved === null ? "/api/events" : `/api/events/${saved.id}`;
       const response = await fetch(`${apiBaseUrl}${target}`, {
@@ -168,11 +199,13 @@ export function IntakeForm({
         return;
       }
       setErrors([]);
-      // The stored row is the answer of record, not what this form last held. A save
-      // that hides questions clears them server-side, so rebuilding from the response
+      // The stored row is the answer of record, not what this form last held: a save
+      // that hides questions clears them server-side, and rebuilding from the response
       // is what stops a cleared answer from lingering in a warning or coming back on
-      // the next edit when its question is asked again.
-      setAnswers(answersFromEvent(contract, body.event));
+      // the next edit. Anything the organizer typed while the request was in flight is
+      // newer than the response, so it survives the rebuild.
+      const stored = answersFromEvent(contract, body.event);
+      setAnswers((latest) => reconcileAnswers(latest, answersAtSubmit, stored));
       setSaved(body.event);
       currentRevision.current = body.event.revision_counter;
       setPlanStale(body.plan_stale === true);
