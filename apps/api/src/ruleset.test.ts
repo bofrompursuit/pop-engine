@@ -634,16 +634,28 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
        VALUES ($1, $2, 2, $3, 'feasible', '{}'::jsonb, '{}'::jsonb)`,
       [laterPlanId, ownEventId, ruleset.rulesetVersion],
     );
-    await database.query(
-      `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)
-       ON CONFLICT (event_id) DO UPDATE SET plan_id = EXCLUDED.plan_id`,
-      [ownEventId, laterPlanId],
-    );
-    const acknowledged = await database.query<{ plan_id: string }>(
-      `SELECT plan_id FROM checklist_acknowledgements WHERE event_id = $1`,
+    // acknowledged_at must be reapplied explicitly: Postgres does not re-evaluate a column
+    // default on conflict, so an upsert that sets only plan_id keeps reporting the time of the
+    // first review forever. Asserting the row count and plan_id alone would not notice.
+    const { rows: before } = await database.query<{ acknowledged_at: Date }>(
+      `SELECT acknowledged_at FROM checklist_acknowledgements WHERE event_id = $1`,
       [ownEventId],
     );
-    expect(acknowledged.rows).toEqual([{ plan_id: laterPlanId }]);
+    await database.query(
+      `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)
+       ON CONFLICT (event_id)
+         DO UPDATE SET plan_id = EXCLUDED.plan_id, acknowledged_at = current_timestamp`,
+      [ownEventId, laterPlanId],
+    );
+    const acknowledged = await database.query<{ plan_id: string; acknowledged_at: Date }>(
+      `SELECT plan_id, acknowledged_at FROM checklist_acknowledgements WHERE event_id = $1`,
+      [ownEventId],
+    );
+    expect(acknowledged.rows).toHaveLength(1);
+    expect(acknowledged.rows[0]?.plan_id).toBe(laterPlanId);
+    expect(acknowledged.rows[0]?.acknowledged_at.getTime()).toBeGreaterThan(
+      (before[0]?.acknowledged_at ?? new Date(0)).getTime(),
+    );
   });
 
   it("syncs all 37 rules and repairs same-version drift", async () => {

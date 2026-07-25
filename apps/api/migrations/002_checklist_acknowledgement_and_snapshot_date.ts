@@ -9,7 +9,10 @@ export function up(pgm: MigrationBuilder): void {
   // latest plan against an acknowledgement rather than by inspecting the checklist's own rows.
   // The checklist cannot answer it: a regeneration that removes every trackable requirement
   // leaves nothing to compare, and that is exactly the case the prompt must still fire in.
-  // One row per event; re-acknowledging overwrites it (F-202 AC 6).
+  // One row per event; re-acknowledging overwrites it (F-202 AC 6). The upsert must set
+  // acknowledged_at explicitly — Postgres does not re-evaluate the default on conflict, so
+  // `DO UPDATE SET plan_id = EXCLUDED.plan_id` alone leaves the column reporting the first
+  // review forever.
   // The target a composite foreign key needs, not a second identity for the plan. `rsvps`
   // carries the same pair for `checkins`.
   pgm.addConstraint("permit_plans", "permit_plans_event_id_id_key", {
