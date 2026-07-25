@@ -288,6 +288,20 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     expect(line.getByText("SOURCE CONFIRMED")).toBeDefined();
   });
 
+  it("reports an unreadable plan rather than crashing on a finding it cannot render", async () => {
+    // The finding that merged unfixed on #93: a finding with valid ruleIds but a missing or renamed
+    // `verificationStatus` reached `VerificationBadge`, which called `.toLowerCase()` on undefined
+    // and took the page down — a render failure standing in for the intended error message.
+    const { verificationStatus: _lost, ...withoutStatus } = finding();
+    stubApi(plan({ findings: [withoutStatus] }));
+    renderPlan();
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The API returned a plan this page cannot read.",
+    );
+    expect(screen.queryByRole("article")).toBeNull();
+  });
+
   it("renders RESEARCH_REQUIRED as confirm with agency, on the line and not in a tooltip", async () => {
     const line = await lineFor(finding({ verificationStatus: "RESEARCH_REQUIRED" }));
 
@@ -1283,6 +1297,45 @@ describe("a plan the event has moved past", () => {
 
     await screen.findByRole("complementary", { name: "Rules snapshot" });
     expect(screen.getByText(/whether this plan is still current is unconfirmed/)).toBeDefined();
+  });
+
+  /**
+   * `loadEvent` answers `ok` for any body with a string `id` and casts the rest to `SavedEvent`,
+   * which declares `revision_counter: number` without checking it. An unusable revision therefore
+   * arrived as a successful load — and `current > pinned` against a non-number is `false`, so an
+   * edited plan rendered with NEITHER the stale warning nor the unconfirmed one. Silence, on a
+   * regulatory plan whose dates were computed from superseded answers.
+   */
+  const stubEventBody = (event: Record<string, unknown>) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) return jsonResponse(200, plan({ eventRevision: 1 }));
+        return jsonResponse(200, { event, warnings: [], plan_stale: false });
+      }),
+    );
+
+  it.each([
+    ["is absent", {}],
+    ["is a string", { revision_counter: "4" }],
+    ["is null", { revision_counter: null }],
+    // JSON cannot encode NaN or Infinity; both reach the browser as null, which is the case above.
+  ])("says currency is unconfirmed when the revision %s", async (_case, revision) => {
+    stubEventBody({ id: "event-1", ...revision });
+    renderPlan();
+
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+    // Unconfirmed, not silent. The plan may well be stale and we cannot tell.
+    expect(screen.getByText(/whether this plan is still current is unconfirmed/)).toBeDefined();
+  });
+
+  it("still compares a revision the event body actually carries", async () => {
+    stubEventBody({ id: "event-1", revision_counter: 4 });
+    renderPlan();
+
+    expect((await screen.findByRole("alert")).textContent).toContain("now at revision 4");
+    expect(screen.queryByText(/unconfirmed/)).toBeNull();
   });
 
   it("does not claim currency it has not confirmed yet", async () => {

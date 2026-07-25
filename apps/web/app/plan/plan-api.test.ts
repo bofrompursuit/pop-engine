@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generatePlan, loadPlan, loadRulesMeta } from "./plan-api";
+import {
+  CONSUMED_FINDING_FIELDS,
+  CONSUMED_PLAN_FIELDS,
+  generatePlan,
+  loadPlan,
+  loadRulesMeta,
+} from "./plan-api";
 
 // `fetch` is stubbed; the api's own behavior is covered by apps/api. What is pinned here is the
 // request this page makes and how each answer is reported.
@@ -13,6 +19,11 @@ const stubFetch = (implementation: typeof fetch) => {
   return fetchMock;
 };
 
+/**
+ * A plan body as the api serves it. It carries `verdictDetail` because the view reads it — the old
+ * validator did not check that field, so this fixture omitted it and still passed, which is the same
+ * blind spot the shipped code had.
+ */
 const storedPlan = {
   id: "plan-1",
   eventId: "event-1",
@@ -20,9 +31,34 @@ const storedPlan = {
   rulesetVersion: "nyc.v2.3",
   snapshotDate: "2026-07-25",
   verdict: "CONDITIONAL",
+  verdictDetail: { minSlackDays: null, missingFacts: [] },
   today: "2026-07-25",
   generatedAt: "2026-07-25T12:00:00.000Z",
   findings: [],
+};
+
+/** A finding as the api serves one, carrying every member the plan lines read. */
+const storedFinding = {
+  ruleIds: ["PARKS-EVENT-001"],
+  disposition: "required",
+  name: "Special Event Permit",
+  agency: "NYC Parks",
+  deadline: null,
+  deadlineDisplay: null,
+  latestApplyDate: null,
+  applyAfterDate: null,
+  deadlineStatus: "not_applicable",
+  feeDisplay: null,
+  portalName: null,
+  portalUrl: null,
+  portalInstructions: null,
+  notes: [],
+  noteText: null,
+  deadlineUnknownFields: [],
+  timelineUnresolvedReason: null,
+  conflictText: null,
+  sources: [{ ruleId: "PARKS-EVENT-001", citation: "Parks FAQ", urls: ["https://example.gov"] }],
+  verificationStatus: "SOURCE_CONFIRMED",
 };
 
 const omit = (plan: Record<string, unknown>, field: string): Record<string, unknown> => {
@@ -102,42 +138,20 @@ describe("loadPlan", () => {
     });
   });
 
-  // Every field the plan view consumes without checking it first is checked here. Validating a
-  // subset is the defect: `generatedAt` was read with `.slice()` and turned an intended
-  // "cannot read this plan" message into a client render failure under an api/web rollout skew.
-  it.each([
-    ["generatedAt is missing", (p: typeof storedPlan) => omit(p, "generatedAt")],
-    [
-      "generatedAt is not a string",
-      (p: typeof storedPlan) => ({ ...p, generatedAt: 1753444800000 }),
-    ],
-    ["eventRevision is missing", (p: typeof storedPlan) => omit(p, "eventRevision")],
-    ["eventRevision is not a number", (p: typeof storedPlan) => ({ ...p, eventRevision: "2" })],
-    ["verdict is missing", (p: typeof storedPlan) => omit(p, "verdict")],
-    ["verdict is not one the copy covers", (p: typeof storedPlan) => ({ ...p, verdict: "MAYBE" })],
-    ["rulesetVersion is missing", (p: typeof storedPlan) => omit(p, "rulesetVersion")],
-    ["findings is not an array", (p: typeof storedPlan) => ({ ...p, findings: {} })],
-    [
-      "a finding carries no ruleIds",
-      (p: typeof storedPlan) => ({ ...p, findings: [{ name: "x" }] }),
-    ],
-  ])("refuses a plan whose %s", async (_case, mutate) => {
-    stubFetch(async () => jsonResponse(200, mutate(storedPlan)));
-    await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
-      ok: false,
-      missing: false,
-      message: "The API returned a plan this page cannot read.",
-    });
-  });
-
   it("does not refuse a plan over a field the view never reads", async () => {
     // Rejecting a body for `id`, `eventId` or `today` would refuse a plan the page renders
-    // correctly. The rule is what the view consumes unchecked, not everything the type declares.
+    // correctly. The rule is what the view consumes, not everything the endpoint serves.
     stubFetch(async () =>
       jsonResponse(200, omit(omit(omit(storedPlan, "id"), "eventId"), "today")),
     );
     const result = await loadPlan("https://api.example.com", "event-1");
     expect(result.ok).toBe(true);
+  });
+
+  it("reads a plan carrying a full finding", async () => {
+    stubFetch(async () => jsonResponse(200, { ...storedPlan, findings: [storedFinding] }));
+    const result = await loadPlan("https://api.example.com", "event-1");
+    expect(result.ok && result.plan.findings).toHaveLength(1);
   });
 
   it("reports an unreachable api instead of throwing", async () => {
@@ -255,6 +269,97 @@ describe("generatePlan", () => {
       ok: false,
       stored: false,
       message: "The API could not be reached.",
+    });
+  });
+});
+
+// The compile-time half of the guarantee is `pnpm typecheck`: a field the page reads that is not in
+// a consumed type does not compile, and a field in a consumed type with no check does not compile.
+// This is the runtime half — that each declared check is actually enforced — and it is DERIVED from
+// the check maps rather than listed, so a field added to either one is covered here the moment it
+// exists. That is what stops the fifth "field X was never validated" finding: there is no list to
+// forget to update.
+describe("coverage of every field this feature reads", () => {
+  const refusal = {
+    ok: false,
+    missing: false,
+    message: "The API returned a plan this page cannot read.",
+  };
+
+  /** `true` satisfies no check in either map: not a string, number, null, array, token or record. */
+  const WRONG = true;
+
+  const expectRefused = async (body: unknown) => {
+    stubFetch(async () => jsonResponse(200, body));
+    await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual(refusal);
+  };
+
+  it("validates every plan field the page reads, and nothing it does not", () => {
+    // Pins the derivation itself: if a field appears here that the page never reads, or a field the
+    // page reads is missing, the consumed type and this list have come apart.
+    expect([...CONSUMED_PLAN_FIELDS].sort()).toEqual([
+      "eventRevision",
+      "findings",
+      "generatedAt",
+      "rulesetVersion",
+      "snapshotDate",
+      "verdict",
+      "verdictDetail",
+    ]);
+    // `kind`, `slackDays` and `triggeredBy` are absent by decision: nothing under app/plan reads
+    // them, so they stay the engine's schema to police rather than this client's.
+    expect(CONSUMED_FINDING_FIELDS).not.toContain("kind");
+    expect(CONSUMED_FINDING_FIELDS).not.toContain("slackDays");
+    expect(CONSUMED_FINDING_FIELDS).not.toContain("triggeredBy");
+  });
+
+  it.each(CONSUMED_PLAN_FIELDS)("refuses a plan with no %s", async (field) => {
+    await expectRefused(omit(storedPlan, field));
+  });
+
+  it.each(CONSUMED_PLAN_FIELDS)("refuses a plan whose %s is the wrong type", async (field) => {
+    await expectRefused({ ...storedPlan, [field]: WRONG });
+  });
+
+  it.each(CONSUMED_FINDING_FIELDS)("refuses a plan whose finding has no %s", async (field) => {
+    await expectRefused({ ...storedPlan, findings: [omit(storedFinding, field)] });
+  });
+
+  it.each(CONSUMED_FINDING_FIELDS)(
+    "refuses a plan whose finding has the wrong type of %s",
+    async (field) => {
+      await expectRefused({ ...storedPlan, findings: [{ ...storedFinding, [field]: WRONG }] });
+    },
+  );
+
+  // Cases the derived sweep cannot express, kept for the reasoning rather than the coverage.
+  it("refuses a verdict token the approved copy does not cover", async () => {
+    // A string that is not one of the four renders an empty verdict line and silently drops the
+    // at-risk buffer label — both load-bearing sentences on the page, blank, with nothing thrown.
+    await expectRefused({ ...storedPlan, verdict: "MAYBE" });
+  });
+
+  it("refuses a verification status outside the schema's five", async () => {
+    // The one that merged unfixed: `VerificationBadge` calls `.toLowerCase()` on it, so a renamed
+    // token crashed the page instead of rendering the intended unreadable-plan error.
+    await expectRefused({
+      ...storedPlan,
+      findings: [{ ...storedFinding, verificationStatus: "PROVISIONAL" }],
+    });
+  });
+
+  it("refuses a null revision, which is what JSON makes of NaN or Infinity", async () => {
+    // Worth pinning because it is the shape those values arrive in: JSON cannot encode them, so
+    // `JSON.stringify` writes `null` and this is the check that has to catch it.
+    await expectRefused({ ...storedPlan, eventRevision: null });
+  });
+
+  it("refuses a citation whose urls are not strings", async () => {
+    await expectRefused({
+      ...storedPlan,
+      findings: [
+        { ...storedFinding, sources: [{ ruleId: "R", citation: "C", urls: [{ href: "x" }] }] },
+      ],
     });
   });
 });
