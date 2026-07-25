@@ -185,10 +185,16 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
       )}
 
       {/* Without the event we cannot say whether the plan still matches it, and silence would
-          read as confirmation that it does. */}
-      {plan !== null && eventState.status === "unavailable" && (
+          read as confirmation that it does. `loading` says that as loudly as `unavailable`: the
+          two requests are independent, so a plan that resolves first renders its verdict and
+          deadlines with the revision check still outstanding, and an event request that never
+          settles after an edit leaves a superseded plan on screen looking current. Not-yet-checked
+          and could-not-be-checked are both unconfirmed until the check comes back. */}
+      {plan !== null && eventState.status !== "found" && (
         <p className="plan__unconfirmed" role="status">
-          The event could not be read, so whether this plan is still current is unconfirmed.
+          {eventState.status === "loading"
+            ? "Checking whether this plan still matches the event; whether it is current is unconfirmed until then."
+            : "The event could not be read, so whether this plan is still current is unconfirmed."}
         </p>
       )}
 

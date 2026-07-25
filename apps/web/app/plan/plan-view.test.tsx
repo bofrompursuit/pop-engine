@@ -1044,6 +1044,48 @@ describe("a plan the event has moved past", () => {
     await screen.findByRole("complementary", { name: "Rules snapshot" });
     expect(screen.getByText(/whether this plan is still current is unconfirmed/)).toBeDefined();
   });
+
+  it("does not claim currency it has not confirmed yet", async () => {
+    // The plan and the event are two independent requests. When the plan wins the race, the
+    // verdict and deadlines are on screen with the revision check still outstanding — and if the
+    // event request never settles after an edit, an outdated regulatory plan sits there looking
+    // authoritative. Not-yet-checked has to read as unconfirmed, exactly like could-not-check.
+    let releaseEvent: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) return jsonResponse(200, plan({ eventRevision: 1 }));
+        return new Promise<Response>((resolvePromise) => {
+          releaseEvent = resolvePromise;
+        });
+      }),
+    );
+    renderPlan();
+
+    // The plan is fully rendered while the revision check is still in flight.
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+    expect(screen.getAllByRole("article").length).toBeGreaterThan(0);
+    expect(screen.getByText(/unconfirmed until then/)).toBeDefined();
+
+    // And the caveat comes off only once the check actually answers.
+    releaseEvent(
+      jsonResponse(200, {
+        event: { id: "event-1", revision_counter: 1 },
+        warnings: [],
+        plan_stale: false,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText(/unconfirmed/)).toBeNull());
+  });
+
+  it("says the plan is stale, not unconfirmed, once the check comes back past it", async () => {
+    stubWithEvent(plan({ eventRevision: 1 }), 3);
+    renderPlan();
+
+    await waitFor(() => expect(screen.queryByText(/unconfirmed/)).toBeNull());
+    expect((await screen.findByRole("alert")).textContent).toContain("now at revision 3");
+  });
 });
 
 describe("the states this page can be in", () => {
