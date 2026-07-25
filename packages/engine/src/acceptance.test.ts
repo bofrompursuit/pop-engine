@@ -1,5 +1,5 @@
 // The F-201 acceptance suite: the six scenarios and every boundary fixture in
-// docs/test-scenario-answer-key.md (v3), pinned to that document's clock (today = 2026-07-22)
+// docs/test-scenario-answer-key.md (v4), pinned to that document's clock (today = 2026-07-22)
 // and evaluated against the published ruleset. Expected finding sets are exact — a rule the
 // key does not list is a false addition and fails here.
 //

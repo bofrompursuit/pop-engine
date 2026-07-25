@@ -418,39 +418,27 @@ describe("the six scenario fixtures are enterable (spec #1)", () => {
     }
   });
 
-  it("cannot enter Scenario F as the answer key writes it (SPEC-CONFLICT #88)", () => {
-    // Honest failing case for the conflict: the key's own inputs are incomplete against
-    // the registry. This test is expected to change when #88 is resolved.
+  it("enters Scenario F as the answer key writes it (closes SPEC-CONFLICT #88 and #106)", () => {
+    // The case that used to fail: F's documented inputs were incomplete against the registry.
+    // Answer key v4 states the caterer count and the battery answer, so what the key writes is
+    // now a complete submission on its own — no value stands in for a missing one.
     const asWritten = scenarioFixture("F").intake;
-    expect(scenarioFixture("F").inferred).toEqual({
-      battery_present: { value: false, conflictIssue: 106 },
-      food_vendor_count: { value: 1, conflictIssue: 88 },
-    });
-    expect(codesFor(asWritten)).toEqual({
-      battery_present: "required",
-      food_vendor_count: "required",
-    });
+    expect(scenarioFixture("F").inferred).toBeUndefined();
+    expect(codesFor(asWritten)).toEqual({});
   });
 
-  it("marks every supplied answer as inferred, and nothing the key states", () => {
+  it("supplies no answer the key does not state, for any scenario", () => {
     // The register of what the fixtures supply beyond the approved key, asserted exactly so a new
-    // supplied value cannot arrive unlisted. Both entries here are open conflicts: #88 is Scenario
-    // F's food_vendor_count; #106 is battery_present, which nyc.v2.5 asks of every event while the
-    // key states an answer for E only ("battery none") and C only by "nothing else".
+    // supplied value cannot arrive unlisted. Empty everywhere since v4: #88 (Scenario F's
+    // food_vendor_count) and #106 (battery_present, which nyc.v2.5 asks of every event) are both
+    // closed by the key stating the values the fixtures were already running on.
     const supplied = Object.fromEntries(
       SCENARIO_INTAKE_FIXTURES.map((fixture) => [
         fixture.scenario,
         Object.keys(fixture.inferred ?? {}).sort(),
       ]),
     );
-    expect(supplied).toEqual({
-      A: ["battery_present"],
-      B: ["battery_present"],
-      C: [],
-      D: ["battery_present"],
-      E: [],
-      F: ["battery_present", "food_vendor_count"],
-    });
+    expect(supplied).toEqual({ A: [], B: [], C: [], D: [], E: [], F: [] });
   });
 
   it("stores every question the scenario was not asked as null", () => {

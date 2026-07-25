@@ -140,6 +140,7 @@ const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
     "no structures",
     "no flame",
     "no generator",
+    "battery none",
     "no alcohol",
   ],
   B: [
@@ -150,6 +151,7 @@ const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
     "free",
     "the gallery itself",
     "no structures/flame/generator/alcohol",
+    "battery none",
   ],
   C: ["brooklyn", "park", "56 days out", "no food", "nothing else"],
   D: [
@@ -158,6 +160,9 @@ const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
     "70 days out",
     "no public food service",
     "neighbors' own grills",
+    "no structures",
+    "no generator",
+    "battery none",
     "no alcohol",
   ],
   // "gasoline 5 gal" and "50 kW" are `generator_gasoline_gallons` and `generator_kw`, both mapped
@@ -171,6 +176,7 @@ const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
     "135 days out",
     "free sampling",
     "20×20",
+    "no flame",
     "gasoline 5 gal",
     "50 kW",
     "battery none",
@@ -184,6 +190,11 @@ const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
     "invite-only",
     "food catered",
     "nothing sold",
+    "the caterer",
+    "no structures",
+    "no flame",
+    "no generator",
+    "battery none",
   ],
 };
 
