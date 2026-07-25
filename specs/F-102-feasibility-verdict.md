@@ -1,5 +1,6 @@
 # F-102 · Feasibility Verdict
 
+**Status:** APPROVED (2026-07-24 by the product owner; see `docs/BASELINE.md`). Reviewer not yet recorded — governance §7 also asks for one.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-201 (same engine invocation) · **Feeds:** plan UI, F-203 slack warnings
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline (layered status model, AD-10).
 

@@ -1,5 +1,6 @@
 # F-101 · Event Intake Questionnaire
 
+**Status:** APPROVED (2026-07-24 by the product owner; see `docs/BASELINE.md`). Reviewer not yet recorded — governance §7 also asks for one.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 2 · **Depends on:** events schema (Phase 0), ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** everything (single source of truth)
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline.
 

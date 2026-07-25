@@ -1,5 +1,6 @@
 # F-201 · Permit Plan Generator
 
+**Status:** APPROVED (2026-07-24 by the product owner; see `docs/BASELINE.md`). Reviewer not yet recorded — governance §7 also asks for one.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline.
 
