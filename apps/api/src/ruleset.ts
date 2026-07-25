@@ -255,9 +255,12 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   };
 }
 
-export async function loadRuleset(
-  filePath = process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : DEFAULT_RULES_FILE,
-): Promise<PublishedRuleset> {
+/** The published ruleset path the api boots from; the engine parses the same file (AD-2). */
+export function rulesFilePath(): string {
+  return process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : DEFAULT_RULES_FILE;
+}
+
+export async function loadRuleset(filePath = rulesFilePath()): Promise<PublishedRuleset> {
   try {
     return validateRuleset(JSON.parse(await readFile(filePath, "utf8")));
   } catch (error) {

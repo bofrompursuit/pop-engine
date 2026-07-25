@@ -1,9 +1,15 @@
 import express, { type Express } from "express";
 import { describeEngine } from "@pop-engine/engine";
+import { EventNotFoundError, type PlanService } from "./plan";
+
+export type AppDependencies = {
+  /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
+  planService?: PlanService;
+};
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
 // can drive it with supertest without opening a port.
-export function createApp(): Express {
+export function createApp({ planService }: AppDependencies = {}): Express {
   const app = express();
 
   // The web app is served from a different origin than the api in both local dev and on
@@ -33,5 +39,50 @@ export function createApp(): Express {
     res.json({ status: "ok", service: "pop-engine-api", engine: describeEngine() });
   });
 
+  if (planService !== undefined) registerPlanRoutes(app, planService);
+
   return app;
+}
+
+/**
+ * F-201/F-102 plan routes. A rule-evaluation failure returns an explicit error and never a
+ * plan with no findings, so the api can never present a failure as "nothing required" (AC 5).
+ */
+function registerPlanRoutes(app: Express, planService: PlanService): void {
+  app.post("/api/events/:id/plan", (req, res) => {
+    const eventId = req.params.id;
+    planService
+      .generate(eventId)
+      .then((plan) => res.status(201).json(plan))
+      .catch((error: unknown) => {
+        if (error instanceof EventNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        res.status(500).json({
+          error: "plan generation failed",
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      });
+  });
+
+  app.get("/api/events/:id/plan", (req, res) => {
+    const eventId = req.params.id;
+    planService
+      .latest(eventId)
+      .then((plan) => {
+        if (plan === null) {
+          res.status(404).json({ error: `no plan generated for event ${eventId}` });
+          return;
+        }
+        res.json(plan);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof EventNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        res.status(500).json({ error: "plan lookup failed" });
+      });
+  });
 }
