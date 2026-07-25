@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   askedFields,
   intakeWarnings,
@@ -9,19 +9,13 @@ import {
   type IntakeIssue,
   type IntakeValue,
 } from "@pop-engine/engine";
-import { regeneratePlan } from "./regenerate-plan";
+import { CREDENTIALED, loadEvent, regeneratePlan, type SavedEvent } from "./events-api";
 
 // The intake questionnaire. Every question, option, and asked-when condition comes from
 // the contract prop, which the server component parses from the published ruleset — this
 // component holds no field list of its own.
 
 type Answers = Record<string, IntakeValue>;
-
-type SavedEvent = {
-  id: string;
-  revision_counter: number;
-  [column: string]: unknown;
-};
 
 type ApiResponse = {
   event?: SavedEvent;
@@ -56,12 +50,39 @@ const optionLabel = (value: string): string =>
 const isBlank = (value: IntakeValue): boolean =>
   value === null || value === undefined || value === "";
 
+const isIntakeValue = (value: unknown): value is IntakeValue =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "number" ||
+  typeof value === "boolean" ||
+  (Array.isArray(value) && value.every((entry) => typeof entry === "string"));
+
+/**
+ * The answers a saved event row already holds. Columns the form does not ask about
+ * (id, status, timestamps) are left behind, and a null answer stays unanswered.
+ */
+function answersFromEvent(contract: IntakeContract, event: SavedEvent): Answers {
+  const answers: Answers = {};
+  const fields = [
+    ...contract.fields.map((field) => field.field),
+    ...DESCRIPTIVE_QUESTIONS.map((question) => question.field),
+  ];
+  for (const field of fields) {
+    const value = event[field];
+    if (value !== null && value !== undefined && isIntakeValue(value)) answers[field] = value;
+  }
+  return answers;
+}
+
 export function IntakeForm({
   contract,
   apiBaseUrl,
+  eventId,
 }: {
   contract: IntakeContract;
   apiBaseUrl: string;
+  /** Set on the edit route: the saved event this form loads and edits. */
+  eventId?: string;
 }) {
   const [answers, setAnswers] = useState<Answers>({});
   const [saved, setSaved] = useState<SavedEvent | null>(null);
@@ -72,6 +93,33 @@ export function IntakeForm({
   const [regenerating, setRegenerating] = useState(false);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
   const [regeneratedRevision, setRegeneratedRevision] = useState<number | null>(null);
+  const [loading, setLoading] = useState(eventId !== undefined);
+  const [loadFailure, setLoadFailure] = useState<string | null>(null);
+
+  // The revision the form is currently sitting on. A ref, because an in-flight
+  // regeneration has to compare against the revision as it stands when the plan lands,
+  // not against the one captured when the button was clicked.
+  const currentRevision = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (eventId === undefined) return;
+    let abandoned = false;
+    void loadEvent(apiBaseUrl, eventId).then((result) => {
+      if (abandoned) return;
+      if (result.ok) {
+        setAnswers(answersFromEvent(contract, result.loaded.event));
+        setSaved(result.loaded.event);
+        currentRevision.current = result.loaded.event.revision_counter;
+        setPlanStale(result.loaded.plan_stale);
+      } else {
+        setLoadFailure(result.message);
+      }
+      setLoading(false);
+    });
+    return () => {
+      abandoned = true;
+    };
+  }, [apiBaseUrl, contract, eventId]);
 
   const questions = useMemo(() => askedFields(contract.fields, answers), [contract, answers]);
   // Contradictions and coverage gaps are shown while the organizer types, not only on
@@ -87,8 +135,11 @@ export function IntakeForm({
     const asked = new Set(questions.map((question) => question.field));
     const payload: Record<string, IntakeValue> = {};
     for (const question of DESCRIPTIVE_QUESTIONS) {
+      // A cleared optional is sent as an explicit null. Omitting it would leave the
+      // stored value in place on an edit, so the organizer could never remove a venue
+      // name or a capacity once one had been saved.
       const value = answers[question.field] ?? null;
-      if (!isBlank(value)) payload[question.field] = value;
+      payload[question.field] = isBlank(value) ? null : value;
     }
     for (const field of contract.fields) {
       // A question this event is no longer asked is sent as an explicit null, so an
@@ -107,11 +158,7 @@ export function IntakeForm({
       const target = saved === null ? "/api/events" : `/api/events/${saved.id}`;
       const response = await fetch(`${apiBaseUrl}${target}`, {
         method: saved === null ? "POST" : "PATCH",
-        // Web and api are separate origins behind Cloudflare Access (BASELINE.md
-        // provider baseline), so the Access cookie has to ride along; the api already
-        // answers with Access-Control-Allow-Credentials.
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        ...CREDENTIALED,
         body: JSON.stringify(submission()),
       });
       const body = (await response.json()) as ApiResponse;
@@ -122,6 +169,7 @@ export function IntakeForm({
       }
       setErrors([]);
       setSaved(body.event);
+      currentRevision.current = body.event.revision_counter;
       setPlanStale(body.plan_stale === true);
     } catch {
       setFailure("The API could not be reached.");
@@ -132,18 +180,46 @@ export function IntakeForm({
 
   // Spec #8: one click regenerates the plan for the revision just saved. The plan
   // endpoint belongs to F-201; intake calls it and reports what it answered.
-  const regenerate = async (eventId: string) => {
+  const regenerate = async (id: string, revision: number) => {
     setRegenerating(true);
     setRegenerationError(null);
-    const result = await regeneratePlan(apiBaseUrl, eventId);
+    const result = await regeneratePlan(apiBaseUrl, id);
     setRegenerating(false);
+
+    // A save can land while this was in flight. A plan for a superseded revision is
+    // stale the moment it arrives, so it must not clear the warning or the button for
+    // the revision the organizer is now on. Same when the plan names a revision that is
+    // not the one on screen.
+    const superseded =
+      currentRevision.current !== revision ||
+      (result.ok && result.eventRevision !== null && result.eventRevision !== revision);
+    if (superseded) return;
+
     if (result.ok) {
       setPlanStale(false);
-      setRegeneratedRevision(saved?.revision_counter ?? null);
+      setRegeneratedRevision(revision);
       return;
     }
     setRegenerationError(result.message);
   };
+
+  if (loading) {
+    return (
+      <p className="intake__lede" role="status">
+        Loading your event…
+      </p>
+    );
+  }
+
+  // A form that could not load its event must not offer to save: saving would create a
+  // second event rather than edit the one asked for.
+  if (loadFailure !== null) {
+    return (
+      <p className="intake__error" role="alert">
+        {loadFailure}
+      </p>
+    );
+  }
 
   return (
     <form
@@ -153,7 +229,7 @@ export function IntakeForm({
         void save();
       }}
     >
-      <h1>Describe your event</h1>
+      <h1>{eventId === undefined ? "Describe your event" : "Edit your event"}</h1>
       <p className="intake__lede">
         Answer what applies to your event. Questions appear as your answers make them relevant, and
         &ldquo;I don&rsquo;t know&rdquo; is a real answer — it is stored as unknown and carried into
@@ -224,7 +300,8 @@ export function IntakeForm({
       {saved !== null && (
         <section className="intake__saved" aria-live="polite">
           <p>
-            Saved as revision {saved.revision_counter}. Event id <code>{saved.id}</code>.
+            Saved as revision {saved.revision_counter}.{" "}
+            <a href={`/intake/${saved.id}`}>Come back to this event</a> to edit it later.
           </p>
           {planStale && (
             <div className="intake__stale">
@@ -233,7 +310,7 @@ export function IntakeForm({
               </p>
               <button
                 type="button"
-                onClick={() => void regenerate(saved.id)}
+                onClick={() => void regenerate(saved.id, saved.revision_counter)}
                 disabled={regenerating}
               >
                 {regenerating ? "Regenerating plan…" : "Regenerate plan"}
