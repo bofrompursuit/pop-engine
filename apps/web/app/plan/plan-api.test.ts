@@ -25,6 +25,11 @@ const storedPlan = {
   findings: [],
 };
 
+const omit = (plan: Record<string, unknown>, field: string): Record<string, unknown> => {
+  const { [field]: _dropped, ...rest } = plan;
+  return rest;
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -95,6 +100,44 @@ describe("loadPlan", () => {
       missing: false,
       message: "The API returned a plan this page cannot read.",
     });
+  });
+
+  // Every field the plan view consumes without checking it first is checked here. Validating a
+  // subset is the defect: `generatedAt` was read with `.slice()` and turned an intended
+  // "cannot read this plan" message into a client render failure under an api/web rollout skew.
+  it.each([
+    ["generatedAt is missing", (p: typeof storedPlan) => omit(p, "generatedAt")],
+    [
+      "generatedAt is not a string",
+      (p: typeof storedPlan) => ({ ...p, generatedAt: 1753444800000 }),
+    ],
+    ["eventRevision is missing", (p: typeof storedPlan) => omit(p, "eventRevision")],
+    ["eventRevision is not a number", (p: typeof storedPlan) => ({ ...p, eventRevision: "2" })],
+    ["verdict is missing", (p: typeof storedPlan) => omit(p, "verdict")],
+    ["verdict is not one the copy covers", (p: typeof storedPlan) => ({ ...p, verdict: "MAYBE" })],
+    ["rulesetVersion is missing", (p: typeof storedPlan) => omit(p, "rulesetVersion")],
+    ["findings is not an array", (p: typeof storedPlan) => ({ ...p, findings: {} })],
+    [
+      "a finding carries no ruleIds",
+      (p: typeof storedPlan) => ({ ...p, findings: [{ name: "x" }] }),
+    ],
+  ])("refuses a plan whose %s", async (_case, mutate) => {
+    stubFetch(async () => jsonResponse(200, mutate(storedPlan)));
+    await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
+      ok: false,
+      missing: false,
+      message: "The API returned a plan this page cannot read.",
+    });
+  });
+
+  it("does not refuse a plan over a field the view never reads", async () => {
+    // Rejecting a body for `id`, `eventId` or `today` would refuse a plan the page renders
+    // correctly. The rule is what the view consumes unchecked, not everything the type declares.
+    stubFetch(async () =>
+      jsonResponse(200, omit(omit(omit(storedPlan, "id"), "eventId"), "today")),
+    );
+    const result = await loadPlan("https://api.example.com", "event-1");
+    expect(result.ok).toBe(true);
   });
 
   it("reports an unreachable api instead of throwing", async () => {

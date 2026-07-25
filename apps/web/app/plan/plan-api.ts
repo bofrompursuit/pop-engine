@@ -65,6 +65,57 @@ function failureMessage(body: unknown, fallback: string): string {
   return typeof error === "string" && error.length > 0 ? error : fallback;
 }
 
+const UNREADABLE_PLAN = "The API returned a plan this page cannot read.";
+
+const VERDICTS: ReadonlySet<string> = new Set<Verdict>([
+  "FEASIBLE",
+  "FEASIBLE_AT_RISK",
+  "CONDITIONAL",
+  "INFEASIBLE",
+]);
+
+/**
+ * `findings` being an array is not enough: the view reads `finding.ruleIds.join(...)` on every
+ * element without checking it, both for the React key and for the line's own heading.
+ */
+const hasRuleIds = (value: unknown): boolean => Array.isArray(asRecord(value)?.ruleIds);
+
+/**
+ * A plan body the view can actually render, or null.
+ *
+ * The rule is one line: every field the view consumes WITHOUT first checking it is checked here.
+ * Validating a subset is the defect, not a specific missing field — this checked three and the view
+ * called `.slice()` on an unchecked `generatedAt`, which turned an intended "cannot read this plan"
+ * message into a render failure during an api/web rollout skew.
+ *
+ * Three more had the same gap, and the worst of them does not crash. `eventRevision` is compared
+ * against the event's current revision, and a non-number makes `current > pinned` false — so an
+ * event that HAS been edited renders as current, with nothing thrown and nothing logged. That is
+ * the false-currency claim this page exists to prevent. A `verdict` outside the four tokens renders
+ * an empty verdict line and silently drops the at-risk buffer label, which is the same failure in
+ * the other load-bearing sentence on the page.
+ *
+ * Where this stops: fields the view does not consume (`id`, `eventId`, `today`) are not checked,
+ * because rejecting a body over a field nothing reads would refuse a plan the page can render
+ * correctly. Inside a finding only `ruleIds` is checked, for the unconditional `.join()` above;
+ * validating every `Finding` member would be re-implementing the engine's schema in the browser,
+ * and the engine owns that contract.
+ */
+function readPlan(body: unknown): PlanResponse | null {
+  const plan = asRecord(body);
+  if (plan === null) return null;
+  if (typeof plan.rulesetVersion !== "string") return null;
+  // A plan that omits the field entirely is unreadable, not legacy. Only an explicit null means
+  // "generated before migration 002", and that is the one case the banner may say so for; reading
+  // an absent field as null would put that copy under a plumbing mismatch instead.
+  if (!(typeof plan.snapshotDate === "string" || plan.snapshotDate === null)) return null;
+  if (typeof plan.eventRevision !== "number") return null;
+  if (typeof plan.generatedAt !== "string") return null;
+  if (typeof plan.verdict !== "string" || !VERDICTS.has(plan.verdict)) return null;
+  if (!Array.isArray(plan.findings) || !plan.findings.every(hasRuleIds)) return null;
+  return plan as unknown as PlanResponse;
+}
+
 /** The plan a set of findings was generated as (`GET /api/events/:id/plan`). */
 export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<PlanResult> {
   let response: Response;
@@ -88,19 +139,9 @@ export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<Pla
     };
   }
 
-  const plan = asRecord(body);
-  if (
-    plan === null ||
-    typeof plan.rulesetVersion !== "string" ||
-    // A plan that omits the field entirely is unreadable, not legacy. Only an explicit null means
-    // "generated before migration 002", and that is the one case the banner may say so for;
-    // reading an absent field as null would put that copy under a plumbing mismatch instead.
-    !(typeof plan.snapshotDate === "string" || plan.snapshotDate === null) ||
-    !Array.isArray(plan.findings)
-  ) {
-    return { ok: false, missing: false, message: "The API returned a plan this page cannot read." };
-  }
-  return { ok: true, plan: plan as unknown as PlanResponse };
+  const plan = readPlan(body);
+  if (plan === null) return { ok: false, missing: false, message: UNREADABLE_PLAN };
+  return { ok: true, plan };
 }
 
 /**
