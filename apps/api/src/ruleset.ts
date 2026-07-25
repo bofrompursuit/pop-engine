@@ -22,6 +22,9 @@ export type PublishedRuleset = {
   intakeFields: string[];
   rules: PublishedRule[];
   advisories: PublishedRule[];
+  /** The validated document itself, for consumers that read parts this type flattens
+   * away (F-101 parses the `intake_fields` registry, `asked_when` included). */
+  document: JsonObject;
 };
 
 const EXPECTED_SCHEMA = "popengine-rules/v2";
@@ -252,6 +255,7 @@ export function validateRuleset(value: unknown): PublishedRuleset {
     intakeFields,
     rules,
     advisories,
+    document: ruleset,
   };
 }
 

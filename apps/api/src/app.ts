@@ -1,16 +1,16 @@
 import express, { type Express, type Response } from "express";
-import { describeEngine } from "@pop-engine/engine";
-import { EvaluationError } from "@pop-engine/engine";
+import { describeEngine, EvaluationError } from "@pop-engine/engine";
+import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 
-export type AppDependencies = {
+export type AppDependencies = EventsDependencies & {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
   planService?: PlanService;
 };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
 // can drive it with supertest without opening a port.
-export function createApp({ planService }: AppDependencies = {}): Express {
+export function createApp(dependencies: AppDependencies): Express {
   const app = express();
 
   // The web app is served from a different origin than the api in both local dev and on
@@ -40,7 +40,8 @@ export function createApp({ planService }: AppDependencies = {}): Express {
     res.json({ status: "ok", service: "pop-engine-api", engine: describeEngine() });
   });
 
-  if (planService !== undefined) registerPlanRoutes(app, planService);
+  app.use("/api", createEventsRouter(dependencies));
+  if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
 
   return app;
 }

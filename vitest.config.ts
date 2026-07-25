@@ -1,21 +1,26 @@
 import { defineConfig } from "vitest/config";
 
 // Single root config runs every workspace test suite (`pnpm test`).
-// Coverage is scoped to the code that exists today (engine + api src) and enforced
-// at 90% per CONTRIBUTING.md. Each lane widens `coverage.include` as it adds code;
-// apps/web joins when F-101 lands real components.
+// Coverage is enforced at 90% per CONTRIBUTING.md across the engine, the api, and the
+// web app, components included.
 export default defineConfig({
+  // React components are transformed by esbuild's automatic JSX runtime. Tests need no
+  // React import and the app keeps Next's own build untouched (`jsx: preserve`).
+  esbuild: { jsx: "automatic" },
   test: {
+    // The default stays node: the engine and api suites are pure and must stay fast.
+    // Component tests opt into jsdom per file with a `@vitest-environment jsdom`
+    // docblock, so only those files pay for a DOM.
     environment: "node",
     // Discovery covers every workspace, so a new app's tests run the day they land.
-    // Coverage `include` below stays narrower on purpose (apps/web is deferred to F-101).
-    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}"],
+    // Next.js keeps its code in `app/`, not `src/`, so that tree is listed too.
+    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}", "apps/web/app/**/*.test.{ts,tsx}"],
     // Workspace packages export TypeScript source; force Vite to transform them.
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
       provider: "v8",
-      include: ["packages/engine/src/**", "apps/api/src/**"],
-      exclude: ["**/*.test.ts", "apps/api/src/index.ts"],
+      include: ["packages/engine/src/**", "apps/api/src/**", "apps/web/app/**"],
+      exclude: ["**/*.test.{ts,tsx}", "apps/api/src/index.ts"],
       thresholds: {
         statements: 90,
         branches: 90,
