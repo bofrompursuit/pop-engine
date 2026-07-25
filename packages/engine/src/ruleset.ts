@@ -4,7 +4,6 @@
 // never a quiet "no requirement" (AC 5).
 
 import { parseAskedWhen } from "./conditions";
-import { LEVEL_DEADLINE_BINDING } from "./proposals";
 import { EVENT_DATE_FIELD, EvaluationError } from "./types";
 import type {
   LevelBinding,
@@ -625,14 +624,49 @@ const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The deadline types that resolve against an intake field rather than the event date alone, and
- * the anchor every backward date is computed from.
+ * The intake fields a rule's own published deadline reads.
+ *
+ * Derived from the deadline structure rather than from a named binding. A `published_minimum_by_level`
+ * deadline declares its own `levels` map, so the field it keys on is the one whose declared values
+ * cover every published level, and the multi-block variant is only needed when some level publishes
+ * `multi_block_days`. Reading it this way keeps the guard resting on published data: a ruleset that
+ * declares a level-shaped field while publishing no by-level deadline now fails the orphan check
+ * instead of being waved through, and nothing here depends on an unapproved constant.
  */
-const DEADLINE_CONSUMED_FIELDS: readonly string[] = [
-  LEVEL_DEADLINE_BINDING.levelField,
-  LEVEL_DEADLINE_BINDING.multiBlockField,
-  EVENT_DATE_FIELD,
-];
+function deadlineConsumedFields(
+  intakeFields: readonly IntakeFieldDefinition[],
+  published: readonly EngineRule[],
+): Set<string> {
+  // Every backward date is counted from the event date, whatever the deadline type.
+  const consumed = new Set<string>([EVENT_DATE_FIELD]);
+
+  for (const rule of published) {
+    if (rule.deadline?.type !== "published_minimum_by_level") continue;
+    const levels = Object.values(rule.deadline.levels);
+    const levelKeys = Object.keys(rule.deadline.levels);
+
+    const levelField = intakeFields.find(
+      (field) => field.values !== null && levelKeys.every((key) => field.values?.includes(key)),
+    );
+    if (levelField === undefined) continue;
+    consumed.add(levelField.field);
+
+    // A level that publishes a distinct multi-block window needs a flag saying whether the event
+    // spans blocks. The registry asks that flag alongside the level, under the same scoping
+    // condition, which is what identifies it without naming it here.
+    if (!levels.some((level) => level.multiBlockDays !== null)) continue;
+    const multiBlockFlag = intakeFields.find(
+      (field) =>
+        field.type === "boolean" &&
+        field.field !== levelField.field &&
+        field.askedWhen !== null &&
+        field.askedWhen === levelField.askedWhen,
+    );
+    if (multiBlockFlag !== undefined) consumed.add(multiBlockFlag.field);
+  }
+
+  return consumed;
+}
 
 function rejectUnconsumedFields(
   intakeFields: readonly IntakeFieldDefinition[],
@@ -640,7 +674,7 @@ function rejectUnconsumedFields(
 ): void {
   const consumed = new Set<string>([
     ...published.flatMap((rule) => triggerFields(rule.trigger)),
-    ...DEADLINE_CONSUMED_FIELDS,
+    ...deadlineConsumedFields(intakeFields, published),
     ...intakeFields.flatMap((field) =>
       (field.askedWhenClauses ?? []).map((clause) => clause.field),
     ),

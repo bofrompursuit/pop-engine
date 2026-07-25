@@ -54,6 +54,13 @@ function filePathsInRow(row) {
         unsupportedGlobs.push(token);
         continue;
       }
+      // A glob matching nothing means the row claims APPROVED for a set of artifacts and the
+      // check then inspects none of them. A guard that silently stops guarding is the failure
+      // this whole file exists to prevent, so an empty expansion is drift, not a pass.
+      if (expanded.length === 0) {
+        emptyGlobs.push(token);
+        continue;
+      }
       paths.push(...expanded);
       continue;
     }
@@ -76,6 +83,7 @@ function declaredStatus(absPath) {
 const baseline = readFileSync(baselinePath, "utf8");
 const approvedFiles = new Set();
 const unsupportedGlobs = [];
+const emptyGlobs = [];
 for (const row of baseline.split(/\r?\n/)) {
   if (!row.startsWith("|")) continue;
   const cells = row.split("|").map((c) => c.trim());
@@ -110,6 +118,16 @@ for (const rel of [...approvedFiles].sort()) {
         (bannedLeadWords.test(status) ? "  (governance §3: not a valid status)" : ""),
     );
   }
+}
+
+if (emptyGlobs.length > 0) {
+  console.error("Baseline manifest marks a glob APPROVED that matches no file:\n");
+  for (const glob of emptyGlobs) console.error("  ✗ " + glob);
+  console.error(
+    "\nThe row claims a status for artifacts that are not there. Either the files moved and the " +
+      "manifest must follow, or the row is stale — the check will not pass by inspecting nothing.",
+  );
+  process.exit(1);
 }
 
 if (unsupportedGlobs.length > 0) {

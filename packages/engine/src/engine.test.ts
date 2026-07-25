@@ -776,6 +776,61 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
     ).toThrow(/"favourite_colour" is declared but no rule trigger, deadline, or scoping condition/);
   });
 
+  it("counts a level field as consumed only when a by-level deadline keys on it", () => {
+    // The bug the derivation fixes. Naming the field as consumed unconditionally let a ruleset
+    // declare it while publishing no by-level deadline and still pass the orphan check.
+    const withLevelField = (deadline: Record<string, unknown> | undefined) => () =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
+          { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+          {
+            field: "spans_blocks",
+            type: "boolean",
+            asked_when: "venue_kind = plaza",
+          },
+        ],
+        rules: [
+          {
+            id: "RULE-LEVEL",
+            kind: "permit",
+            trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
+            output: { permit_name: "x", agency: "DOB", ...(deadline ? { deadline } : {}) },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
+
+    // No by-level deadline: nothing keys on `tier`, and the flag has nothing to qualify.
+    expect(withLevelField(undefined)).toThrow(/"tier" is declared but no rule trigger, deadline/);
+
+    // A by-level deadline that publishes multi_block_days consumes both.
+    expect(
+      withLevelField({
+        type: "published_minimum_by_level",
+        levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
+      }),
+    ).not.toThrow();
+
+    // Levels without a multi-block variant consume the level field but not the flag.
+    expect(
+      withLevelField({
+        type: "published_minimum_by_level",
+        levels: { a: { calendar_days: 45 }, b: { calendar_days: 30 } },
+      }),
+    ).toThrow(/"spans_blocks" is declared but no rule trigger, deadline/);
+  });
+
   it("counts deadline resolution and scoping as consuming a field", () => {
     // plaza_level and plaza_multiple_blocks appear in no trigger but resolve SAPO-PLAZA-001's
     // deadline; generator_present appears in no trigger but gates the quantity questions that

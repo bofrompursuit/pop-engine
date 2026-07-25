@@ -87,13 +87,13 @@ function reachedIn(scenario: string): Reached {
  * not something a test may resolve: changing either side is a rules-owner or team change.
  */
 const KNOWN_DISAGREEMENTS: readonly {
-  scenario: string;
+  scenarios: readonly string[];
   ruleId: string;
   kind: "fires-but-key-omits" | "claims-scenario-it-cannot-reach" | "reaches-scenario-it-omits";
   issue: string;
 }[] = [
   {
-    scenario: "F",
+    scenarios: ["F"],
     ruleId: "ADV-VENUE-OCCUPANCY-001",
     kind: "fires-but-key-omits",
     issue:
@@ -102,7 +102,7 @@ const KNOWN_DISAGREEMENTS: readonly {
       "Whether the key gains the line or the rule narrows is an open product decision.",
   },
   {
-    scenario: "B",
+    scenarios: ["B"],
     ruleId: "DOHMH-EXEMPTION-001",
     kind: "claims-scenario-it-cannot-reach",
     issue:
@@ -110,7 +110,7 @@ const KNOWN_DISAGREEMENTS: readonly {
       "trigger needs no/unknown, so it cannot fire there. Stale metadata on a published rule.",
   },
   {
-    scenario: "F",
+    scenarios: ["F"],
     ruleId: "DOHMH-EXEMPTION-001",
     kind: "reaches-scenario-it-omits",
     issue:
@@ -119,19 +119,56 @@ const KNOWN_DISAGREEMENTS: readonly {
       "the one it does.",
   },
   {
-    scenario: "B",
+    scenarios: ["B"],
     ruleId: "DOHMH-ORGANIZER-NOTIFY-001",
     kind: "reaches-scenario-it-omits",
     issue:
       "#89: the rule fires in B and B's expected findings list it, but its exercised_by_scenarios " +
       "names only A and E.",
   },
+  {
+    scenarios: ["E"],
+    ruleId: "DOB-TALL-STRUCTURE-001",
+    kind: "reaches-scenario-it-omits",
+    issue:
+      "#89: the rule is conditional in E — structure_over_10ft_tall is unknown there — and E's " +
+      "expected findings name it inside item 8, but its exercised_by_scenarios is empty. Found by " +
+      "widening the reverse check from fired to reached.",
+  },
+  {
+    scenarios: ["A", "B", "C", "D", "F"],
+    ruleId: "FDNY-GENERATOR-001",
+    kind: "reaches-scenario-it-omits",
+    issue:
+      "#88: not a rule defect. The shared intake fixtures never answer battery_system_kwh, which " +
+      "the registry asks unconditionally and allows to be blank, so the battery arm of this " +
+      "rule's `any` trigger is unknown in every scenario and the rule is conditional throughout. " +
+      'The answer key states a battery answer only for E ("battery none"). Filling the blank ' +
+      "would invent an answer the key does not state for the other five, which is the same " +
+      "conflict class already recorded for Scenario F's food_vendor_count.",
+  },
 ];
 
 const isKnown = (scenario: string, ruleId: string, kind: string): boolean =>
   KNOWN_DISAGREEMENTS.some(
-    (entry) => entry.scenario === scenario && entry.ruleId === ruleId && entry.kind === kind,
+    (entry) => entry.scenarios.includes(scenario) && entry.ruleId === ruleId && entry.kind === kind,
   );
+
+/**
+ * Rules a scenario reaches whose `exercised_by_scenarios` omits it.
+ *
+ * Reached, not fired. A rule a scenario only reaches through a material unknown is still exercised
+ * by it — it appears in the plan as a conditional finding — so checking only the rules that fired
+ * let a conditional-only rule lose its metadata silently. Pure so the case can be tested directly
+ * rather than waiting for the published ruleset to grow one.
+ */
+export function metadataOmissions(
+  scenario: string,
+  reached: readonly string[],
+  claims: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  return reached.filter((ruleId) => !(claims.get(ruleId) ?? []).includes(scenario));
+}
 
 const scenarios = SCENARIO_INTAKE_FIXTURES.map((fixture) => fixture.scenario);
 
@@ -187,43 +224,66 @@ describe("the fixture suite and the published ruleset agree", () => {
       .filter((ruleId) => !isKnown(scenario, ruleId, "claims-scenario-it-cannot-reach"));
     expect(claimsButCannotReach, `rules claiming ${scenario} that it never reaches`).toEqual([]);
 
-    const reachesButOmits = fired
-      .filter((ruleId) => !(claims.get(ruleId) ?? []).includes(scenario))
-      .filter((ruleId) => !isKnown(scenario, ruleId, "reaches-scenario-it-omits"));
+    const reachesButOmits = metadataOmissions(scenario, [...reached], claims).filter(
+      (ruleId) => !isKnown(scenario, ruleId, "reaches-scenario-it-omits"),
+    );
     expect(
       reachesButOmits,
-      `rules firing in ${scenario} whose exercised_by_scenarios omits it`,
+      `rules ${scenario} reaches, fired or conditional, whose exercised_by_scenarios omits it`,
     ).toEqual([]);
+  });
+
+  it("catches a rule a scenario reaches only conditionally", () => {
+    // The check this replaces looked at fired alone, so a rule reached only through a material
+    // unknown could lose its scenario from exercised_by_scenarios and stay green. That is the
+    // check that caught DOHMH-EXEMPTION-001 being wrong in both directions, so it is worth
+    // pinning against synthetic input rather than waiting for the ruleset to grow another case.
+    const claims = new Map<string, readonly string[]>([
+      ["FIRES-001", ["X"]],
+      ["CONDITIONAL-001", []],
+      ["DOCUMENTED-001", ["X"]],
+    ]);
+
+    expect(metadataOmissions("X", ["FIRES-001", "DOCUMENTED-001"], claims)).toEqual([]);
+    // reached-but-not-fired, and its metadata does not name the scenario
+    expect(metadataOmissions("X", ["FIRES-001", "CONDITIONAL-001"], claims)).toEqual([
+      "CONDITIONAL-001",
+    ]);
+    // a rule with no metadata at all is an omission, not an exemption
+    expect(metadataOmissions("X", ["UNKNOWN-001"], claims)).toEqual(["UNKNOWN-001"]);
   });
 
   it("keeps the allowlist honest: every recorded disagreement still exists", () => {
     // The mirror of the checks above. Once a disagreement is resolved its entry must go, or the
     // list becomes a place where a real finding can hide behind an issue number.
     for (const entry of KNOWN_DISAGREEMENTS) {
-      const { fired, conditional } = reachedIn(entry.scenario);
-      const reached = new Set([...fired, ...conditional]);
-      const claims =
-        [...publishedRuleset.rules, ...publishedRuleset.advisories].find(
-          (rule) => rule.id === entry.ruleId,
-        )?.exercised_by_scenarios ?? [];
+      for (const scenario of entry.scenarios) {
+        const { fired, conditional } = reachedIn(scenario);
+        const reached = new Set([...fired, ...conditional]);
+        const claims =
+          [...publishedRuleset.rules, ...publishedRuleset.advisories].find(
+            (rule) => rule.id === entry.ruleId,
+          )?.exercised_by_scenarios ?? [];
 
-      const stillDisagrees =
-        entry.kind === "fires-but-key-omits"
-          ? fired.includes(entry.ruleId) && !expectedRuleIds(entry.scenario).includes(entry.ruleId)
-          : entry.kind === "claims-scenario-it-cannot-reach"
-            ? claims.includes(entry.scenario) && !reached.has(entry.ruleId)
-            : fired.includes(entry.ruleId) && !claims.includes(entry.scenario);
+        const stillDisagrees =
+          entry.kind === "fires-but-key-omits"
+            ? fired.includes(entry.ruleId) && !expectedRuleIds(scenario).includes(entry.ruleId)
+            : entry.kind === "claims-scenario-it-cannot-reach"
+              ? claims.includes(scenario) && !reached.has(entry.ruleId)
+              : reached.has(entry.ruleId) && !claims.includes(scenario);
 
-      expect(
-        stillDisagrees,
-        `${entry.ruleId} / Scenario ${entry.scenario} no longer disagrees — remove its allowlist entry`,
-      ).toBe(true);
+        expect(
+          stillDisagrees,
+          `${entry.ruleId} / Scenario ${scenario} no longer disagrees — remove its allowlist entry`,
+        ).toBe(true);
+      }
     }
   });
 
   it("cites an owning issue for every recorded disagreement", () => {
     for (const entry of KNOWN_DISAGREEMENTS) {
-      expect(entry.issue, `${entry.ruleId} in ${entry.scenario}`).toMatch(/#\d+/);
+      expect(entry.issue, `${entry.ruleId} in ${entry.scenarios.join(", ")}`).toMatch(/#\d+/);
+      expect(entry.scenarios.length, `${entry.ruleId} covers no scenario`).toBeGreaterThan(0);
     }
   });
 });
