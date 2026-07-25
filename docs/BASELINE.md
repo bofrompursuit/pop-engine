@@ -1,7 +1,7 @@
 # PopEngine — Baseline Manifest
 
 **Purpose:** the single entry point stating which artifact versions are current. An artifact is implementable when its row is APPROVED. Anything PROPOSED needs the named approval first. Update this file in the same PR as any status change.
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-24
 
 | Concern | Artifact | Status | Needs |
 |---|---|---|---|
@@ -17,7 +17,7 @@
 | **Scenario fixtures** | `docs/test-scenario-answer-key.md` (v3) | **APPROVED** (2026-07-22, with the ruleset) | now the green-gate acceptance suite |
 | Evidence record | `docs/VERIFICATION-SOURCES.md` | ACTIVE RECORD (Rounds 1–2, 2026-07-22) | grows with each verification pass |
 | Open questions | `docs/OPEN-QUESTIONS.md` | ACTIVE REGISTER | — |
-| Phase 1 specs | `specs/F-*.md` | APPROVED except F-101/F-102/F-201 (updated 2026-07-22, re-read before building) | — |
+| Phase 1 specs | `specs/F-*.md` | APPROVED (2026-07-22; F-101/F-102/F-201 approved 2026-07-24, re-read before building) | specs carry no per-file status header, so this row is their only approval record (governance §7) |
 | Superseded/draft material | `rules/proposals/*`, `docs/proposals/*` | ARCHIVED / PROPOSED drafts | never build from these |
 | Ruleset v1 lineage | git commit `28e937d` | SUPERSEDED | historical only |
 
