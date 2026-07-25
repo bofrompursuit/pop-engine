@@ -25,16 +25,20 @@ const scenario = (id: string): Record<string, unknown> => {
   return fixtureSubmission(fixture);
 };
 
-// Scenario F's `food_vendor_count` is inferred, not stated by the answer key
-// (SPEC-CONFLICT #88), so the test names say so rather than claiming all six scenarios
-// are entered exactly as written.
+// Every scenario is entered exactly as answer key v4 writes it — it states the values the
+// fixtures were already running on (SPEC-CONFLICT #88 and #106, both closed). The provenance
+// branch stays so a future inferred value cannot be reported as "as written".
 const SCENARIO_CASES = SCENARIO_INTAKE_FIXTURES.map((fixture) => ({
   ...fixture,
   submission: fixtureSubmission(fixture),
   provenance:
     fixture.inferred === undefined
       ? "exactly as the answer key specifies"
-      : `with ${Object.keys(fixture.inferred).join(", ")} inferred (SPEC-CONFLICT #88)`,
+      : `with ${Object.keys(fixture.inferred).join(", ")} inferred (SPEC-CONFLICT #${Object.values(
+          fixture.inferred,
+        )
+          .map((entry) => entry.conflictIssue)
+          .join(", #")})`,
 }));
 
 describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {

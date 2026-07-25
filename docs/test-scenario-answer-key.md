@@ -1,7 +1,7 @@
-# PopEngine — Scenario Fixtures v3 (derived from ruleset nyc.v2.5)
+# PopEngine — Scenario Fixtures v4 (derived from ruleset nyc.v2.5)
 
-**Status:** APPROVED — fixtures v3 team-ratified 2026-07-22 with ruleset v2.1 (OPEN-QUESTIONS B-2, all four devs); they remain the green-gate suite against nyc.v2.5; the v2.2, v2.3, v2.4 and v2.5 changes were product-owner authorized 2026-07-25 and moved no expected output. v2.5 changed evaluated output without changing this document: it removed an FDNY-GENERATOR-001 finding that five scenarios were reporting and none of their expected-findings blocks ever listed. See `docs/BASELINE.md`. Now the green-gate acceptance suite. Individual regulatory facts still promote SOURCE_CONFIRMED → VERIFIED during the build via the ruleset's `verification` blocks (OPEN-QUESTIONS §2); that promotion is the verification owner's, per CONTRIBUTING Golden Rule 2.
-**Supersedes:** the v1 answer key (six scenarios, R1–R13; recoverable at git `28e937d`) and the unapproved v2 draft suite (preserved at `docs/proposals/regulatory-scenarios-v2-draft.md`).
+**Status:** APPROVED — fixtures v3 team-ratified 2026-07-22 with ruleset v2.1 (OPEN-QUESTIONS B-2, all four devs); they remain the green-gate suite against nyc.v2.5; the v2.2, v2.3, v2.4 and v2.5 changes were product-owner authorized 2026-07-25 and moved no expected output. v2.5 changed evaluated output without changing this document: it removed an FDNY-GENERATOR-001 finding that five scenarios were reporting and none of their expected-findings blocks ever listed. v4 (product-owner authorized 2026-07-25) writes down six intake facts the fixtures have been evaluating on since v3 and this document never stated — `battery_present` in A, B, D and F, `structure_types` and `generator_present` in D and F, `open_flame_or_cooking` in E and F, and F's `food_vendor_count` — and moves no expected finding, no verdict and no deadline. See `docs/BASELINE.md`. Now the green-gate acceptance suite. Individual regulatory facts still promote SOURCE_CONFIRMED → VERIFIED during the build via the ruleset's `verification` blocks (OPEN-QUESTIONS §2); that promotion is the verification owner's, per CONTRIBUTING Golden Rule 2.
+**Supersedes:** fixtures v3 (same six scenarios, recoverable at git `52ce21e`), the v1 answer key (six scenarios, R1–R13; recoverable at git `28e937d`) and the unapproved v2 draft suite (preserved at `docs/proposals/regulatory-scenarios-v2-draft.md`).
 **Authority hierarchy:** approved primary source → published rule (`nyc-rules.v2.5.json`) → this fixture suite → engine output → UI copy. **This document is derived from the ruleset, not an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong; if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority.
 **Evidence:** every regulatory fact traces via the ruleset's `evidence` refs to fetch-confirmed quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2, 2026-07-22).
 **Fixture clock:** `today = 2026-07-22` (Wednesday). All dates computed from it. Business-day math is actual-calendar (no holidays fall in any fixture window; the pinned holiday calendar is a RESEARCH item for other dates).
@@ -21,7 +21,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 
 *Replaces the v1 anchor, whose universal 60-day SAPO lead was contradicted by primary sources (VS RF-2). Same story: commercial street activation, 35 days out; now classified.*
 
-**Inputs:** brooklyn · location_type=street · obstructs_public_way=yes · sapo_event_type=street_event · **street_event_size=large** (multi-block activation) · headcount=75 · event_date=**2026-08-26** (35 days out) · open_to_public=yes · food_present=yes, food_vendor_count=1 · selling_anything=yes · amplified_sound=yes · no structures · no flame · no generator · no alcohol
+**Inputs:** brooklyn · location_type=street · obstructs_public_way=yes · sapo_event_type=street_event · **street_event_size=large** (multi-block activation) · headcount=75 · event_date=**2026-08-26** (35 days out) · open_to_public=yes · food_present=yes, food_vendor_count=1 · selling_anything=yes · amplified_sound=yes · no structures · no flame · no generator · battery none · no alcohol
 
 **Expected findings:**
 1. SAPO-STREET-LARGE-001 — Street Event Permit (Large), 45-day deadline = **2026-07-12, already passed** → PUBLISHED_DEADLINE_MISSED
@@ -39,7 +39,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 
 ## Scenario B — "Gallery Pop-up" (FALSE-POSITIVE / LOW-BURDEN TEST)
 
-**Inputs:** manhattan · private_venue · headcount=60 · event_date=2026-08-12 (21 days out) · open_to_public=yes · food_present=yes (prepackaged snacks, free), food_vendor_count=1 (the gallery itself) · selling_anything=no · amplified_sound=no · no structures/flame/generator/alcohol
+**Inputs:** manhattan · private_venue · headcount=60 · event_date=2026-08-12 (21 days out) · open_to_public=yes · food_present=yes (prepackaged snacks, free), food_vendor_count=1 (the gallery itself) · selling_anything=no · amplified_sound=no · no structures/flame/generator/alcohol · battery none
 
 **Expected findings:**
 1. ADV-VENUE-OCCUPANCY-001 — CoO/legal use governs capacity; 60 < 75 assembly threshold [thresholds source-confirmed]
@@ -65,7 +65,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 
 ## Scenario D — "Queens Block Party" (TIGHT-BUT-FEASIBLE + ELIGIBILITY TEST)
 
-**Inputs:** queens · street · obstructs_public_way=yes · sapo_event_type=block_party · has_amusement_ride=no · headcount=200 · event_date=2026-09-30 (70 days out) · open_to_public=yes · no public food service (neighbors' own grills; food_present=no) · selling_anything=no · amplified_sound=yes · open_flame_or_cooking=[charcoal_wood] · no alcohol
+**Inputs:** queens · street · obstructs_public_way=yes · sapo_event_type=block_party · has_amusement_ride=no · headcount=200 · event_date=2026-09-30 (70 days out) · open_to_public=yes · no public food service (neighbors' own grills; food_present=no) · selling_anything=no · amplified_sound=yes · no structures · open_flame_or_cooking=[charcoal_wood] · no generator · battery none · no alcohol
 
 **Expected findings:**
 1. SAPO-BLOCK-PARTY-001 — Block Party Permit, 60-day deadline = **2026-08-01** → DEADLINE_APPROACHING (10 days); community-board recommendation note
@@ -79,7 +79,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 
 ## Scenario E — "Plaza Brand Activation" (MAX-COMPLEXITY TEST)
 
-**Inputs:** manhattan · plaza · obstructs_public_way=yes · sapo_event_type=plaza_event · **plaza_level=a** · plaza_multiple_blocks=no · headcount=300 · event_date=**2026-12-04** (135 days out) · open_to_public=yes · food_present=yes (free sampling), food_vendor_count=2 · selling_anything=no · amplified_sound=yes · structure_types=[tent_canopy], tent_area_sqft=**400** (20×20), tent_days_in_place=1, structure_over_10ft_tall=unknown · generator_present=yes (gasoline 5 gal, 50 kW) · battery none · no alcohol
+**Inputs:** manhattan · plaza · obstructs_public_way=yes · sapo_event_type=plaza_event · **plaza_level=a** · plaza_multiple_blocks=no · headcount=300 · event_date=**2026-12-04** (135 days out) · open_to_public=yes · food_present=yes (free sampling), food_vendor_count=2 · selling_anything=no · amplified_sound=yes · structure_types=[tent_canopy], tent_area_sqft=**400** (20×20), tent_days_in_place=1, structure_over_10ft_tall=unknown · no flame · generator_present=yes (gasoline 5 gal, 50 kW) · battery none · no alcohol
 
 **Expected findings:**
 1. SAPO-PLAZA-001 — Plaza Event Permit, Level A single-block = 45-day deadline (2026-10-20) → ON_TRACK (~90 days slack)
@@ -96,7 +96,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 
 ## Scenario F — "Rooftop Launch Party" (CONDITIONAL-BRANCH TEST, expanded)
 
-**Inputs:** manhattan · private_venue (rooftop) · headcount=90 · event_date=**2026-08-11** (20 days out) · open_to_public=no (invite-only) · food catered, nothing sold (food_present=yes, food_affinity_private_exception_claimed=unknown) · selling_anything=no · amplified_sound=yes, sound_audible_from_public_way=**unknown** · alcohol=yes, venue_license_covers_event_area=**unknown** · venue_has_assembly_approval=**unknown**
+**Inputs:** manhattan · private_venue (rooftop) · headcount=90 · event_date=**2026-08-11** (20 days out) · open_to_public=no (invite-only) · food catered, nothing sold (food_present=yes), food_vendor_count=1 (the caterer), food_affinity_private_exception_claimed=unknown · selling_anything=no · amplified_sound=yes, sound_audible_from_public_way=**unknown** · alcohol=yes, venue_license_covers_event_area=**unknown** · venue_has_assembly_approval=**unknown** · no structures · no flame · no generator · battery none
 
 **Expected findings:**
 1. DOB-ASSEMBLY-001 — 90 ≥ 75 **on a roof terrace** counts against the indoor threshold → PACO/TPA consideration, branch on venue_has_assembly_approval (TPA: "earlier than 10 days" per DOB code notes — wording variance flagged; min $250 + late surcharge)
