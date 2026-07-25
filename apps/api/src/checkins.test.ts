@@ -244,7 +244,25 @@ describe("recordCheckin (scripted)", () => {
   });
 });
 
-describe("POST /api/events/:id/checkins route wiring", () => {
+describe("F-401 route wiring", () => {
+  it("returns only the public event identity needed by the form", async () => {
+    const eventId = "11111111-1111-4111-8111-111111111111";
+    const database = scriptedDatabase([
+      {
+        when: (sql) => sql.includes("SELECT id, name FROM events"),
+        rows: [{ id: eventId, name: "Bushwick Night", private_answer: "not returned" }],
+      },
+    ]);
+    const app = createApp({
+      database: database as unknown as Pool,
+      intakeContract: parseIntakeContract((await loadRuleset()).document),
+      today: () => FIXTURE_TODAY,
+    });
+    const response = await request(app).get(`/api/events/${eventId}/checkins`);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ event: { id: eventId, name: "Bushwick Night" } });
+  });
+
   it("answers through the mounted router", async () => {
     const eventId = "11111111-1111-4111-8111-111111111111";
     const database = scriptedDatabase([

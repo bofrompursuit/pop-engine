@@ -14,13 +14,17 @@ const jsonResponse = (status: number, body: unknown): Response =>
 
 describe("loadCheckinEvent", () => {
   it("returns the event name for a known id", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(200, { event: { id: "event-1", name: "Bushwick Night" } })),
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { event: { id: "event-1", name: "Bushwick Night" } }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     await expect(loadCheckinEvent("https://api.example.com", "event-1")).resolves.toEqual({
       ok: true,
       name: "Bushwick Night",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/api/events/event-1/checkins", {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
     });
   });
 

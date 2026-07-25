@@ -41,6 +41,9 @@ Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fall
 
 ## Phase 2 — Execution Hardening (post-capstone)
 
+- **F-701 · Authentication** — identity and session foundation; implemented first, but never production-activated alone.
+- **F-702 · Workspaces** — organizations, workspaces, and memberships; ships immediately after F-701.
+- **F-703 · Roles & Permissions** — owner/admin/organizer/contributor/check-in staff/viewer/rules admin; ships after F-702 as the final part of the rollout gate. No user-owned product data is persisted for authenticated users, and no external beta begins, until F-701, F-702, and F-703 ship (the MVP demo remains single-tenant behind its access gate).
 - **F-107 · Save & Resume** — save an incomplete intake/event and return later.
 - **F-208 · Application Status Tracking** — application number, submitted date, agency status, revisions, inspection, decision, conditions.
 - **F-209 · Fee & Document Ledger** — estimated/invoiced/paid fees; required vs. submitted documents; final permits + expirations.
@@ -51,7 +54,6 @@ Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fall
 - **F-403 · Lead Capture & Consent** — check-in doubles as opt-in lead collection; entry/marketing/SMS consent kept separate.
 - **F-404 · Attendee CRM & Export** — attendee list across events; CSV export; repeat-attendee flag.
 - **F-405 · Day-of Runbook** — auto-generated event-day sheet: permit numbers, load-in checklist, contacts, staff assignments.
-- **F-701 · Authentication** — user accounts (MVP demo runs single-tenant without auth).
 - **F-203 (full)** — alert escalations, digests, team reminders.
 
 ## Phase 3 — Differentiation & Depth
@@ -77,8 +79,6 @@ Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fall
 - **F-501 · Permit Performance Analytics** — late submissions, revisions, unexpected requirements, delays across events.
 - **F-502 · Historical Event Comparison** — permit burden, cost, prep time, attendance across similar events.
 - **F-503 · Event Templates & Reuse** — duplicate a past event; requirements recalculated against the current ruleset, never copied.
-- **F-702 · Workspaces** — organizations grouping events + members.
-- **F-703 · Roles & Permissions** — owner/admin/organizer/contributor/check-in staff/viewer/rules admin.
 - **F-704 · Activity History** — answer changes, recalculations, rule version changes, uploads, status changes.
 
 ## Phase 4 — Platform, AI & Expansion

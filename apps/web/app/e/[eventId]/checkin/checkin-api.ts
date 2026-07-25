@@ -43,7 +43,7 @@ function failureMessage(body: unknown, fallback: string): string {
 export async function loadCheckinEvent(apiBaseUrl: string, eventId: string): Promise<EventLookup> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/api/events/${eventId}`, { ...CREDENTIALED });
+    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/checkins`, { ...CREDENTIALED });
   } catch {
     return { ok: false, message: UNREACHABLE };
   }

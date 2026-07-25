@@ -25,6 +25,11 @@ export type CheckinRow = {
   checked_in_at: Date | string;
 };
 
+type CheckinEvent = {
+  id: string;
+  name: string;
+};
+
 type Queryable = {
   query<Row extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
 };
@@ -74,11 +79,32 @@ function readCheckinBody(
   return { ok: true, value: { name: record.name.trim(), contact: record.contact } };
 }
 
-async function eventExists(database: Queryable, eventId: string): Promise<boolean> {
-  const { rows } = await database.query<{ id: string }>("SELECT id FROM events WHERE id = $1", [
+async function readCheckinEvent(
+  database: Queryable,
+  eventId: string,
+): Promise<CheckinEvent | null> {
+  const { rows } = await database.query<CheckinEvent>("SELECT id, name FROM events WHERE id = $1", [
     eventId,
   ]);
-  return rows[0] !== undefined;
+  return rows[0] ?? null;
+}
+
+type GetCheckinEventResult =
+  { status: 200; body: { event: CheckinEvent } } | { status: 400 | 404; body: { error: string } };
+
+/** Public name-only projection used to render the app-less check-in form. */
+async function getCheckinEvent(
+  database: Queryable,
+  eventId: string,
+): Promise<GetCheckinEventResult> {
+  if (!UUID.test(eventId)) {
+    return { status: 400, body: { error: "That check-in link is not valid." } };
+  }
+  const event = await readCheckinEvent(database, eventId);
+  if (event === null) {
+    return { status: 404, body: { error: "That event was not found." } };
+  }
+  return { status: 200, body: { event: { id: event.id, name: event.name } } };
 }
 
 /**
@@ -138,7 +164,7 @@ export async function recordCheckin(
     return { status: 400, body: { error: normalized.message } };
   }
 
-  if (!(await eventExists(database, eventId))) {
+  if ((await readCheckinEvent(database, eventId)) === null) {
     return { status: 404, body: { error: "That event was not found." } };
   }
 
@@ -177,6 +203,14 @@ const handle =
 export function createCheckinsRouter(dependencies: CheckinsDependencies): Router {
   const { database } = dependencies;
   const router = Router();
+
+  router.get(
+    "/events/:id/checkins",
+    handle(async (req, res) => {
+      const result = await getCheckinEvent(database, req.params.id ?? "");
+      res.status(result.status).json(result.body);
+    }),
+  );
 
   router.post(
     "/events/:id/checkins",

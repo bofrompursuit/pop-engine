@@ -9,7 +9,7 @@
 7. **Verdict model:** the four-state verdict stays as the top-level summary, computed from per-finding deadline statuses (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE). INFEASIBLE copy = "published deadline missed as scoped." The 14-day slack threshold is labeled as internal policy.
 8. **Real business-day math** against a pinned holiday calendar replaces the calendar approximation (fixture dates are pinned, so determinism holds).
 9. **Governance adopted:** `DOCUMENTATION-GOVERNANCE.md` (authority-by-concern + conflict protocol), `AGENTS.md`, and `BASELINE.md` are in force. Authority for regulatory facts: primary source → published rule → approved fixture → engine output → UI copy.
-10. **Two parallel tracks (supersedes the stretch-after-gate rule):** the MVP core (Track A: F-101, F-201, F-102, F-206, F-202, F-203, F-204) and the stretch set (Track B: F-301, F-302, F-401, F-402, F-205) are worked separately, so Track B doubles as the demo fallback if the core runs out of time. Invariants: core blockers always outrank stretch work for whoever holds them; Track B never touches core-path files; the green gate now gates the demo-narrative decision, not stretch start.
+10. **Two parallel tracks (supersedes the stretch-after-gate rule):** the MVP core (Track A: F-101, F-201, F-102, F-206, F-202, F-203, F-204) and the stretch set (Track B: F-301, F-302, F-401, F-402, F-205) are worked separately, so Track B doubles as the demo fallback if the core runs out of time. Invariants: core blockers always outrank stretch work for whoever holds them; Track B never touches core-path files; the green gate now gates the demo-narrative decision, not stretch start. F-205 remains Track B scope but starts only after the F-201/F-202 plan and checklist views merge because its dedicated card integrates into those core-path files.
 
 ## Decisions of 2026-07-21
 
@@ -46,7 +46,7 @@ AI may draft and extract; it may never make the authoritative permit determinati
 ## Definition of Iron-Clad (Phase 1 quality bar)
 
 - Deterministic engine output: same event + same ruleset + same date → same plan, every time.
-- Every plan line cites an official source and its verification status.
+- Every plan line shows its verification status. Source-bearing lines cite an official source; a source-less COVERAGE_GAP visibly says "source not yet established" and never invents one.
 - The full fixture suite passes (6 scenarios + boundary fixtures, `test-scenario-answer-key.md` v4): 100% of expected findings, zero false omissions, zero false additions, correct verdicts.
 - Zero fabricated permit facts; RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders both readings.
 - The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.5 to APPROVED before the demo.
@@ -72,15 +72,17 @@ One integration point (the `events` schema — agreed by all four devs before an
 - **Dev 3 — Checklist + portals:** F-202, F-204. Verify: plan converts to checklist; every permit links to its portal with its document list.
 - **Dev 4 — Alerts + platform:** F-203, DB migrations, deploy, demo environment; **owns verification sign-off**: confirms the ruleset's SOURCE_CONFIRMED facts in a browser (evidence pre-collected in `VERIFICATION-SOURCES.md`) and works the open research items (OPEN-QUESTIONS §2). Verify: a seeded deadline fires a real email/SMS; `BASELINE.md` flips nyc.v2.5 to APPROVED.
 
-Track B staffing is the team's kickoff call (default suggestion: Dev 3 → F-301/F-302 and Dev 4 → F-401/F-402 as their core items complete; F-205 stays with Dev 1). The invariant from Decision 10: a dev holding an unmerged core blocker works the blocker first, and Track B branches never touch core-path files.
+Track B staffing is the team's kickoff call (default suggestion: Dev 3 → F-301/F-302 and Dev 4 → F-401/F-402 as their core items complete; F-205 stays with Dev 1 but begins only after the F-201/F-202 views merge). The invariant from Decision 10: a dev holding an unmerged core blocker works the blocker first, and parallel Track B branches never touch core-path files.
 
 ## Dependency Graph (build-order constraints)
 
 - F-101 → everything (single source of truth)
 - F-201 → F-102, F-202, F-203, F-204, F-205, F-208, F-405; ruleset versioning (F-201) → F-503, F-712, F-713, F-714
-- F-301 → F-302 → F-401 → F-402/F-403 → F-404, F-407; F-302 → F-306/F-307
+- F-201 → F-206 plan rendering; F-202 → F-206 checklist rendering
+- F-301 → F-302 → F-306/F-307; F-302 optionally enriches F-401 with pre-registered lookup
+- F-401 → F-402/F-403 → F-404, F-407
 - F-104 → F-406 → F-407 → F-501/F-502
-- F-701 → F-702 → F-703/F-704 → F-213
+- F-701 → F-702 → F-703 → F-704/F-213; F-701/F-702/F-703 jointly gate authenticated user-owned product data and external beta
 - Twilio plumbing: built once for F-203, reused by F-305, F-413
 - QR infra: built once for F-401, reused by F-303
 - F-601 (open-ended intake) → F-109 becomes necessary (coverage envelope)
@@ -92,7 +94,7 @@ Track B staffing is the team's kickoff call (default suggestion: Dev 3 → F-301
 3. **Scenario D (the yellow state):** block party, 70 days out → FEASIBLE-AT-RISK, "apply within 10 days" — and no insurance line (block parties without rides are exempt). The absence is a credibility beat.
 4. **Scenario F (the branch):** rooftop party → CONDITIONAL branch table: license coverage, assembly approval, sound audibility; the no-license branch misses the SLA window by one business day.
 5. Rules snapshot banner + a live source-citation click-through; an OFFICIAL_CONFLICT rendering (Parks exactly-20 or TUA) if time allows.
-6. If stretch is green: RSVP a seeded guest, then live QR check-in on audience phones.
+6. If stretch is green: seed synthetic guests, give audience participants organizer-provided synthetic name/contact aliases, then live QR check-in on their phones. No attendee enters personal contact data.
 
 ## Rules Administration (until F-710–F-715 exist)
 
@@ -100,6 +102,6 @@ Performed manually: the rules JSON is versioned in git, the answer key is the te
 
 ## Spec-Driven Development
 
-- One spec per F-id in `/specs`, core first, in build order: F-101, F-201, F-102, F-206, F-202, F-203, F-204; then stretch: F-205, F-301, F-302, F-401, F-402. Phases 2+ get specs when scheduled, not now.
+- One spec per F-id in `/specs`; work follows the two-track model and dependency graph above, not a core-then-stretch sequence. F-206 plan rendering follows F-201, while its checklist integration waits for F-202. Phases 2+ get specs when scheduled, not now.
 - F-201's acceptance suite is the fixture set in `test-scenario-answer-key.md` (v4, derived from the ruleset). Authority for any disagreement: primary source → published rule → approved fixture → engine output → UI copy; fix the lower level, never bend the engine to a broken expectation.
 - `rules/nyc-rules.v2.5.json` is the crown jewel; version it like code. No fact enters it without an evidence reference to `VERIFICATION-SOURCES.md`; gaps are RESEARCH_REQUIRED, conflicts are OFFICIAL_CONFLICT, never guesses.

@@ -1,5 +1,6 @@
 # F-203 · Deadline Alerts
 
+**Status:** APPROVED (2026-07-25) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 2; happy path) · **Lane:** Dev 4 · **Depends on:** F-202 (scheduling happens at checklist creation) · **Feeds:** F-305/F-413 reuse the plumbing (post-MVP)
 
 ## User Story

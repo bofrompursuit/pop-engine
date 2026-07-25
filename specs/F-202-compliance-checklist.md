@@ -1,5 +1,6 @@
 # F-202 · Compliance Checklist & Status Tracker
 
+**Status:** APPROVED (2026-07-25) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 2) · **Lane:** Dev 3 · **Depends on:** F-201 · **Feeds:** F-203 (alert scheduling), F-204 (portal links render on checklist items)
 
 ## User Story
@@ -21,21 +22,22 @@ As an independent organizer, I turn my permit plan into a living checklist where
 ## Acceptance Criteria
 
 1. One click converts the latest plan into a checklist; each item stays linked to its plan item (and thus rule, deadline, citation, portal).
-2. Statuses: not_started → in_progress → submitted → approved / rejected; any transition is allowed (agencies are messy), current status always visible per item and rolled up per event.
+2. Statuses: not_started → in_progress → submitted → approved / rejected; any transition is allowed (agencies are messy), current status is always visible per item, and the event rollup counts current-plan items only. Retained items from an earlier plan are counted and labeled separately so the rollup never appears to omit visible rows.
 3. Document upload accepts PDF/PNG/JPG up to 10 MB; the file lands in object storage; download works via signed URL; nothing binary in Postgres.
 4. Notes persist per item.
 5. Checklist shows each item's `latest_apply_date` (and `apply_after_date` when gated) so the deadline context lives where the work happens.
 6. Regenerating the plan (rescope) prompts: existing checklist is kept but flagged "plan has changed; review items" with items no longer in the new plan struck through, new items appended. Nothing is silently deleted.
 7. Demo path: Scenario A rescope → plan passes → checklist created → one status flipped and one document uploaded live.
+8. The checklist response exposes each item's source plan `ruleset_version` and `snapshot_date` through its existing plan-item relationship. A retained row stays attributable to the last plan that raised it; the values are never copied from the live rules file or duplicated into checklist storage.
 
 ## Edge Cases
 
 - Checklist created twice: idempotent; second call returns the existing checklist rather than duplicating.
 - Upload failure (S3 unreachable): item keeps state, user sees a retryable error; no orphan metadata row.
-- Plan with zero permit items (Scenario B): checklist creation is offered but produces an empty state with the advisories shown ("nothing to track; keep confirmation notes here if you like").
+- Plan with zero trackable permit/insurance items (synthetic edge case, not Scenario B): checklist creation is offered but produces an empty state with read-only context shown ("nothing to track; keep confirmation notes here if you like").
 
 ## Answer-Key Scenarios Exercised
 
 - A (demo path: rescoped plan → checklist).
-- B (empty-checklist state).
+- B (one conditional DOHMH permit item plus read-only context).
 - C (gated item shows apply_after date on the checklist).
