@@ -21,7 +21,7 @@ afterEach(() => {
 // `intakeFormProps` resolves the ruleset against the working directory, which is the
 // Next app's own directory when it runs. Vitest runs from the repo root, so the tests
 // point RULES_FILE at the same artifact the way a deployment does.
-const useRepoRuleset = () => vi.stubEnv("RULES_FILE", "rules/nyc-rules.v2.1.json");
+const useRepoRuleset = () => vi.stubEnv("RULES_FILE", "rules/nyc-rules.v2.2.json");
 
 describe("the app shell", () => {
   it("names the product and says the demo holds synthetic data only", () => {
@@ -61,7 +61,7 @@ describe("intakeFormProps", () => {
     // the Next app's own directory when it runs and the repo root here. A page that
     // cannot read the published ruleset must not render a questionnaire at all.
     vi.stubEnv("RULES_FILE", undefined);
-    await expect(intakeFormProps()).rejects.toThrow(/nyc-rules\.v2\.1\.json/);
+    await expect(intakeFormProps()).rejects.toThrow(/nyc-rules\.v2\.2\.json/);
   });
 });
 

@@ -16,7 +16,7 @@ import { IntakeForm } from "./intake-form";
 // Resolved from the repo root, which is vitest's working directory: under jsdom
 // `import.meta.url` is the document's http URL, not a file one.
 const contract = parseIntakeContract(
-  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.1.json"), "utf8")),
+  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.2.json"), "utf8")),
 );
 
 const jsonResponse = (status: number, body: unknown): Response =>
@@ -790,7 +790,7 @@ describe("the regenerate control (spec #8)", () => {
     await save(user);
     await waitFor(() => expect(screen.getByText(/Saved as revision 3/)).toBeDefined());
 
-    releasePlan(jsonResponse(201, { verdict: "feasible", event_revision: 2 }));
+    releasePlan(jsonResponse(201, { verdict: "feasible", eventRevision: 2 }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Regenerate plan" }).hasAttribute("disabled")).toBe(
         false,
@@ -802,7 +802,7 @@ describe("the regenerate control (spec #8)", () => {
 
   it("ignores a plan that names a revision other than the one on screen", async () => {
     const user = await saveThenStalePlan();
-    fetchMock.mockResolvedValueOnce(jsonResponse(201, { verdict: "feasible", event_revision: 1 }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(201, { verdict: "feasible", eventRevision: 1 }));
     await user.click(screen.getByRole("button", { name: "Regenerate plan" }));
 
     await waitFor(() =>

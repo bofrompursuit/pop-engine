@@ -102,7 +102,7 @@ describe("loadEvent", () => {
 describe("regeneratePlan", () => {
   it("posts to the event's plan endpoint with the Access cookie attached", async () => {
     const fetchMock = stubFetch(async () =>
-      jsonResponse(201, { verdict: "feasible", event_revision: 2 }),
+      jsonResponse(201, { verdict: "feasible", eventRevision: 2 }),
     );
 
     await expect(regeneratePlan("https://api.example.com", "event-1")).resolves.toEqual({
@@ -118,6 +118,13 @@ describe("regeneratePlan", () => {
 
   it("reports an unknown revision when the plan response does not name one", async () => {
     // The plan endpoint is F-201's; this app must not require a shape it does not own.
+    // A snake_case key is not the one F-201 publishes, so it reads as "cannot confirm".
+    stubFetch(async () => jsonResponse(201, { verdict: "feasible", event_revision: 2 }));
+    await expect(regeneratePlan("https://api.example.com", "event-1")).resolves.toEqual({
+      ok: true,
+      eventRevision: null,
+    });
+
     stubFetch(async () => jsonResponse(201, { verdict: "feasible" }));
     await expect(regeneratePlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: true,

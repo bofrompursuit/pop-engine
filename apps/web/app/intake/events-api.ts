@@ -23,10 +23,11 @@ export type LoadedEvent = {
 export type LoadResult = { ok: true; loaded: LoadedEvent } | { ok: false; message: string };
 
 /**
- * A plan regeneration. `eventRevision` is the revision the new plan evaluated, when the
- * plan endpoint reports it: the caller uses it to ignore a response for a revision the
- * event has already moved past. It is null when the response does not say, which the
- * caller must treat as "cannot confirm" rather than "matches".
+ * A plan regeneration. `eventRevision` is the revision the new plan evaluated, read from
+ * the plan endpoint's own `eventRevision` (F-201 serves plans in camelCase; the events
+ * routes serve database rows in snake_case). The caller uses it to ignore a response for
+ * a revision the event has already moved past. It is null when the response does not say,
+ * which the caller must treat as "cannot confirm" rather than "matches".
  */
 export type PlanRegenerationResult =
   { ok: true; eventRevision: number | null } | { ok: false; message: string };
@@ -114,6 +115,6 @@ export async function regeneratePlan(
       message: failureMessage(body, `The plan could not be regenerated (HTTP ${response.status}).`),
     };
   }
-  const revision = asRecord(body)?.event_revision;
+  const revision = asRecord(body)?.eventRevision;
   return { ok: true, eventRevision: typeof revision === "number" ? revision : null };
 }

@@ -1,27 +1,12 @@
-import express, { type Express } from "express";
-import { describeEngine } from "@pop-engine/engine";
+import express, { type Express, type Response } from "express";
+import { describeEngine, EvaluationError } from "@pop-engine/engine";
 import { createEventsRouter, type EventsDependencies } from "./events";
+import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 
-// Event dates are local calendar dates in the ruleset's jurisdiction (US-NY-NYC), not
-// UTC instants. Deriving "today" in UTC rejects a same-day event all evening, once UTC
-// has rolled over and New York has not.
-const JURISDICTION_TIME_ZONE = "America/New_York";
-const JURISDICTION_DAY = new Intl.DateTimeFormat("en-US", {
-  timeZone: JURISDICTION_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-/** The clock the API stamps requests with. The engine always receives it as a value. */
-export const jurisdictionToday = (now: Date = new Date()): string => {
-  const parts = new Map(
-    JURISDICTION_DAY.formatToParts(now).map(({ type, value }) => [type, value]),
-  );
-  return `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}`;
+export type AppDependencies = EventsDependencies & {
+  /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
+  planService?: PlanService;
 };
-
-export type AppDependencies = Omit<EventsDependencies, "today"> & { today?: () => string };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
 // can drive it with supertest without opening a port.
@@ -55,10 +40,73 @@ export function createApp(dependencies: AppDependencies): Express {
     res.json({ status: "ok", service: "pop-engine-api", engine: describeEngine() });
   });
 
-  app.use(
-    "/api",
-    createEventsRouter({ ...dependencies, today: dependencies.today ?? jurisdictionToday }),
-  );
+  app.use("/api", createEventsRouter(dependencies));
+  if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
 
   return app;
+}
+
+/**
+ * F-201/F-102 plan routes. A rule-evaluation failure returns an explicit error and never a
+ * plan with no findings, so the api can never present a failure as "nothing required" (AC 5).
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A malformed id must not reach `WHERE id = $1`: Postgres raises 22P02 coercing it to uuid, which
+ * would surface as a 500 carrying driver error text. Client mistakes get a client error, and
+ * database internals stay on the server.
+ */
+function rejectMalformedId(id: string, res: Response): boolean {
+  if (UUID.test(id)) return false;
+  res.status(400).json({ error: "event id must be a uuid" });
+  return true;
+}
+
+/** Only our own messages are safe to echo; anything else could carry driver detail. */
+function respondWithFailure(res: Response, error: unknown, summary: string): void {
+  if (error instanceof EvaluationError || error instanceof PlanIntegrityError) {
+    res.status(500).json({ error: summary, detail: error.message });
+    return;
+  }
+  console.error(summary, error);
+  res.status(500).json({ error: summary });
+}
+
+function registerPlanRoutes(app: Express, planService: PlanService): void {
+  app.post("/api/events/:id/plan", (req, res) => {
+    const eventId = req.params.id;
+    if (rejectMalformedId(eventId, res)) return;
+    planService
+      .generate(eventId)
+      .then((plan) => res.status(201).json(plan))
+      .catch((error: unknown) => {
+        if (error instanceof EventNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        respondWithFailure(res, error, "plan generation failed");
+      });
+  });
+
+  app.get("/api/events/:id/plan", (req, res) => {
+    const eventId = req.params.id;
+    if (rejectMalformedId(eventId, res)) return;
+    planService
+      .latest(eventId)
+      .then((plan) => {
+        if (plan === null) {
+          res.status(404).json({ error: `no plan generated for event ${eventId}` });
+          return;
+        }
+        res.json(plan);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof EventNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        respondWithFailure(res, error, "plan lookup failed");
+      });
+  });
 }

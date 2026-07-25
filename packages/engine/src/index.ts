@@ -2,8 +2,7 @@
 //
 // PURE module (AGENTS.md "Engine invariants"): no database, HTTP, environment reads,
 // randomness, or system clock. `today`, the ruleset, and the holiday calendar are always
-// explicit inputs. The real evaluate(intake, ruleset, today, calendar) lands with F-201
-// (issue #4); this scaffold only proves the toolchain and the cross-package wiring.
+// explicit inputs. `evaluate(intake, ruleset, today, calendar)` is the entry point (F-201).
 
 export const ENGINE_NAME = "pop-engine-engine";
 
@@ -34,3 +33,21 @@ export {
 export function describeEngine(): string {
   return `${ENGINE_NAME} ready`;
 }
+
+export { evaluate } from "./evaluate";
+export { parseEngineRuleset, triggerFields } from "./ruleset";
+export {
+  addCalendarDays,
+  countBusinessDays,
+  differenceInCalendarDays,
+  subtractBusinessDays,
+} from "./calendar";
+export { CONFIRM_WITH_AGENCY } from "./deadlines";
+export { computeWindowVerdict } from "./verdict";
+export { UNKNOWN_ANSWER } from "./conditions";
+export {
+  BOUNDARY_CONDITIONAL_RULES,
+  DEFAULT_DISPOSITION_BY_RULE_KIND,
+  UNKNOWN_TRIGGER_DISPOSITION,
+} from "./proposals";
+export * from "./types";

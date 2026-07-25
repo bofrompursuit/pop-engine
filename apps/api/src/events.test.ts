@@ -190,7 +190,7 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       await database.query(
         `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, verdict,
                                    verdict_detail, intake_snapshot)
-         VALUES ($1, $2, 1, 'nyc.v2.1', 'infeasible', '{}'::jsonb, '{}'::jsonb)`,
+         VALUES ($1, $2, 1, 'nyc.v2.2', 'infeasible', '{}'::jsonb, '{}'::jsonb)`,
         [randomUUID(), event.id],
       );
 
@@ -210,7 +210,7 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       await database.query(
         `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, verdict,
                                    verdict_detail, intake_snapshot)
-         VALUES ($1, $2, 1, 'nyc.v2.1', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+         VALUES ($1, $2, 1, 'nyc.v2.2', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
         [randomUUID(), event.id],
       );
 
@@ -243,7 +243,7 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       await database.query(
         `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, verdict,
                                    verdict_detail, intake_snapshot)
-         VALUES ($1, $2, 1, 'nyc.v2.1', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+         VALUES ($1, $2, 1, 'nyc.v2.2', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
         [randomUUID(), event.id],
       );
       const stored = await request(api).get(`/api/events/${event.id}`);

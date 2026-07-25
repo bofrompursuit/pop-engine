@@ -1,11 +1,11 @@
 {
   "schema": "popengine-rules/v2",
-  "ruleset_version": "nyc.v2.1",
+  "ruleset_version": "nyc.v2.2",
   "jurisdiction": "US-NY-NYC",
   "snapshot_date": "2026-07-22",
-  "supersedes": ["nyc.v1"],
-  "status": "APPROVED — team ratification 2026-07-22 (docs/BASELINE.md). Published artifact for the capstone build. Per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build via each rule's verification block (OPEN-QUESTIONS §2); only the verification owner (Dev 4) changes a per-fact verification status (CONTRIBUTING Golden Rule 2). The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
-  "provenance": "Demo-scoped corrected subset. Structure follows the nyc.v2 draft (rules/proposals/); every fact carries an evidence reference to a fetch-confirmed primary-source quote in docs/VERIFICATION-SOURCES.md (Round 1 or Round 2, 2026-07-22) or an explicit RESEARCH_REQUIRED/OFFICIAL_CONFLICT status. No fact is asserted beyond fetched text. The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
+  "supersedes": ["nyc.v1", "nyc.v2.1"],
+  "status": "APPROVED — team ratification 2026-07-22 (docs/BASELINE.md); republished as nyc.v2.2 on 2026-07-25 after a rule-semantics change (product-owner authorized, F-201 issue #4). Published artifact for the capstone build. Per-fact promotion SOURCE_CONFIRMED \u2192 VERIFIED continues during the build via each rule's verification block (OPEN-QUESTIONS \u00a72); only the verification owner (Dev 4) changes a per-fact verification status (CONTRIBUTING Golden Rule 2). The full 59-rule draft remains in rules/proposals/ as the post-capstone target.",
+  "provenance": "Demo-scoped corrected subset. Structure follows the nyc.v2 draft (rules/proposals/); every fact carries an evidence reference to a fetch-confirmed primary-source quote in docs/VERIFICATION-SOURCES.md (Round 1 or Round 2, 2026-07-22) or an explicit RESEARCH_REQUIRED/OFFICIAL_CONFLICT status. No fact is asserted beyond fetched text. The full 59-rule draft remains in rules/proposals/ as the post-capstone target. CHANGE FROM nyc.v2.1: exactly one rule differs — DOHMH-ORGANIZER-NOTIFY-001 now publishes output.disposition MAY_BE_REQUIRED. Article 88 scope for free prepackaged distribution by the host is contested on file (VERIFICATION-SOURCES RF-4), so a missed 30-day notification renders inside a CONDITIONAL result rather than as a definitive miss, which is how the approved fixture suite reads Scenario B. That changes verdict semantics for a stored plan, and a ruleset_version must identify fixed semantics for AD-7 replay and AD-13 version comparison to hold, so the change is published under a new version rather than in place. No regulatory content changed: no source, verification status, trigger, deadline, fee, agency, or portal differs from nyc.v2.1, and snapshot_date stays 2026-07-22 because no source was re-fetched.",
   "status_legend": {
     "SOURCE_CONFIRMED": "fetch-confirmed primary-source quote on file in VERIFICATION-SOURCES.md; pending verification-owner promotion to VERIFIED",
     "VERIFIED": "verification owner confirmed against primary source (none at publication; only the verification owner assigns this)",
@@ -191,7 +191,7 @@
     {
       "id": "DOHMH-ORGANIZER-NOTIFY-001", "kind": "notification",
       "trigger": { "all": [ { "field": "food_present", "op": "bool", "value": true }, { "field": "event_open_to_public", "op": "eq", "value": "yes" }, { "field": "food_vendor_count", "op": "gte", "value": 1 } ] },
-      "output": { "requirement_name": "Organizer notification to DOHMH", "agency": "DOHMH", "deadline": { "type": "published_minimum", "calendar_days": 30, "display": "at least 30 days before the event" }, "fee": null, "notes": ["Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.", "On privately owned property: also provide a signed contract with the property owner."] },
+      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Organizer notification to DOHMH", "agency": "DOHMH", "deadline": { "type": "published_minimum", "calendar_days": 30, "display": "at least 30 days before the event" }, "fee": null, "notes": ["Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.", "On privately owned property: also provide a signed contract with the property owner."] },
       "source": { "citation": "DOHMH Event Sponsor Guidelines PDF + DOHMH temporary-events page", "urls": ["https://www.nyc.gov/assets/doh/downloads/pdf/rii/temp-vendors.pdf", "https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #9" }, "exercised_by_scenarios": ["A", "E"]
     },

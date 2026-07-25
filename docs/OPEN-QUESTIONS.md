@@ -1,13 +1,13 @@
 # PopEngine — Open Questions & Interpretation Register (v2)
 
-**Status:** Living document, rebuilt 2026-07-22 for the nyc.v2.1 baseline. The v1-era register (interpretations I-1–I-12, items S-1–S-5, P-1–P-5) is superseded; resolved decisions were carried into the ruleset, `ARCHITECTURE.md`, and `DESIGN.md`, and its history is in git. This register lists only what is genuinely open, with owners.
+**Status:** Living document, rebuilt 2026-07-22 for the nyc.v2.2 baseline. The v1-era register (interpretations I-1–I-12, items S-1–S-5, P-1–P-5) is superseded; resolved decisions were carried into the ruleset, `ARCHITECTURE.md`, and `DESIGN.md`, and its history is in git. This register lists only what is genuinely open, with owners.
 **Rule:** nothing here is authority for implementation (`DOCUMENTATION-GOVERNANCE.md` §1). An open item means "don't guess" — render "confirm with agency," ask the team, or wait for the owner.
 
 ## 1. Blocking the baseline (resolve before feature branches; see BASELINE.md)
 
 | # | Item | Owner | Detail |
 |---|---|---|---|
-| B-1 | ~~Verification-owner sign-off of nyc.v2.1's SOURCE_CONFIRMED facts~~ | Dev 4 | **RESOLVED 2026-07-22:** baseline ratified; per-fact promotion to VERIFIED continues during the build via the verification issue (evidence pre-collected in `VERIFICATION-SOURCES.md`). |
+| B-1 | ~~Verification-owner sign-off of nyc.v2.2's SOURCE_CONFIRMED facts~~ | Dev 4 | **RESOLVED 2026-07-22:** baseline ratified; per-fact promotion to VERIFIED continues during the build via the verification issue (evidence pre-collected in `VERIFICATION-SOURCES.md`). |
 | B-2 | ~~Team ratification of the corrected baseline~~ | All 4 | **RESOLVED 2026-07-22:** ruleset v2.1 + fixtures v3 + re-anchored demo approved. |
 | B-3 | `events` schema sign-off | All 4 | The migration mirrors the ruleset's `intake_fields` registry (ARCHITECTURE schema section). Day-1 Phase 0 gate, unchanged. |
 
