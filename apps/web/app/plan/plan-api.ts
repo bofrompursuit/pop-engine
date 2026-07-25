@@ -4,10 +4,13 @@
 // every call sends credentials and the api answers with `Access-Control-Allow-Credentials`.
 
 import type {
+  Deadline,
   DeadlineStatus,
   Disposition,
   Finding,
   FindingSource,
+  MissingFact,
+  PermitPlan,
   Verdict,
   VerdictDetail,
   VerificationStatus,
@@ -17,12 +20,12 @@ import {
   arrayOf,
   asRecord,
   type FieldChecks,
-  fieldOf,
   isNumber,
   isString,
   isToken,
   nullOr,
   readChecked,
+  shapedLike,
   tokensOf,
 } from "./validated";
 
@@ -30,24 +33,24 @@ import {
  * The whole body `GET /api/events/:id/plan` serves (F-201's `StoredPlan`). This documents the wire
  * contract; it is NOT what the page is handed. `PlanResponse` below narrows it to the fields that
  * have been validated, and the narrowing is what the rest of `apps/web/app/plan` sees.
+ *
+ * The evaluated plan is `PermitPlan`, taken from the engine rather than restated, so
+ * `rulesetVersion`, `verdict`, `verdictDetail`, `findings` and `today` all track the engine's
+ * declarations. What is spelled out is the api's storage envelope, and only that: those five fields
+ * belong to `permit_plans`, not to the engine, and `apps/api`'s `StoredPlan` is not importable here
+ * — `apps/web` depends on `@pop-engine/engine` alone, which is the boundary ARCHITECTURE draws. That
+ * is a real limit and the reason this half stays hand-written.
  */
-type ServedPlan = {
+type ServedPlan = PermitPlan & {
   readonly id: string;
   readonly eventId: string;
   readonly eventRevision: number;
-  /** The version that produced this plan, pinned at generation — never the live file's. */
-  readonly rulesetVersion: string;
   /**
-   * The publication date that version carried, pinned beside it (AC 4). Null on a plan generated
+   * The publication date the pinned version carried, beside it (AC 4). Null on a plan generated
    * before migration 002 added the column; the banner says so rather than substituting a date.
    */
   readonly snapshotDate: string | null;
-  readonly verdict: Verdict;
-  /** Fills the slots the approved verdict copy leaves open (slack days, unanswered fields). */
-  readonly verdictDetail: VerdictDetail;
-  readonly today: string;
   readonly generatedAt: string;
-  readonly findings: readonly Finding[];
 };
 
 /**
@@ -103,17 +106,44 @@ export type ConsumedFinding = Omit<
   >,
   "deadline"
 > & {
-  /** Only the published type is read, when a rule states a deadline kind and nothing else. */
-  readonly deadline: { readonly type: string } | null;
+  readonly deadline: ConsumedDeadline | null;
 };
 
-/** The `verdictDetail` members the approved verdict copy fills its slots from. */
-export type ConsumedVerdictDetail = {
-  readonly minSlackDays: number | null;
-  readonly missingFacts: readonly { readonly field: string }[];
+/**
+ * The only part of a `Deadline` this feature reads: the published type, rendered when a rule states a
+ * deadline kind and nothing else. The KEY is projected, so renaming it upstream stops this
+ * compiling; the VALUE is deliberately widened from `Deadline["type"]`'s literal union to `string`.
+ *
+ * That widening is a decision, not a shortcut. The token is only humanised for display, so pinning it
+ * to today's union would make the validator refuse a whole plan the moment the engine publishes a new
+ * deadline kind — rejecting a valid new API response, which is the failure this mechanism exists to
+ * prevent, arrived at from the other side.
+ */
+export type ConsumedDeadline = {
+  readonly [K in keyof Pick<Deadline, "type">]: string;
 };
 
-/** What the loaded rules file says about itself, as `GET /api/rules/meta` serves it. */
+/**
+ * The `verdictDetail` members the approved verdict copy fills its slots from, projected out of the
+ * engine's `VerdictDetail` and `MissingFact` rather than restated. Restating them was the one place
+ * in this feature where an upstream rename or retype left the web build green, which is exactly the
+ * drift everything else here is built to stop.
+ */
+export type ConsumedVerdictDetail = Omit<
+  Pick<VerdictDetail, "minSlackDays" | "missingFacts">,
+  "missingFacts"
+> & {
+  readonly missingFacts: readonly Pick<MissingFact, "field">[];
+};
+
+/**
+ * What the loaded rules file says about itself, as `GET /api/rules/meta` serves it.
+ *
+ * Hand-written, and it cannot be projected: this is the api's own snake_case envelope, assembled in
+ * `app.ts` from the loaded ruleset's `rulesetVersion`/`snapshotDate`. No engine type carries these
+ * two keys in this casing, so there is nothing upstream to derive from. Recorded rather than left
+ * looking like an oversight — it is the second and last unprojected shape in this file.
+ */
 export type RulesMetaResponse = {
   readonly ruleset_version: string;
   readonly snapshot_date: string;
@@ -192,6 +222,8 @@ const DEADLINE_STATUSES = tokensOf<DeadlineStatus>({
   not_applicable: true,
 });
 
+const DEADLINE_CHECKS: FieldChecks<ConsumedDeadline> = { type: isString };
+
 /** Every field of a citation is read — the text, the rule it belongs to, and each URL. */
 const SOURCE_CHECKS: FieldChecks<FindingSource> = {
   ruleId: isString,
@@ -199,15 +231,13 @@ const SOURCE_CHECKS: FieldChecks<FindingSource> = {
   urls: arrayOf(isString),
 };
 
-const isSource = (value: unknown): boolean => readChecked(SOURCE_CHECKS, value) !== null;
-
 const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
   ruleIds: arrayOf(isString),
   disposition: isToken(DISPOSITIONS),
   name: nullOr(isString),
   agency: nullOr(isString),
   // Read for its null-ness and its published `type`; nothing else on a `Deadline` is rendered.
-  deadline: nullOr(fieldOf("type", isString)),
+  deadline: nullOr(shapedLike(DEADLINE_CHECKS)),
   deadlineDisplay: nullOr(isString),
   latestApplyDate: nullOr(isString),
   applyAfterDate: nullOr(isString),
@@ -221,13 +251,15 @@ const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
   deadlineUnknownFields: arrayOf(isString),
   timelineUnresolvedReason: nullOr(isString),
   conflictText: nullOr(isString),
-  sources: arrayOf(isSource),
+  sources: arrayOf(shapedLike(SOURCE_CHECKS)),
   verificationStatus: isToken(VERIFICATION_STATUSES),
 };
 
+const MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString };
+
 const VERDICT_DETAIL_CHECKS: FieldChecks<ConsumedVerdictDetail> = {
   minSlackDays: nullOr(isNumber),
-  missingFacts: arrayOf(fieldOf("field", isString)),
+  missingFacts: arrayOf(shapedLike(MISSING_FACT_CHECKS)),
 };
 
 const PLAN_CHECKS: FieldChecks<PlanResponse> = {
@@ -238,9 +270,9 @@ const PLAN_CHECKS: FieldChecks<PlanResponse> = {
   // an absent field as null would put that copy under a plumbing mismatch instead.
   snapshotDate: nullOr(isString),
   verdict: isToken(VERDICTS),
-  verdictDetail: (value) => readChecked(VERDICT_DETAIL_CHECKS, value) !== null,
+  verdictDetail: shapedLike(VERDICT_DETAIL_CHECKS),
   generatedAt: isString,
-  findings: arrayOf((value) => readChecked(FINDING_CHECKS, value) !== null),
+  findings: arrayOf(shapedLike(FINDING_CHECKS)),
 };
 
 /** The plan fields and finding members this feature reads, exposed so a test can assert coverage. */
