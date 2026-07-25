@@ -49,7 +49,7 @@ The gate is host-level; there is no in-app auth (AD-5).
 
 ## 6. Verify
 
-- `GET https://<api-host>/health` returns `{"status":"ok",...}` behind the gate. This is a liveness probe only: it does not attest that `RULES_FILE` is present, well-formed, or the expected version. The boot-time ruleset validation that aborts loudly on failure (`docs/ARCHITECTURE.md`, "Rules loading") lands with F-201; until then a green `/health` says nothing about ruleset validity.
+- `GET https://<api-host>/health` returns `{"status":"ok",...}` behind the gate. This is a liveness probe: it reports that the process is up, not which ruleset that process loaded. Boot-time ruleset validation has been in place since the Phase 0 events schema (`apps/api/src/ruleset.ts`): the api refuses to start when the file is missing, fails its schema check, or is not the expected `ruleset_version` (`docs/ARCHITECTURE.md`, "Rules loading"). So a process that is answering has loaded a ruleset that passed those checks — but `/health` does not report which file it read, so confirming a deployment is serving the intended `RULES_FILE` still needs to be done another way (open on issue #89).
 - The web service loads behind the gate.
 - A seeded deadline fires a real email (SMS labeled-simulation until A2P clears).
 
