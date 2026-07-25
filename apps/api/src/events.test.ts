@@ -105,16 +105,20 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("rejects a contradictory submission with a per-field error and stores nothing", async () => {
-      const street = scenario("A");
-      const before = await database.query<{ count: string }>("SELECT count(*) FROM events");
+      // Count by this submission's own name — a global events count races other suites
+      // that insert in parallel against the same database (same flake #93 hit).
+      const street = { ...scenario("A"), name: `reject-contradiction-${randomUUID()}` };
       const response = await post({ ...street, tent_area_sqft: 200, headcount: 0 });
       expect(response.status).toBe(400);
       expect(errorCodes(response.body)).toEqual({
         tent_area_sqft: "not_applicable",
         headcount: "must_be_positive",
       });
-      const after = await database.query<{ count: string }>("SELECT count(*) FROM events");
-      expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+      const stored = await database.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM events WHERE name = $1",
+        [street.name],
+      );
+      expect(stored.rows[0]?.count).toBe("0");
     });
 
     it("rejects an event date in the past against the injected clock", async () => {

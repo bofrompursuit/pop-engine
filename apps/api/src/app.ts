@@ -3,6 +3,7 @@ import { describeEngine, EvaluationError } from "@pop-engine/engine";
 import { createCheckinsRouter } from "./checkins";
 import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
+import { createRsvpsRouter } from "./rsvps";
 
 export type AppDependencies = EventsDependencies & {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
@@ -42,9 +43,13 @@ export function createApp(dependencies: AppDependencies): Express {
   });
 
   app.use("/api", createEventsRouter(dependencies));
-  // F-401: only needs the pool already on AppDependencies — no index.ts wiring, so the
-  // open F-206/F-202 PRs that touch app.ts/index.ts stay easy to rebase against.
+  // F-401 / F-302: only need pool (+ today for RSVP date checks) already on AppDependencies —
+  // no index.ts wiring beyond what events already use.
   app.use("/api", createCheckinsRouter({ database: dependencies.database }));
+  app.use(
+    "/api",
+    createRsvpsRouter({ database: dependencies.database, today: dependencies.today }),
+  );
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
 
   return app;

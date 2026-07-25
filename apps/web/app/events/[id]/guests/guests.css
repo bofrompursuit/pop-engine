@@ -1,0 +1,88 @@
+/* Route-local styles for F-302 organizer guest list. */
+
+.guests {
+  max-width: 40rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.guests__lede,
+.guests__note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.guests__note {
+  font-size: 0.9rem;
+}
+
+.guests__count {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.guests__error {
+  margin: 0;
+  color: var(--error);
+}
+
+.guests__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.guests__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.guests__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.guests__name {
+  font-weight: 600;
+}
+
+.guests__meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.guests__cancelled {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.guests__cancel {
+  font: inherit;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+.guests__cancel:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.guests__empty {
+  margin: 0;
+  color: var(--muted);
+}

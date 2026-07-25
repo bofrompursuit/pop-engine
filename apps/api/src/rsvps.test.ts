@@ -1,0 +1,241 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import request from "supertest";
+import { Pool } from "pg";
+import { parseIntakeContract } from "@pop-engine/engine";
+import {
+  FIXTURE_TODAY,
+  SCENARIO_INTAKE_FIXTURES,
+  fixtureSubmission,
+} from "@pop-engine/engine/fixtures";
+import { createApp } from "./app";
+import { cancelRsvp, createRsvp, listRsvps, normalizeEmail, normalizeOptionalPhone } from "./rsvps";
+import { loadRuleset } from "./ruleset";
+
+const databaseUrl = process.env.DATABASE_URL ?? "";
+
+const scenarioA = (): Record<string, unknown> => {
+  const fixture = SCENARIO_INTAKE_FIXTURES.find((candidate) => candidate.scenario === "A");
+  if (fixture === undefined) throw new Error("no fixture A");
+  return fixtureSubmission(fixture);
+};
+
+describe("normalizeEmail / normalizeOptionalPhone", () => {
+  it("lower-cases emails and rejects malformed ones", () => {
+    expect(normalizeEmail("  Guest@Example.COM ")).toEqual({
+      ok: true,
+      email: "guest@example.com",
+    });
+    expect(normalizeEmail("no-dot@domain").ok).toBe(false);
+    expect(normalizeEmail("").ok).toBe(false);
+  });
+
+  it("keeps optional phone as digits or null", () => {
+    expect(normalizeOptionalPhone(undefined)).toEqual({ ok: true, phone: null });
+    expect(normalizeOptionalPhone("(555) 123-4567")).toEqual({ ok: true, phone: "5551234567" });
+    expect(normalizeOptionalPhone("555").ok).toBe(false);
+  });
+});
+
+describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => {
+  let database: Pool;
+  let api: ReturnType<typeof createApp>;
+  const createdEventIds: string[] = [];
+
+  beforeAll(async () => {
+    database = new Pool({ connectionString: databaseUrl });
+    api = createApp({
+      database,
+      intakeContract: parseIntakeContract((await loadRuleset()).document),
+      today: () => FIXTURE_TODAY,
+    });
+  });
+
+  afterAll(async () => {
+    if (createdEventIds.length > 0) {
+      await database.query("DELETE FROM checkins WHERE event_id = ANY($1)", [createdEventIds]);
+      await database.query("DELETE FROM rsvps WHERE event_id = ANY($1)", [createdEventIds]);
+      await database.query("DELETE FROM events WHERE id = ANY($1)", [createdEventIds]);
+    }
+    await database.end();
+  });
+
+  const createEvent = async (overrides: Record<string, unknown> = {}) => {
+    const response = await request(api)
+      .post("/api/events")
+      .send({ ...scenarioA(), ...overrides });
+    expect(response.status).toBe(201);
+    const id: string = response.body.event.id;
+    createdEventIds.push(id);
+    return { id, headcount: response.body.event.headcount as number };
+  };
+
+  it("creates an RSVP and lists it on the guest list with count vs headcount", async () => {
+    const { id: eventId, headcount } = await createEvent({ headcount: 5 });
+    const created = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Ada", email: "Ada@Example.com", phone: "(555) 111-2222" });
+    expect(created.status).toBe(201);
+    expect(created.body.rsvp.email).toBe("ada@example.com");
+    expect(created.body.rsvp.phone).toBe("5551112222");
+    expect(created.body.confirmed_count).toBe(1);
+    expect(created.body.headcount).toBe(headcount);
+
+    const listed = await request(api).get(`/api/events/${eventId}/rsvps`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.confirmed_count).toBe(1);
+    expect(listed.body.headcount ?? listed.body.event.headcount).toBe(5);
+    expect(listed.body.rsvps).toHaveLength(1);
+  });
+
+  it("updates a duplicate email instead of double-counting", async () => {
+    const { id: eventId } = await createEvent({ headcount: 5 });
+    const first = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "First", email: "dup@example.com" });
+    expect(first.status).toBe(201);
+
+    const second = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Second", email: "DUP@example.com", phone: "5559998888" });
+    expect(second.status).toBe(200);
+    expect(second.body.rsvp.id).toBe(first.body.rsvp.id);
+    expect(second.body.rsvp.name).toBe("Second");
+    expect(second.body.confirmed_count).toBe(1);
+
+    const { rows } = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM rsvps WHERE event_id = $1",
+      [eventId],
+    );
+    expect(rows[0]?.count).toBe("1");
+  });
+
+  it("refuses a new RSVP when confirmed guests already meet headcount", async () => {
+    const { id: eventId } = await createEvent({ headcount: 1 });
+    const first = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Only", email: "only@example.com" });
+    expect(first.status).toBe(201);
+
+    const full = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Extra", email: "extra@example.com" });
+    expect(full.status).toBe(400);
+    expect(full.body.error).toBe("event is full");
+  });
+
+  it("cancels an RSVP and frees capacity for a new guest", async () => {
+    const { id: eventId } = await createEvent({ headcount: 1 });
+    const first = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Only", email: "seat@example.com" });
+    expect(first.status).toBe(201);
+
+    const cancelled = await request(api)
+      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .send({ status: "cancelled" });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.rsvp.status).toBe("cancelled");
+    expect(cancelled.body.confirmed_count).toBe(0);
+
+    const replacement = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Next", email: "next@example.com" });
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.confirmed_count).toBe(1);
+  });
+
+  it("refuses RSVPs after the event date", async () => {
+    // Intake refuses a past event_date at create time, so move the stored date after insert.
+    const { id: eventId } = await createEvent({ headcount: 10 });
+    await database.query("UPDATE events SET event_date = $2 WHERE id = $1", [
+      eventId,
+      "2026-07-01",
+    ]);
+    const response = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Late", email: "late@example.com" });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("this event has passed.");
+  });
+
+  it("returns friendly errors for malformed and unknown event ids", async () => {
+    const malformed = await request(api)
+      .post("/api/events/not-a-uuid/rsvps")
+      .send({ name: "A", email: "a@example.com" });
+    expect(malformed.status).toBe(400);
+    expect(JSON.stringify(malformed.body)).not.toMatch(/postgres|stack|relation/i);
+
+    const unknown = await request(api)
+      .post(`/api/events/${randomUUID()}/rsvps`)
+      .send({ name: "A", email: "a@example.com" });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error).toMatch(/not found/i);
+  });
+
+  it("exposes create/list/cancel helpers used by the router", async () => {
+    const { id: eventId } = await createEvent({ headcount: 2 });
+    const created = await createRsvp(
+      database,
+      eventId,
+      { name: "Helper", email: "helper@example.com" },
+      FIXTURE_TODAY,
+    );
+    expect(created.status).toBe(201);
+
+    const listed = await listRsvps(database, eventId);
+    expect(listed.status).toBe(200);
+    if (listed.status !== 200) return;
+    expect(listed.body.confirmed_count).toBe(1);
+
+    if (created.status !== 201) return;
+    const cancelled = await cancelRsvp(database, eventId, created.body.rsvp.id);
+    expect(cancelled.status).toBe(200);
+    if (cancelled.status !== 200) return;
+    expect(cancelled.body.confirmed_count).toBe(0);
+  });
+
+  it("refuses reactivating a cancelled RSVP when the event is full", async () => {
+    const { id: eventId } = await createEvent({ headcount: 1 });
+    const first = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "A", email: "a@example.com" });
+    expect(first.status).toBe(201);
+    await request(api)
+      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .send({ status: "cancelled" });
+
+    const seat = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "B", email: "b@example.com" });
+    expect(seat.status).toBe(201);
+
+    const blocked = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "A again", email: "a@example.com" });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.error).toBe("event is full");
+  });
+
+  it("rejects a cancel with an unsupported status and an unknown RSVP id", async () => {
+    const { id: eventId } = await createEvent({ headcount: 2 });
+    const badStatus = await request(api)
+      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .send({ status: "confirmed" });
+    expect(badStatus.status).toBe(400);
+    expect(badStatus.body.error).toMatch(/cancelled/i);
+
+    const missing = await request(api)
+      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .send({ status: "cancelled" });
+    expect(missing.status).toBe(404);
+  });
+
+  it("rejects a malformed RSVP body", async () => {
+    const { id: eventId } = await createEvent({ headcount: 2 });
+    const response = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "", email: "bad" });
+    expect(response.status).toBe(400);
+  });
+});
