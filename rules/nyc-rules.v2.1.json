@@ -178,7 +178,7 @@
       "id": "PARKS-TUA-001", "kind": "permit",
       "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "selling_anything", "op": "bool", "value": true } ] },
       "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "Temporary Use Authorization (TUA)", "agency": "NYC Parks Revenue Division", "deadline": { "type": "published_minimum", "calendar_days": 14, "display": "submit vendor info at least two weeks prior" }, "fee": { "display": "$50–$150 per vendor (2026)" }, "note_text": "OFFICIAL CONFLICT on the trigger: three Parks pages state any sale on parkland requires a TUA ('In order to sell anything on parkland, you'll need a Temporary Use Authorization'); the FAQ ties it to events over 500 attendance ('may need'). Encoded leaning any-sale; confirm with the Revenue Division, (212) 360-1397." },
-      "source": { "citation": "nycgovparks.org vendors + guide + large-events pages vs. FAQ", "urls": ["https://www.nycgovparks.org/permits/special-events/vendors", "https://www.nycgovparks.org/permits/special-events/guide"] },
+      "source": { "citation": "nycgovparks.org vendors + guide + large-events pages vs. FAQ", "urls": ["https://www.nycgovparks.org/permits/special-events/vendors", "https://www.nycgovparks.org/permits/special-events/guide", "https://www.nycgovparks.org/permits/special-events/large-events", "https://www.nycgovparks.org/permits/special-events/faq"] },
       "verification": { "status": "OFFICIAL_CONFLICT", "evidence": "VS §8 (Round 1) + Round2 #12" }, "exercised_by_scenarios": []
     },
     {
