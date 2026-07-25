@@ -304,6 +304,7 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
       [
         "alerts",
         "checkins",
+        "checklist_acknowledgements",
         "checklist_items",
         "documents",
         "events",
