@@ -56,7 +56,7 @@ describe("ruleset validation", () => {
 
     expect(ruleset.schema).toBe("popengine-rules/v2");
     expect(ruleset.rulesetVersion).toBe("nyc.v2.3");
-    expect(ruleset.snapshotDate).toBe("2026-07-22");
+    expect(ruleset.snapshotDate).toBe("2026-07-25");
     expect(ruleset.intakeFields).toHaveLength(32);
     expect(ruleset.rules).toHaveLength(33);
     expect(ruleset.advisories).toHaveLength(4);

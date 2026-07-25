@@ -317,7 +317,7 @@ function parseIntakeField(value: unknown, label: string): IntakeFieldDefinition 
 function withParsedScoping(
   fields: readonly IntakeFieldDefinition[],
 ): readonly IntakeFieldDefinition[] {
-  return fields.map((field) => {
+  const parsed = fields.map((field) => {
     if (field.askedWhen === null) return field;
     try {
       return { ...field, askedWhenClauses: parseAskedWhen(field.askedWhen, fields) };
@@ -328,6 +328,36 @@ function withParsedScoping(
       );
     }
   });
+  rejectScopingCycles(parsed);
+  return parsed;
+}
+
+/**
+ * A scoping cycle parses one clause at a time perfectly well, so it only surfaces when evaluation
+ * first resolves one of the fields involved — by which point the api has started and every plan
+ * request fails instead of the artifact being refused. The graph is walked here so a cyclic
+ * ruleset never boots.
+ */
+function rejectScopingCycles(fields: readonly IntakeFieldDefinition[]): void {
+  const dependencies = new Map(
+    fields.map((field) => [
+      field.field,
+      (field.askedWhenClauses ?? []).map((clause) => clause.field),
+    ]),
+  );
+  const settled = new Set<string>();
+
+  const walk = (field: string, path: readonly string[]): void => {
+    if (settled.has(field)) return;
+    const cycleAt = path.indexOf(field);
+    if (cycleAt !== -1) {
+      fail(`asked_when scoping is cyclic: ${[...path.slice(cycleAt), field].join(" → ")}`);
+    }
+    for (const dependency of dependencies.get(field) ?? []) walk(dependency, [...path, field]);
+    settled.add(field);
+  };
+
+  for (const field of dependencies.keys()) walk(field, []);
 }
 
 /** Narrow parsed ruleset JSON into the engine's typed view. */

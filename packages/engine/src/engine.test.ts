@@ -356,6 +356,16 @@ describe("published bound inclusivity", () => {
     expect(onTheBoundary?.deadlineStatus).toBe("published_deadline_missed");
   });
 
+  it("stays missed inside the strict window", () => {
+    // Below the boundary: nine days out is further inside a window that closed at day 10, so it
+    // is missed for the same reason and not merely at-risk. AGENTS.md wants below/at/above pinned
+    // rather than the middle case inferred from the other two.
+    const insideTheWindow = assemblyIn("2026-07-31");
+    expect(insideTheWindow?.latestApplyDate).toBe("2026-07-20");
+    expect(insideTheWindow?.deadlineStatus).toBe("published_deadline_missed");
+    expect(insideTheWindow?.slackDays).toBe(-2);
+  });
+
   it("keeps the day before the exclusive bound valid", () => {
     const dayBefore = assemblyIn("2026-08-02"); // eleven days out: the last valid filing day
     expect(dayBefore?.latestApplyDate).toBe("2026-07-22");
@@ -601,67 +611,90 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
 });
 
 describe("asked_when scoping", () => {
-  const withScoping = (askedWhen: string) => () =>
-    parseEngineRuleset({
-      ...rawRuleset,
-      intake_fields: [
-        { field: "event_date", type: "date" },
-        { field: "headcount", type: "integer", asked_when: askedWhen },
-      ],
-      rules: [
-        {
-          id: "RULE-SCOPE",
-          kind: "permit",
-          trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
-          output: { permit_name: "x", agency: "DOB" },
-          verification: { status: "SOURCE_CONFIRMED" },
-          source: { citation: "c", urls: ["https://example.test"] },
-        },
-      ],
-      advisories: [],
-    });
+  /** A registry where `venue_note` is scoped by the expression under test. */
+  const withScoping =
+    (askedWhen: string, extraFields: Record<string, unknown>[] = []) =>
+    () =>
+      parseEngineRuleset({
+        ...rawRuleset,
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+          { field: "food_present", type: "boolean" },
+          {
+            field: "sapo_event_type",
+            type: "enum",
+            values: ["street_event", "block_party", "unknown"],
+          },
+          ...extraFields,
+          { field: "venue_note", type: "boolean", asked_when: askedWhen },
+        ],
+        rules: [
+          {
+            id: "RULE-SCOPE",
+            kind: "permit",
+            trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
 
-  it("rejects a non-numeric threshold when the ruleset loads, not silently at evaluation", () => {
-    // The failure this prevents is silence: Number("seventy_five") is NaN, the clause reads false,
-    // and headcount plus every rule scoped by it drops out, so the plan omits requirements with no
-    // error anywhere. Boot is the only place to catch it.
+  it("accepts the shapes the published registry actually uses", () => {
+    expect(withScoping("headcount gte 75")).not.toThrow();
+    expect(withScoping("sapo_event_type = street_event")).not.toThrow();
+    expect(withScoping("sapo_event_type != unknown")).not.toThrow();
+    expect(withScoping("sapo_event_type in street_event/block_party")).not.toThrow();
+    expect(withScoping("food_present")).not.toThrow();
+    expect(withScoping("food_present AND headcount gte 75")).not.toThrow();
+  });
+
+  it("rejects a mistyped enum operand at load, not silently at evaluation", () => {
+    // The whole failure is silence: "street_evet" matches no intake ever, so venue_note and every
+    // rule scoped by it leave scope and their requirements vanish with no error anywhere.
+    expect(withScoping("sapo_event_type = street_evet")).toThrow(
+      /compares "sapo_event_type" against "street_evet", which it does not declare/,
+    );
+    expect(withScoping("sapo_event_type != blockparty")).toThrow(/does not declare/);
+    expect(withScoping("sapo_event_type in street_event/blok_party")).toThrow(
+      /"blok_party", which is not a declared value of it/,
+    );
+    expect(withScoping("sapo_event_type = street_evet")).toThrow(/unusable asked_when/);
+  });
+
+  it("rejects a non-numeric threshold at load", () => {
     expect(withScoping("headcount gte seventy_five")).toThrow(
       /compares "headcount" against a non-numeric threshold "seventy_five"/,
     );
-    expect(withScoping("headcount gte seventy_five")).toThrow(/unusable asked_when/);
-    // The well-formed expression the published registry actually uses still loads.
-    expect(withScoping("headcount gte 75")).not.toThrow();
+  });
+
+  it("rejects operators the field's type cannot support", () => {
+    expect(withScoping("sapo_event_type gte 3")).toThrow(/is a enum field, with "gte"/);
+    expect(withScoping("headcount in 75/100")).toThrow(/declares no values to match against/);
+    expect(withScoping("headcount")).toThrow(
+      /reads "headcount" as a flag, but it is a integer field/,
+    );
+    expect(withScoping("food_present = maybe")).toThrow(/compares boolean "food_present"/);
   });
 
   it("rejects a clause that names neither a declared field nor a declared value", () => {
     expect(withScoping("the_vibes_are_right")).toThrow(/names no declared field or value/);
   });
 
-  it("rejects a cyclic asked_when chain", () => {
-    const cyclic = parseEngineRuleset({
-      ...rawRuleset,
-      intake_fields: [
-        { field: "event_date", type: "date" },
+  it("rejects a cyclic scoping chain when the ruleset loads", () => {
+    // Each clause parses on its own, so a cycle only surfaced when evaluation first resolved one
+    // of the fields — every plan request failing instead of the artifact being refused at boot.
+    expect(
+      withScoping("left", [
         { field: "left", type: "boolean", asked_when: "right" },
         { field: "right", type: "boolean", asked_when: "left" },
-      ],
-      rules: [
-        {
-          id: "RULE-CYCLE",
-          kind: "permit",
-          trigger: { all: [{ field: "left", op: "bool", value: true }] },
-          output: { permit_name: "x", agency: "DOB" },
-          verification: { status: "SOURCE_CONFIRMED" },
-          source: { citation: "c", urls: ["https://example.test"] },
-        },
-      ],
-      advisories: [],
-    });
-    expect(() =>
-      evaluate({ event_date: "2026-12-04", left: true, right: true }, cyclic, TODAY, {
-        id: cyclic.calendarId,
-        holidays: [],
-      }),
-    ).toThrow(/cyclic/);
+      ]),
+    ).toThrow(/scoping is cyclic: left → right → left/);
+  });
+
+  it("rejects a field scoped by itself", () => {
+    expect(withScoping("venue_note")).toThrow(/scoping is cyclic: venue_note → venue_note/);
   });
 });

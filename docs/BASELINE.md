@@ -13,7 +13,7 @@
 | Governance | `docs/DOCUMENTATION-GOVERNANCE.md` | APPROVED (adopted 2026-07-22; authority-by-concern + conflict protocol in force) | — |
 | Agent/contributor rules | `/AGENTS.md` + `/CONTRIBUTING.md` | APPROVED (2026-07-22) | — |
 | Deployment providers (Phase 0) | Provider baseline below + `DEPLOY.md` | APPROVED (2026-07-23, issue #1) | provisioning is a runbook; secrets set per environment |
-| **Current NYC ruleset** | `rules/nyc-rules.v2.3.json` (nyc.v2.3) | **APPROVED** (team ratification 2026-07-22; republished as v2.2 and then v2.3 on 2026-07-25) | per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build (verification issue; OPEN-QUESTIONS §2) |
+| **Current NYC ruleset** | `rules/nyc-rules.v2.3.json` (nyc.v2.3) | **APPROVED** — v2.1 team-ratified 2026-07-22 (OPEN-QUESTIONS B-2, all four devs); v2.2 and v2.3 authorized by the product owner 2026-07-25, each for the semantic change named in its own `provenance` | per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build (verification issue; OPEN-QUESTIONS §2) |
 | **Scenario fixtures** | `docs/test-scenario-answer-key.md` (v3) | **APPROVED** (2026-07-22, with the ruleset) | now the green-gate acceptance suite |
 | Evidence record | `docs/VERIFICATION-SOURCES.md` | ACTIVE RECORD (Rounds 1–2, 2026-07-22) | grows with each verification pass |
 | Open questions | `docs/OPEN-QUESTIONS.md` | ACTIVE REGISTER | — |
