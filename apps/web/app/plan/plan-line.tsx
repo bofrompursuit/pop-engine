@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { CONFIRM_WITH_AGENCY, type Finding, type FindingSource } from "@pop-engine/engine";
+import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
+import type { ConsumedFinding } from "./plan-api";
 
 // F-206 AC 2 and AC 3: every plan line carries its citation and its verification status, both
 // visible. Nothing here composes regulatory prose — every string an organizer reads is either
@@ -20,7 +21,7 @@ const humanize = (token: string): string => token.replace(/_/g, " ");
  * `not_applicable` with no dates, no prose and no published deadline means there is nothing to
  * render.
  */
-const hasDeadlineData = (finding: Finding): boolean =>
+const hasDeadlineData = (finding: ConsumedFinding): boolean =>
   finding.deadlineDisplay !== null ||
   finding.latestApplyDate !== null ||
   finding.applyAfterDate !== null ||
@@ -33,7 +34,7 @@ const hasDeadlineData = (finding: Finding): boolean =>
  * "before issuance" is the whole timing requirement, and dropping it leaves the line silent about
  * when the insurance has to exist.
  */
-const deadlineTypeLabel = (finding: Finding): string | null =>
+const deadlineTypeLabel = (finding: ConsumedFinding): string | null =>
   finding.deadlineDisplay === null &&
   finding.latestApplyDate === null &&
   finding.applyAfterDate === null &&
@@ -46,7 +47,7 @@ const deadlineTypeLabel = (finding: Finding): string | null =>
  * The status is the plan item's stored `verification_status` (canonical, NOT NULL). The nullable
  * `verified_status` column in migration 001 is a deprecated duplicate and is never read.
  */
-function VerificationBadge({ status }: { status: Finding["verificationStatus"] }) {
+function VerificationBadge({ status }: { status: ConsumedFinding["verificationStatus"] }) {
   return (
     <span className={`line__status line__status--${status.toLowerCase()}`}>{humanize(status)}</span>
   );
@@ -90,7 +91,7 @@ function Citation({ source }: { source: FindingSource }) {
   );
 }
 
-export function PlanLine({ finding }: { finding: Finding }) {
+export function PlanLine({ finding }: { finding: ConsumedFinding }) {
   const ruleIds = finding.ruleIds.join(", ");
   const isResearchRequired = finding.verificationStatus === "RESEARCH_REQUIRED";
 

@@ -1,4 +1,5 @@
-import type { Verdict, VerdictDetail } from "@pop-engine/engine";
+import type { Verdict } from "@pop-engine/engine";
+import type { ConsumedVerdictDetail } from "./plan-api";
 
 // The verdict's user-facing copy, in one place.
 //
@@ -38,7 +39,12 @@ export const AT_RISK_BUFFER_NOTE =
  * plan's own detail: "apply within N days" for at-risk, and the unanswered fields for
  * conditional. A slot whose value the plan does not carry is left off rather than guessed.
  */
-export function verdictCopy(verdict: Verdict, detail?: VerdictDetail): string {
+/**
+ * `detail` is narrowed to the two members this copy reads, not the engine's whole `VerdictDetail`.
+ * A full `VerdictDetail` is still assignable, so F-102's verdict card can pass one unchanged; the
+ * narrowing is what stops this file reading a member the plan endpoint's body was never checked for.
+ */
+export function verdictCopy(verdict: Verdict, detail?: ConsumedVerdictDetail): string {
   const base = VERDICT_COPY[verdict];
 
   if (verdict === "FEASIBLE_AT_RISK") {

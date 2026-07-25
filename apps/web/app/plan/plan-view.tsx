@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { loadEvent, type LoadResult } from "../intake/events-api";
+import { loadEvent, type LoadResult, type SavedEvent } from "../intake/events-api";
 import {
   generatePlan,
   loadPlan,
@@ -13,6 +13,7 @@ import {
 import { PlanLine } from "./plan-line";
 import { compareToPinned, SnapshotBanner } from "./snapshot-banner";
 import { AT_RISK_BUFFER_NOTE, verdictCopy } from "./verdict-copy";
+import { type FieldChecks, isNumber, readChecked } from "./validated";
 
 // The plan view. F-206 owns what this page is for: the snapshot banner and the per-line citation
 // and verification-status rendering. The verdict is shown in its approved copy; F-102's branch
@@ -50,10 +51,33 @@ const planStateFrom = (result: PlanResult): PlanState =>
       ? { status: "missing", message: result.message }
       : { status: "unavailable", message: result.message };
 
-const eventStateFrom = (result: LoadResult): EventState =>
-  result.ok
-    ? { status: "found", revision: result.loaded.event.revision_counter }
-    : { status: "unavailable" };
+/**
+ * The one field this page reads off an event body, checked before it is believed.
+ *
+ * `loadEvent` answers `ok` on any body carrying a string `id` and casts the rest to `SavedEvent`,
+ * which DECLARES `revision_counter: number` without anything having checked it. A body missing it,
+ * or carrying it as a string, therefore arrived here as a successful load and was installed as a
+ * `found` revision — and `eventState.revision > plan.eventRevision` against a non-number is
+ * `false`, so an edited plan rendered with neither the stale warning nor the unconfirmed one. The
+ * same silent-false shape as the `eventRevision` case on the plan body: nothing throws, and the
+ * page states currency it never established.
+ *
+ * `loadEvent` itself is F-101's, shared with the intake form, which reads many more columns off the
+ * same open type. Narrowing it there would mean deciding F-101's consumed set too, so the check
+ * lives at this page's boundary, over exactly the field this page reads.
+ */
+type ConsumedEvent = Pick<SavedEvent, "revision_counter">;
+
+const EVENT_CHECKS: FieldChecks<ConsumedEvent> = { revision_counter: isNumber };
+
+const eventStateFrom = (result: LoadResult): EventState => {
+  if (!result.ok) return { status: "unavailable" };
+  const event = readChecked(EVENT_CHECKS, result.loaded.event);
+  // A body whose revision cannot be read is an event we could not read: the page already says
+  // currency is unconfirmed for that, which is the honest answer and not a claim of currency.
+  if (event === null) return { status: "unavailable" };
+  return { status: "found", revision: event.revision_counter };
+};
 
 /**
  * Why regenerating this plan is refused, or null when it is safe to offer.

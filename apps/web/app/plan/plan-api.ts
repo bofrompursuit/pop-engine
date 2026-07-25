@@ -3,30 +3,147 @@
 // Web and api are separate origins behind Cloudflare Access (BASELINE.md provider baseline), so
 // every call sends credentials and the api answers with `Access-Control-Allow-Credentials`.
 
-import type { Finding, Verdict, VerdictDetail } from "@pop-engine/engine";
+import type {
+  Deadline,
+  DeadlineStatus,
+  Disposition,
+  Finding,
+  FindingSource,
+  MissingFact,
+  PermitPlan,
+  Verdict,
+  VerdictDetail,
+  VerificationStatus,
+} from "@pop-engine/engine";
 import { CREDENTIALED } from "../intake/events-api";
+import {
+  arrayOf,
+  asRecord,
+  type FieldChecks,
+  isNumber,
+  isString,
+  isToken,
+  nullOr,
+  readChecked,
+  shapedLike,
+  tokensOf,
+} from "./validated";
 
-/** A stored plan as `GET /api/events/:id/plan` serves it (F-201's `StoredPlan`). */
-export type PlanResponse = {
+/**
+ * The whole body `GET /api/events/:id/plan` serves (F-201's `StoredPlan`). This documents the wire
+ * contract; it is NOT what the page is handed. `PlanResponse` below narrows it to the fields that
+ * have been validated, and the narrowing is what the rest of `apps/web/app/plan` sees.
+ *
+ * The evaluated plan is `PermitPlan`, taken from the engine rather than restated, so
+ * `rulesetVersion`, `verdict`, `verdictDetail`, `findings` and `today` all track the engine's
+ * declarations. What is spelled out is the api's storage envelope, and only that: those five fields
+ * belong to `permit_plans`, not to the engine, and `apps/api`'s `StoredPlan` is not importable here
+ * — `apps/web` depends on `@pop-engine/engine` alone, which is the boundary ARCHITECTURE draws. That
+ * is a real limit and the reason this half stays hand-written.
+ */
+type ServedPlan = PermitPlan & {
   readonly id: string;
   readonly eventId: string;
   readonly eventRevision: number;
-  /** The version that produced this plan, pinned at generation — never the live file's. */
-  readonly rulesetVersion: string;
   /**
-   * The publication date that version carried, pinned beside it (AC 4). Null on a plan generated
+   * The publication date the pinned version carried, beside it (AC 4). Null on a plan generated
    * before migration 002 added the column; the banner says so rather than substituting a date.
    */
   readonly snapshotDate: string | null;
-  readonly verdict: Verdict;
-  /** Fills the slots the approved verdict copy leaves open (slack days, unanswered fields). */
-  readonly verdictDetail: VerdictDetail;
-  readonly today: string;
   readonly generatedAt: string;
-  readonly findings: readonly Finding[];
 };
 
-/** What the loaded rules file says about itself, as `GET /api/rules/meta` serves it. */
+/**
+ * The plan's own fields this feature reads. `today`, `id` and `eventId` are absent because nothing
+ * under `apps/web/app/plan` reads them — the boundary F-206 set, now enforced instead of stated:
+ * they are not in the type, so reading one does not compile.
+ */
+export type PlanResponse = Omit<
+  Pick<
+    ServedPlan,
+    | "eventRevision"
+    | "rulesetVersion"
+    | "snapshotDate"
+    | "verdict"
+    | "verdictDetail"
+    | "generatedAt"
+    | "findings"
+  >,
+  "findings" | "verdictDetail"
+> & {
+  readonly findings: readonly ConsumedFinding[];
+  readonly verdictDetail: ConsumedVerdictDetail;
+};
+
+/**
+ * The `Finding` members this feature reads, and only those. `kind`, `slackDays` and `triggeredBy`
+ * are deliberately absent: nothing here reads them, so they stay the engine's schema to police
+ * rather than the client's — F-206's boundary, unchanged, and now enforced the same way.
+ */
+export type ConsumedFinding = Omit<
+  Pick<
+    Finding,
+    | "ruleIds"
+    | "disposition"
+    | "name"
+    | "agency"
+    | "deadline"
+    | "deadlineDisplay"
+    | "latestApplyDate"
+    | "applyAfterDate"
+    | "deadlineStatus"
+    | "feeDisplay"
+    | "portalName"
+    | "portalUrl"
+    | "portalInstructions"
+    | "notes"
+    | "noteText"
+    | "deadlineUnknownFields"
+    | "timelineUnresolvedReason"
+    | "conflictText"
+    | "sources"
+    | "verificationStatus"
+  >,
+  "deadline"
+> & {
+  readonly deadline: ConsumedDeadline | null;
+};
+
+/**
+ * The only part of a `Deadline` this feature reads: the published type, rendered when a rule states a
+ * deadline kind and nothing else. The KEY is projected, so renaming it upstream stops this
+ * compiling; the VALUE is deliberately widened from `Deadline["type"]`'s literal union to `string`.
+ *
+ * That widening is a decision, not a shortcut. The token is only humanised for display, so pinning it
+ * to today's union would make the validator refuse a whole plan the moment the engine publishes a new
+ * deadline kind — rejecting a valid new API response, which is the failure this mechanism exists to
+ * prevent, arrived at from the other side.
+ */
+export type ConsumedDeadline = {
+  readonly [K in keyof Pick<Deadline, "type">]: string;
+};
+
+/**
+ * The `verdictDetail` members the approved verdict copy fills its slots from, projected out of the
+ * engine's `VerdictDetail` and `MissingFact` rather than restated. Restating them was the one place
+ * in this feature where an upstream rename or retype left the web build green, which is exactly the
+ * drift everything else here is built to stop.
+ */
+export type ConsumedVerdictDetail = Omit<
+  Pick<VerdictDetail, "minSlackDays" | "missingFacts">,
+  "missingFacts"
+> & {
+  readonly missingFacts: readonly Pick<MissingFact, "field">[];
+};
+
+/**
+ * What the loaded rules file says about itself, as `GET /api/rules/meta` serves it.
+ *
+ * Hand-written, and it cannot be projected: this is the api's own snake_case envelope, assembled in
+ * `app.ts` from the loaded ruleset's `rulesetVersion`/`snapshotDate`. No engine type carries these
+ * two keys in this casing, so there is nothing upstream to derive from. Recorded rather than left
+ * looking like an oversight — it is the second and last unprojected shape in this file.
+ */
 export type RulesMetaResponse = {
   readonly ruleset_version: string;
   readonly snapshot_date: string;
@@ -65,11 +182,6 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
 function failureMessage(body: unknown, fallback: string): string {
   const error = asRecord(body)?.error;
   return typeof error === "string" && error.length > 0 ? error : fallback;
@@ -77,54 +189,97 @@ function failureMessage(body: unknown, fallback: string): string {
 
 const UNREADABLE_PLAN = "The API returned a plan this page cannot read.";
 
-const VERDICTS: ReadonlySet<string> = new Set<Verdict>([
-  "FEASIBLE",
-  "FEASIBLE_AT_RISK",
-  "CONDITIONAL",
-  "INFEASIBLE",
-]);
+// The field checks below are complete by construction; `./validated` explains why and enforces it.
 
-/**
- * `findings` being an array is not enough: the view reads `finding.ruleIds.join(...)` on every
- * element without checking it, both for the React key and for the line's own heading.
- */
-const hasRuleIds = (value: unknown): boolean => Array.isArray(asRecord(value)?.ruleIds);
+const VERDICTS = tokensOf<Verdict>({
+  FEASIBLE: true,
+  FEASIBLE_AT_RISK: true,
+  CONDITIONAL: true,
+  INFEASIBLE: true,
+});
 
-/**
- * A plan body the view can actually render, or null.
- *
- * The rule is one line: every field the view consumes WITHOUT first checking it is checked here.
- * Validating a subset is the defect, not a specific missing field — this checked three and the view
- * called `.slice()` on an unchecked `generatedAt`, which turned an intended "cannot read this plan"
- * message into a render failure during an api/web rollout skew.
- *
- * Three more had the same gap, and the worst of them does not crash. `eventRevision` is compared
- * against the event's current revision, and a non-number makes `current > pinned` false — so an
- * event that HAS been edited renders as current, with nothing thrown and nothing logged. That is
- * the false-currency claim this page exists to prevent. A `verdict` outside the four tokens renders
- * an empty verdict line and silently drops the at-risk buffer label, which is the same failure in
- * the other load-bearing sentence on the page.
- *
- * Where this stops: fields the view does not consume (`id`, `eventId`, `today`) are not checked,
- * because rejecting a body over a field nothing reads would refuse a plan the page can render
- * correctly. Inside a finding only `ruleIds` is checked, for the unconditional `.join()` above;
- * validating every `Finding` member would be re-implementing the engine's schema in the browser,
- * and the engine owns that contract.
- */
-function readPlan(body: unknown): PlanResponse | null {
-  const plan = asRecord(body);
-  if (plan === null) return null;
-  if (typeof plan.rulesetVersion !== "string") return null;
+const VERIFICATION_STATUSES = tokensOf<VerificationStatus>({
+  SOURCE_CONFIRMED: true,
+  OFFICIAL_CONFLICT: true,
+  RESEARCH_REQUIRED: true,
+  COVERAGE_GAP: true,
+  VERIFIED: true,
+});
+
+const DISPOSITIONS = tokensOf<Disposition>({
+  required: true,
+  may_be_required: true,
+  prohibited_or_ineligible: true,
+  advisory: true,
+  no_new_requirement: true,
+});
+
+const DEADLINE_STATUSES = tokensOf<DeadlineStatus>({
+  on_track: true,
+  deadline_approaching: true,
+  published_deadline_missed: true,
+  not_calculable: true,
+  not_applicable: true,
+});
+
+const DEADLINE_CHECKS: FieldChecks<ConsumedDeadline> = { type: isString };
+
+/** Every field of a citation is read — the text, the rule it belongs to, and each URL. */
+const SOURCE_CHECKS: FieldChecks<FindingSource> = {
+  ruleId: isString,
+  citation: isString,
+  urls: arrayOf(isString),
+};
+
+const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
+  ruleIds: arrayOf(isString),
+  disposition: isToken(DISPOSITIONS),
+  name: nullOr(isString),
+  agency: nullOr(isString),
+  // Read for its null-ness and its published `type`; nothing else on a `Deadline` is rendered.
+  deadline: nullOr(shapedLike(DEADLINE_CHECKS)),
+  deadlineDisplay: nullOr(isString),
+  latestApplyDate: nullOr(isString),
+  applyAfterDate: nullOr(isString),
+  deadlineStatus: isToken(DEADLINE_STATUSES),
+  feeDisplay: nullOr(isString),
+  portalName: nullOr(isString),
+  portalUrl: nullOr(isString),
+  portalInstructions: nullOr(isString),
+  notes: arrayOf(isString),
+  noteText: nullOr(isString),
+  deadlineUnknownFields: arrayOf(isString),
+  timelineUnresolvedReason: nullOr(isString),
+  conflictText: nullOr(isString),
+  sources: arrayOf(shapedLike(SOURCE_CHECKS)),
+  verificationStatus: isToken(VERIFICATION_STATUSES),
+};
+
+const MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString };
+
+const VERDICT_DETAIL_CHECKS: FieldChecks<ConsumedVerdictDetail> = {
+  minSlackDays: nullOr(isNumber),
+  missingFacts: arrayOf(shapedLike(MISSING_FACT_CHECKS)),
+};
+
+const PLAN_CHECKS: FieldChecks<PlanResponse> = {
+  eventRevision: isNumber,
+  rulesetVersion: isString,
   // A plan that omits the field entirely is unreadable, not legacy. Only an explicit null means
   // "generated before migration 002", and that is the one case the banner may say so for; reading
   // an absent field as null would put that copy under a plumbing mismatch instead.
-  if (!(typeof plan.snapshotDate === "string" || plan.snapshotDate === null)) return null;
-  if (typeof plan.eventRevision !== "number") return null;
-  if (typeof plan.generatedAt !== "string") return null;
-  if (typeof plan.verdict !== "string" || !VERDICTS.has(plan.verdict)) return null;
-  if (!Array.isArray(plan.findings) || !plan.findings.every(hasRuleIds)) return null;
-  return plan as unknown as PlanResponse;
-}
+  snapshotDate: nullOr(isString),
+  verdict: isToken(VERDICTS),
+  verdictDetail: shapedLike(VERDICT_DETAIL_CHECKS),
+  generatedAt: isString,
+  findings: arrayOf(shapedLike(FINDING_CHECKS)),
+};
+
+/** The plan fields and finding members this feature reads, exposed so a test can assert coverage. */
+export const CONSUMED_PLAN_FIELDS: readonly string[] = Object.keys(PLAN_CHECKS);
+export const CONSUMED_FINDING_FIELDS: readonly string[] = Object.keys(FINDING_CHECKS);
+
+const readPlan = (body: unknown): PlanResponse | null => readChecked(PLAN_CHECKS, body);
 
 /** The plan a set of findings was generated as (`GET /api/events/:id/plan`). */
 export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<PlanResult> {
