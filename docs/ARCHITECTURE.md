@@ -105,7 +105,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | verdict_detail | jsonb | blocking permit, missing facts + branches, min slack days, rescope suggestions |
 | intake_snapshot | jsonb | the intake values evaluated, for reproducibility |
 | generated_at | timestamptz | |
-| snapshot_date | date, nullable | *(migration 002)* the ruleset's published `snapshot_date`, pinned beside `ruleset_version` and read with it by the plan banner per F-206 AC 4, never from the live file — a pinned version beside the live date is a pair that never existed. Published-on, not verified-on. Nullable only for plans generated before 002; the writer has set it since, so no post-002 plan is missing it |
+| snapshot_date | date, nullable | *(migration 002)* the ruleset's published `snapshot_date`, pinned beside `ruleset_version` and read with it by the plan banner per F-206 AC 4, never from the live file — a pinned version beside the live date is a pair that never existed. Published-on, not verified-on. Nullable only for plans generated before 002; the writer has set it since, so no post-002 plan is missing it. A null renders as "publication date not recorded for this plan" (F-206 AC 4) — never the live file's date, and never backfilled |
 
 > UNIQUE (event_id, id) *(migration 002)*: not a second identity, only the target a composite foreign key needs. It lets `checklist_acknowledgements` reference the pair so the database rejects an acknowledgement pointing at another event's plan. Same shape as `rsvps` UNIQUE (event_id, id) serving `checkins`.
 
