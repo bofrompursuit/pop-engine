@@ -156,7 +156,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 
 ### F-206 · Rules Snapshot Banner [P0]
 
-- "Rules snapshot nyc.v2.3 · published July 22, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
+- "Rules snapshot nyc.v2.3 · published July 25, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
 - Per-line verification status renders honestly (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED); citations click through to official sources.
 
 ### F-202 · Compliance Checklist & Status Tracker [P0]
