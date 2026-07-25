@@ -29,8 +29,46 @@ export function up(pgm: MigrationBuilder): void {
     },
   });
 
-  // Rows predating this column all take the default and tie, exactly as they tie on 004's
-  // timestamp. Back-filling them from today's plans would re-assert the recalculated measurement
-  // this column exists to stop reading, so they fall through to the deterministic `rule_ids`
-  // backstop instead, which no regeneration moves.
+  // What the default alone would do to rows that already exist: give every one of them 0, so a
+  // whole cohort ties and falls through to the `rule_ids` backstop. Measured against a database
+  // built on the pre-007 schema and then migrated, a checklist displayed [ZULU, ALPHA] by filing
+  // date came back [ALPHA, ZULU]. A migration whose purpose is stopping the list from reshuffling
+  // would have reshuffled every existing list once, on the way in, with no rescope and no user
+  // action. So the position is carried over rather than defaulted.
+  //
+  // THE ORDER THIS ASSERTS, precisely. For rows created after this migration, `cohort_position` is
+  // the requirement's place in the plan being materialized, recorded at insert. For rows created
+  // before it, it is **the order those rows were being displayed in when this migration ran**,
+  // which is not the same statement. The creation order of an old row is unrecoverable, because
+  // `plan_item_id` is re-pointed on every regeneration and the plan it was created against is no
+  // longer reachable from the row. What is recoverable is what the organizer was looking at, and
+  // that is what is preserved: the SELECT below is the pre-007 read path's ORDER BY, verbatim,
+  // down to NULLS LAST. Rows predating migration 004 share its timestamp and rank as one cohort,
+  // which is also exactly what they displayed as.
+  //
+  // Unlike 004's creation timestamps and 006's battery answer, this is not a fact nobody recorded
+  // and it is not inferred: it is computed from the same rows the old query read. That is the
+  // reason this backfills where those two deliberately did not.
+  //
+  // Expected to update nothing today. No database is configured anywhere for this project: no
+  // deployed environment, no seeded instance, and CI builds a throwaway Postgres per run, so
+  // `checklist_items` is empty everywhere this will run. The backfill is here because that is an
+  // argument about today: it costs one statement, and it is what makes the migration correct for
+  // any database that does hold rows, including one nobody remembered to mention.
+  pgm.sql(`
+    UPDATE checklist_items
+       SET cohort_position = ranked.position
+      FROM (
+        SELECT checklist.id,
+               row_number() OVER (
+                 PARTITION BY plan.event_id, checklist.created_at
+                 ORDER BY plan.generated_at, item.latest_apply_date NULLS LAST,
+                          item.permit_name, item.rule_ids
+               ) - 1 AS position
+          FROM checklist_items AS checklist
+          JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+          JOIN permit_plans AS plan ON plan.id = item.plan_id
+      ) AS ranked
+     WHERE checklist_items.id = ranked.id
+  `);
 }
