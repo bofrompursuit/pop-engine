@@ -338,12 +338,14 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const { body } = await checklistFor("A");
       const items = body.items;
 
-      // Scenario A's permit and insurance findings, soonest published filing date first.
+      // Scenario A's permit and insurance findings, soonest published filing date first. Four
+      // since nyc.v2.5: FDNY-GENERATOR-001 was here because an unanswered battery question made
+      // its trigger unknown, and Scenario A has neither a generator nor a battery. The approved
+      // answer key never listed it for A, so this list now matches the key it is derived from.
       expect(ruleIdsOf(items)).toEqual([
         ["SAPO-STREET-LARGE-001"],
         ["NYPD-SOUND-001"],
         ["DOHMH-VENDOR-PERMIT-001"],
-        ["FDNY-GENERATOR-001"],
         ["SAPO-INSURANCE-001"],
       ]);
       expect(items.every((item) => ["permit", "insurance"].includes(item.kind))).toBe(true);
@@ -595,7 +597,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const stored = (read.body.items as ChecklistItemView[]).find((item) => item.id === itemId);
       expect(stored?.notes).toBe("Called the precinct; they want the SAPO number first.");
       // AC 2: the rollup follows the per-item status.
-      expect(read.body.statusRollup).toMatchObject({ in_progress: 1, not_started: 4 });
+      expect(read.body.statusRollup).toMatchObject({ in_progress: 1, not_started: 3 });
     });
 
     it("clears a note when notes is explicitly null", async () => {
