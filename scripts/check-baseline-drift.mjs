@@ -81,6 +81,23 @@ function declaredStatus(absPath) {
 }
 
 const baseline = readFileSync(baselinePath, "utf8");
+
+// The row loop below skips every line that is not a table row, so a merge that commits conflict
+// markers leaves the manifest malformed and this check green — which is how `<<<<<<< HEAD` reached
+// main in 370be18. A marker means two versions of an approved row are both present and neither is
+// authoritative, so the manifest cannot be read at all: fail before inspecting anything.
+const conflictMarkers = baseline
+  .split(/\r?\n/)
+  .map((line, index) => ({ line, number: index + 1 }))
+  .filter(({ line }) => /^(<{7}|={7}|>{7})(\s|$)/.test(line));
+if (conflictMarkers.length > 0) {
+  for (const { line, number } of conflictMarkers) {
+    console.error(`docs/BASELINE.md:${number} unresolved merge conflict marker: ${line}`);
+  }
+  console.error("The baseline manifest is malformed; resolve the conflict before it can be read.");
+  process.exit(1);
+}
+
 const approvedFiles = new Set();
 const unsupportedGlobs = [];
 const emptyGlobs = [];
