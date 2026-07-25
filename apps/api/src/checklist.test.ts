@@ -474,6 +474,53 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         true,
       );
     });
+
+    it("strikes both tracked lines when a later plan merges them, and re-points neither", async () => {
+      // `checklist_items.plan_item_id` is UNIQUE, and `materialize` re-points a tracked item at
+      // the current plan's row. That is only safe because whole-set identity makes a match
+      // strictly one-to-one: a merge is not a match, so two tracked items can never both claim
+      // the one merged row. This test is what makes that load-bearing property fail loudly if
+      // the identity rule is ever relaxed to partial overlap.
+      const eventId = await createEvent(scenario("A"));
+      await insertPlan(
+        eventId,
+        MERGED.map((ruleId) => ({ ruleIds: [ruleId], kind: "permit" })),
+        "2026-07-22T10:00:00Z",
+      );
+      const api = appWith(fakeStorage());
+      const separate = await request(api).post(`/api/events/${eventId}/checklist`);
+      const trackedIds = (separate.body.items as ChecklistItemView[]).map((item) => item.id);
+      expect(trackedIds).toHaveLength(2);
+
+      // The dedupe key changes and the two lines become one.
+      await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T11:00:00Z");
+      const merged = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      // No unique violation: the merged row is claimed by the new item, not fought over.
+      expect(merged.status).toBe(201);
+      const items = merged.body.items as ChecklistItemView[];
+      expect(items).toHaveLength(3);
+      const struck = items.filter((item) => trackedIds.includes(item.id));
+      expect(struck).toHaveLength(2);
+      expect(struck.every((item) => !item.inLatestPlan)).toBe(true);
+      // Neither was re-pointed: they still hold the rows of the plan that raised them.
+      expect(struck.map((item) => item.planItemId).sort()).toEqual(
+        (separate.body.items as ChecklistItemView[]).map((item) => item.planItemId).sort(),
+      );
+      expect(items.at(-1)?.ruleIds.slice().sort()).toEqual([...MERGED].sort());
+      expect(items.at(-1)?.inLatestPlan).toBe(true);
+      expect(merged.body.planChanged).toBe(true);
+
+      // And one checklist row per plan item, which is what the constraint exists to guarantee.
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT count(DISTINCT checklist.plan_item_id) FROM checklist_items AS checklist
+           JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+           JOIN permit_plans AS plan ON plan.id = item.plan_id
+          WHERE plan.event_id = $1`,
+        [eventId],
+      );
+      expect(Number(rows[0]?.count)).toBe(3);
+    });
   });
 
   describe("status and notes (AC 2, AC 4)", () => {
@@ -650,7 +697,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const lyingBytes = await request(api)
         .post(`/api/checklist-items/${itemId}/documents`)
         .set("Content-Type", "application/pdf")
-        .send(Buffer.from("MZ executable"));
+        .send(Buffer.from("MZ this is not a pdf"));
       expect(lyingBytes.status).toBe(400);
 
       const empty = await request(api)
