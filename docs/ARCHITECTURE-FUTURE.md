@@ -1,7 +1,7 @@
 # PopEngine — Architecture Target (Phase 2+)
 
 **Status:** PROPOSED (per `BASELINE.md`) — the destination architecture for Phases 2–4, adopted as a planning target 2026-07-22 so stretch work never needs re-planning. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Do not build workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway before their roadmap phase; AGENTS.md forbids building toward this document early.
-**Origin:** delivered by an external documentation audit (2026-07-22, `docs/proposals/documentation-audit-2026-07-22.md`); section references to "the supplied rules file"/"v2 scenario suite" predate the corrected nyc.v2.1 baseline and should be read as "the then-current draft."
+**Origin:** delivered by an external documentation audit (2026-07-22, `docs/proposals/documentation-audit-2026-07-22.md`); section references to "the supplied rules file"/"v2 scenario suite" predate the corrected nyc.v2.2 baseline and should be read as "the then-current draft."
 **Companion authority:** Product scope lives in `PRD.md`; phase assignment in `ROADMAP.md`; approved feature behavior in `/specs`; regulatory facts in approved primary sources and published rulesets.
 
 ## 1. Architectural goals

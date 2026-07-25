@@ -13,7 +13,7 @@ As an independent organizer, I can see when the rules behind my plan were last v
 
 ## Outputs
 
-- A banner on every plan view: "Rules snapshot nyc.v2.1 · published July 22, 2026". Never "verified as of" — a snapshot date means published-on, not all-facts-verified-on.
+- A banner on every plan view: "Rules snapshot nyc.v2.2 · published July 22, 2026". Never "verified as of" — a snapshot date means published-on, not all-facts-verified-on.
 - Per-line citation + verification-status rendering with click-through to the official source.
 
 ## Acceptance Criteria

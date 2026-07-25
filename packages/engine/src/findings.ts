@@ -80,7 +80,7 @@ function buildFinding(
     deadline: rule.deadline,
     deadlineDisplay: dated.deadlineDisplay,
     latestApplyDate: dated.latestApplyDate,
-    // Dependency sequencing (Parks → NYPD) is F-102's lane; nyc.v2.1 publishes no
+    // Dependency sequencing (Parks → NYPD) is F-102's lane; nyc.v2.2 publishes no
     // machine-readable link from the dependency rule to the finding it gates.
     applyAfterDate: null,
     deadlineStatus: dated.deadlineStatus,
