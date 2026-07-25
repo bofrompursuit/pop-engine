@@ -268,6 +268,19 @@ body {
   color: var(--muted);
 }
 
+/* The at-risk buffer label. Quieter than a warning box — it qualifies the verdict rather than
+   raising a second alarm — and sits directly under the countdown it is about, so the verdict's
+   own bottom margin comes off when this follows it. */
+.plan__buffer {
+  margin: 0 0 1.25rem;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+.plan__verdict:has(+ .plan__buffer) {
+  margin-bottom: 0.3rem;
+}
+
 .plan__actions {
   display: flex;
   flex-direction: column;

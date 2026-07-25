@@ -18,6 +18,22 @@ const VERDICT_COPY: Readonly<Record<Verdict, string>> = {
 };
 
 /**
+ * The label F-102's verdict table requires beside FEASIBLE-AT-RISK: "threshold labeled as
+ * PopEngine's **internal planning buffer**, never an official threshold". The ruleset says the
+ * same thing about the value itself — `config.slack_warning_days.note` reads "NOT an official
+ * threshold; UI must label it as internal policy".
+ *
+ * The organizer is who has to read this. An "apply within N days" line with the buffer explained
+ * only in a source comment reads as an agency filing threshold, which is the overclaim the layered
+ * status model exists to prevent: each line's own published date is the agency's deadline, and
+ * this warning sits inside it. The number is deliberately not restated here — the plan does not
+ * carry the ruleset's `slack_warning_days`, and hardcoding 14 would go stale the first time a
+ * published ruleset moves it.
+ */
+export const AT_RISK_BUFFER_NOTE =
+  "“apply within” counts down PopEngine's internal planning buffer, not an agency filing deadline. Each requirement below carries its own published date.";
+
+/**
  * The approved copy for a verdict, with the slots the answer key leaves open filled from the
  * plan's own detail: "apply within N days" for at-risk, and the unanswered fields for
  * conditional. A slot whose value the plan does not carry is left off rather than guessed.
@@ -27,8 +43,7 @@ export function verdictCopy(verdict: Verdict, detail?: VerdictDetail): string {
 
   if (verdict === "FEASIBLE_AT_RISK") {
     const days = detail?.minSlackDays;
-    // The threshold behind this is PopEngine's internal planning buffer, never an official
-    // deadline; the plan's own lines carry the published dates.
+    // What the buffer is gets said on screen, in `AT_RISK_BUFFER_NOTE`, not in this comment.
     return typeof days === "number" ? `${base} — apply within ${days} days` : base;
   }
 

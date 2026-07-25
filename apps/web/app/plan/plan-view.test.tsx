@@ -656,6 +656,36 @@ describe("the verdict's approved copy", () => {
     cleanup();
     expect(await verdictText("CONDITIONAL")).toContain("Depends on");
   });
+
+  it("labels the at-risk countdown as PopEngine's buffer, on screen", async () => {
+    // F-102's verdict table: "threshold labeled as PopEngine's internal planning buffer, never an
+    // official threshold", and the ruleset's own config note says the UI must label it. An
+    // organizer reading "apply within 10 days" with the explanation only in a source comment has
+    // been handed what looks like an agency filing deadline.
+    stubApi(
+      plan({
+        verdict: "FEASIBLE_AT_RISK",
+        verdictDetail: { ...emptyVerdictDetail, minSlackDays: 10 },
+      }),
+    );
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    const note = document.querySelector(".plan__buffer");
+    expect(note?.getAttribute("role")).toBe("note");
+    expect(note?.textContent).toContain("PopEngine's internal planning buffer");
+    expect(note?.textContent).toContain("not an agency filing deadline");
+  });
+
+  it("does not label a verdict that carries no buffer countdown", async () => {
+    // The label qualifies the at-risk countdown. Attaching it to "On track" would explain a
+    // threshold that verdict never states.
+    stubApi(plan({ verdict: "FEASIBLE" }));
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(screen.queryByText(/internal planning buffer/)).toBeNull();
+  });
 });
 
 describe("navigating from one event's plan to another", () => {

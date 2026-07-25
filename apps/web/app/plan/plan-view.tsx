@@ -5,7 +5,7 @@ import { loadEvent, regeneratePlan } from "../intake/events-api";
 import { loadPlan, loadRulesMeta, type PlanResponse, type RulesMetaResponse } from "./plan-api";
 import { PlanLine } from "./plan-line";
 import { compareToPinned, SnapshotBanner } from "./snapshot-banner";
-import { verdictCopy } from "./verdict-copy";
+import { AT_RISK_BUFFER_NOTE, verdictCopy } from "./verdict-copy";
 
 // The plan view. F-206 owns what this page is for: the snapshot banner and the per-line citation
 // and verification-status rendering. The verdict is shown in its approved copy; F-102's branch
@@ -231,6 +231,16 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
             <strong>{verdictCopy(plan.verdict, plan.verdictDetail)}</strong> · generated{" "}
             {plan.generatedAt.slice(0, 10)} · revision {plan.eventRevision}
           </p>
+
+          {/* F-102's verdict table requires the at-risk threshold to be labelled as PopEngine's
+              internal planning buffer, never an official one. On screen, beside the countdown it
+              qualifies — an organizer reading "apply within 10 days" otherwise has nothing telling
+              them it is not the agency's deadline. */}
+          {plan.verdict === "FEASIBLE_AT_RISK" && (
+            <p className="plan__buffer" role="note">
+              {AT_RISK_BUFFER_NOTE}
+            </p>
+          )}
 
           {plan.findings.length === 0 ? (
             /* F-201 AC 4 and ARCHITECTURE both make the near-empty result first-class, in those
