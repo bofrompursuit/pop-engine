@@ -4,8 +4,7 @@ import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 
 // F-302 RSVP / guest list (ARCHITECTURE.md API Surface + rsvps schema).
 // Capacity is F-101 headcount (spec AC 2) — not events.capacity (that gauge is F-402).
-// Public-page RSVP button waits on F-301 / SPEC-CONFLICT #100; this module is the API
-// and organizer list only.
+// Public POST requires F-301 public_page_published so unpublished events cannot collect RSVPs.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -90,11 +89,12 @@ type EventCapacity = {
   name: string;
   headcount: number;
   event_date: string;
+  public_page_published: boolean;
 };
 
 async function lockEvent(client: Queryable, eventId: string): Promise<EventCapacity | null> {
   const { rows } = await client.query<EventCapacity>(
-    `SELECT id, name, headcount, event_date::text AS event_date
+    `SELECT id, name, headcount, event_date::text AS event_date, public_page_published
        FROM events
       WHERE id = $1
       FOR UPDATE`,
@@ -160,6 +160,10 @@ export async function createRsvp(
     const event = await lockEvent(client, eventId);
     if (event === null) {
       return { status: 404, body: { error: "That event was not found." } };
+    }
+    // Match F-301 visibility: unpublished pages must not accept public RSVPs (replay / stale tab).
+    if (!event.public_page_published) {
+      return { status: 404, body: { error: "That event page is not available." } };
     }
     if (event.event_date < today) {
       return { status: 400, body: { error: "this event has passed." } };

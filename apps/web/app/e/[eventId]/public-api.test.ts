@@ -67,4 +67,20 @@ describe("submitPublicRsvp", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("surfaces unpublished RSVP refusals as a friendly page message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(404, { error: "That event page is not available." })),
+    );
+    await expect(
+      submitPublicRsvp("https://api.example.com", "11111111-1111-4111-8111-111111111111", {
+        name: "Ada",
+        email: "ada@example.com",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      message: "That event page is not available.",
+    });
+  });
 });

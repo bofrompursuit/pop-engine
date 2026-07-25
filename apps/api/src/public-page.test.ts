@@ -115,6 +115,27 @@ describe.runIf(databaseUrl.length > 0)("F-301 public page endpoints (database)",
     expect(rsvp.status).toBe(201);
   });
 
+  it("updates only the fields supplied on PATCH so concurrent toggles cannot clobber each other", async () => {
+    const eventId = await createEvent();
+    await request(api)
+      .patch(`/api/events/${eventId}/public-page`)
+      .send({ public_page_published: true, description: "Original copy." });
+
+    const descriptionOnly = await request(api)
+      .patch(`/api/events/${eventId}/public-page`)
+      .send({ description: "Updated copy." });
+    expect(descriptionOnly.status).toBe(200);
+    expect(descriptionOnly.body.description).toBe("Updated copy.");
+    expect(descriptionOnly.body.public_page_published).toBe(true);
+
+    const publishOnly = await request(api)
+      .patch(`/api/events/${eventId}/public-page`)
+      .send({ public_page_published: false });
+    expect(publishOnly.status).toBe(200);
+    expect(publishOnly.body.public_page_published).toBe(false);
+    expect(publishOnly.body.description).toBe("Updated copy.");
+  });
+
   it("returns friendly errors for malformed public ids", async () => {
     const response = await request(api).get("/e/not-a-uuid");
     expect(response.status).toBe(400);

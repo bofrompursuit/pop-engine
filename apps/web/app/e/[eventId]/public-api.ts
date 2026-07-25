@@ -74,6 +74,7 @@ export async function submitPublicRsvp(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   let response: Response;
   try {
+    // Server enforces public_page_published on POST (F-301 visibility); stale tabs get a 404.
     response = await fetch(`${apiBaseUrl}/api/events/${eventId}/rsvps`, {
       method: "POST",
       ...CREDENTIALED,
@@ -86,7 +87,12 @@ export async function submitPublicRsvp(
   if (!response.ok) {
     return {
       ok: false,
-      message: failureMessage(body, `RSVP could not be saved (HTTP ${response.status}).`),
+      message: failureMessage(
+        body,
+        response.status === 404
+          ? "That event page is not available."
+          : `RSVP could not be saved (HTTP ${response.status}).`,
+      ),
     };
   }
   return { ok: true };

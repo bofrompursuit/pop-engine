@@ -67,8 +67,26 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(response.status).toBe(201);
     const id: string = response.body.event.id;
     createdEventIds.push(id);
+    // Public RSVP requires F-301 publish; publish by default so capacity tests stay focused.
+    const published = await request(api)
+      .patch(`/api/events/${id}/public-page`)
+      .send({ public_page_published: true });
+    expect(published.status).toBe(200);
     return { id, headcount: response.body.event.headcount as number };
   };
+
+  it("refuses RSVPs while the public page is unpublished", async () => {
+    const response = await request(api).post("/api/events").send(scenarioA());
+    expect(response.status).toBe(201);
+    const eventId: string = response.body.event.id;
+    createdEventIds.push(eventId);
+
+    const blocked = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Ada", email: "ada@example.com" });
+    expect(blocked.status).toBe(404);
+    expect(blocked.body.error).toMatch(/not available/i);
+  });
 
   it("creates an RSVP and lists it on the guest list with count vs headcount", async () => {
     const { id: eventId, headcount } = await createEvent({ headcount: 5 });

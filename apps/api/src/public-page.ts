@@ -186,22 +186,32 @@ export async function patchOrganizerPublicPage(
     published = record.public_page_published;
   }
 
-  const event = await readEvent(database, eventId);
-  if (event === null) {
-    return { status: 404, body: { error: "That event was not found." } };
+  // Update only supplied columns so a description-only save cannot clobber a concurrent
+  // publish/unpublish (or the reverse) from a stale read-merge-write.
+  const sets = ["updated_at = current_timestamp"];
+  const values: unknown[] = [eventId];
+  let next = 2;
+  if (description !== undefined) {
+    sets.push(`description = $${next}`);
+    values.push(description);
+    next += 1;
+  }
+  if (published !== undefined) {
+    sets.push(`public_page_published = $${next}`);
+    values.push(published);
+    next += 1;
   }
 
-  const nextDescription = description !== undefined ? description : event.description;
-  const nextPublished = published !== undefined ? published : event.public_page_published;
-
-  await database.query(
+  const { rows } = await database.query<{ id: string }>(
     `UPDATE events
-        SET description = $2,
-            public_page_published = $3,
-            updated_at = current_timestamp
-      WHERE id = $1`,
-    [eventId, nextDescription, nextPublished],
+        SET ${sets.join(", ")}
+      WHERE id = $1
+      RETURNING id`,
+    values,
   );
+  if (rows[0] === undefined) {
+    return { status: 404, body: { error: "That event was not found." } };
+  }
 
   // Publishing does not bump revision_counter — description is promotion copy, not intake.
   return getOrganizerPublicPage(database, eventId);
