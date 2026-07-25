@@ -401,11 +401,20 @@ describe("published bound inclusivity", () => {
     expect(
       withDeadline({ type: "published_minimum", calendar_days: 10, boundary: "loose" }),
     ).toThrow(/boundary has unsupported value "loose"/);
-    // A type with no single filing bound cannot be exclusive; ignoring it would hide the
-    // authoring mistake behind a plausible-looking date.
+    // Only the types dated by counting back from the event carry a boundary. Declaring one
+    // anywhere else is an authoring mistake, and a composite's hard floor in particular has its
+    // own cliff semantics that an "inclusive" label would contradict on the wire.
     expect(withDeadline({ type: "research_required", boundary: "exclusive" })).toThrow(
-      /boundary cannot be exclusive on a "research_required" deadline/,
+      /boundary does not apply to a "research_required" deadline/,
     );
+    expect(
+      withDeadline({
+        type: "composite",
+        hard_floor_days: 21,
+        processing_range_days: [21, 30],
+        boundary: "inclusive",
+      }),
+    ).toThrow(/boundary does not apply to a "composite" deadline/);
   });
 });
 
@@ -612,35 +621,38 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
 
 describe("asked_when scoping", () => {
   /** A registry where `venue_note` is scoped by the expression under test. */
+  const scopingRuleset = (askedWhen: string, extraFields: Record<string, unknown>[] = []) =>
+    ({
+      ...rawRuleset,
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "headcount", type: "integer" },
+        { field: "food_present", type: "boolean" },
+        {
+          field: "sapo_event_type",
+          type: "enum",
+          values: ["street_event", "block_party", "unknown"],
+        },
+        ...extraFields,
+        { field: "venue_note", type: "boolean", asked_when: askedWhen },
+      ],
+      rules: [
+        {
+          id: "RULE-SCOPE",
+          kind: "permit",
+          trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
+          output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ],
+      advisories: [],
+    }) as Record<string, unknown>;
+
   const withScoping =
     (askedWhen: string, extraFields: Record<string, unknown>[] = []) =>
     () =>
-      parseEngineRuleset({
-        ...rawRuleset,
-        intake_fields: [
-          { field: "event_date", type: "date" },
-          { field: "headcount", type: "integer" },
-          { field: "food_present", type: "boolean" },
-          {
-            field: "sapo_event_type",
-            type: "enum",
-            values: ["street_event", "block_party", "unknown"],
-          },
-          ...extraFields,
-          { field: "venue_note", type: "boolean", asked_when: askedWhen },
-        ],
-        rules: [
-          {
-            id: "RULE-SCOPE",
-            kind: "permit",
-            trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
-            output: { permit_name: "x", agency: "DOB" },
-            verification: { status: "SOURCE_CONFIRMED" },
-            source: { citation: "c", urls: ["https://example.test"] },
-          },
-        ],
-        advisories: [],
-      });
+      parseEngineRuleset(scopingRuleset(askedWhen, extraFields));
 
   it("accepts the shapes the published registry actually uses", () => {
     expect(withScoping("headcount gte 75")).not.toThrow();
@@ -677,6 +689,37 @@ describe("asked_when scoping", () => {
       /reads "headcount" as a flag, but it is a integer field/,
     );
     expect(withScoping("food_present = maybe")).toThrow(/compares boolean "food_present"/);
+  });
+
+  it("scopes a typed comparison correctly at evaluation, not just at parse", () => {
+    // The operand is written as text but the intake answer is a boolean or a number, so a
+    // comparison kept as a string would never match: every equality false, every inequality true,
+    // and the scoped field plus its requirements silently gone. Parsing is not enough to prove
+    // this — the clause has to actually decide scope.
+    const fires = (askedWhen: string, intake: Record<string, unknown>): boolean => {
+      const ruleset = parseEngineRuleset(scopingRuleset(askedWhen));
+      const plan = evaluate(
+        { event_date: "2026-12-04", venue_note: true, ...intake } as EventIntake,
+        ruleset,
+        TODAY,
+        { id: ruleset.calendarId, holidays: [] },
+      );
+      return plan.findings.some((finding) => finding.ruleIds.includes("RULE-SCOPE"));
+    };
+
+    // boolean-typed operand
+    expect(fires("food_present = true", { food_present: true })).toBe(true);
+    expect(fires("food_present = true", { food_present: false })).toBe(false);
+    expect(fires("food_present != true", { food_present: false })).toBe(true);
+
+    // number-typed operand
+    expect(fires("headcount = 75", { headcount: 75 })).toBe(true);
+    expect(fires("headcount = 75", { headcount: 76 })).toBe(false);
+    expect(fires("headcount != 75", { headcount: 76 })).toBe(true);
+
+    // an enum operand stays a string, which is what the published registry uses
+    expect(fires("sapo_event_type = street_event", { sapo_event_type: "street_event" })).toBe(true);
+    expect(fires("sapo_event_type = street_event", { sapo_event_type: "block_party" })).toBe(false);
   });
 
   it("rejects a clause that names neither a declared field nor a declared value", () => {

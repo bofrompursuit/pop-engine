@@ -133,8 +133,9 @@ const BOUNDED_DEADLINE_TYPES = new Set([
 
 /**
  * Whether the published number is an inclusive or exclusive bound. Absent means inclusive, which
- * is what every rule that says "at least N days" means. A rule that declares `exclusive` on a type
- * with no single bound is a ruleset error rather than something to ignore quietly.
+ * is what every rule that says "at least N days" means. Only the types that date a deadline by
+ * counting back from the event carry one; declaring a boundary on any other type is a ruleset
+ * error rather than something to ignore quietly.
  */
 function parseBoundary(deadline: JsonObject, type: string, label: string): DeadlineBoundary {
   const declared = deadline.boundary;
@@ -142,8 +143,8 @@ function parseBoundary(deadline: JsonObject, type: string, label: string): Deadl
   if (declared !== "inclusive" && declared !== "exclusive") {
     fail(`${label}.boundary has unsupported value "${String(declared)}"`);
   }
-  if (declared === "exclusive" && !BOUNDED_DEADLINE_TYPES.has(type)) {
-    fail(`${label}.boundary cannot be exclusive on a "${type}" deadline`);
+  if (!BOUNDED_DEADLINE_TYPES.has(type)) {
+    fail(`${label}.boundary does not apply to a "${type}" deadline`);
   }
   return declared;
 }
@@ -203,7 +204,6 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         ],
         display,
         qualification,
-        boundary,
       };
     }
     case "business_days_minimum":
@@ -215,9 +215,9 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         boundary,
       };
     case "before_issuance":
-      return { type, display, qualification, boundary };
+      return { type, display, qualification };
     case "research_required":
-      return { type, display, qualification, boundary };
+      return { type, display, qualification };
     default:
       return fail(`${label}.type has unsupported value "${type}"`);
   }

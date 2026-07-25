@@ -76,6 +76,18 @@ function fieldTypeOf(field: string, fields: readonly IntakeFieldDefinition[]): s
 
 const NUMERIC_FIELD_TYPES = new Set(["integer", "number"]);
 
+/** The operand as the field's own runtime type, so evaluation's strict comparison can match. */
+function typedOperand(
+  operand: string,
+  type: string,
+  declaredValues: readonly string[] | null,
+): string | number | boolean {
+  if (declaredValues !== null) return operand;
+  if (NUMERIC_FIELD_TYPES.has(type)) return Number(operand);
+  if (type === "boolean") return operand === "true";
+  return operand;
+}
+
 function rejectClause(clause: string, reason: string): never {
   throw new EvaluationError(`asked_when clause "${clause}" ${reason}`);
 }
@@ -132,7 +144,16 @@ function parseAskedWhenClause(
     if (allowed === null && type === "boolean" && operand !== "true" && operand !== "false") {
       rejectClause(clause, `compares boolean "${field}" against "${operand}"`);
     }
-    return { kind: "compare", field, op: comparison[2] === "=" ? "=" : "!=", value: operand };
+    // The operand is typed at load, not left as the text it was written as. An intake answer is a
+    // boolean or a number, and evaluation compares strictly, so keeping "true" or "75" as strings
+    // would make every equality false and every inequality true — the scoped field and everything
+    // depending on it silently leaving scope, which is the failure this validation exists to stop.
+    return {
+      kind: "compare",
+      field,
+      op: comparison[2] === "=" ? "=" : "!=",
+      value: typedOperand(operand, type, allowed),
+    };
   }
 
   // A bare token is either a boolean field ("food_present") or a declared member of a
