@@ -94,7 +94,7 @@ function intakeFromEventRow(row: Record<string, unknown>, ruleset: EngineRuleset
  * does not add columns (AGENTS.md), so they ride in the plan's verdict_detail and are zipped
  * back onto the items by rule ids. Reported on the PR as a schema gap for a later migration.
  */
-type FindingRendering = {
+export type FindingRendering = {
   rule_ids: readonly string[];
   notes: readonly string[];
   note_text: string | null;
@@ -118,7 +118,7 @@ const renderingOf = (finding: Finding): FindingRendering => ({
   portal_instructions: finding.portalInstructions,
 });
 
-const renderingKey = (ruleIds: readonly string[]): string => ruleIds.join(",");
+export const renderingKey = (ruleIds: readonly string[]): string => ruleIds.join(",");
 
 async function insertPlan(
   client: PoolClient,

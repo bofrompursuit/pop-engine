@@ -144,7 +144,8 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | plan_item_id | uuid FK → permit_plan_items, UNIQUE | keeps status linked to rule + source; event is derived through the plan item and plan |
 | status | text CHECK IN (not_started, in_progress, submitted, approved, rejected) | |
 | notes | text | |
-| updated_at | timestamptz | |
+| updated_at | timestamptz | moves whenever the organizer works an item (status, notes), so it cannot order the list |
+| created_at | timestamptz | *(migration 004)* when the requirement became a **checklist task**, which is what F-202 AC 6's "new items appended" orders by. Deliberately not derived: `plan.generated_at` is when a requirement first appeared in any plan, which differs whenever a requirement is dropped and later reintroduced, and `plan_item_id` is re-pointed on every materialize. Rows predating the column tie at the migration timestamp and fall through to filing-date order; they are not back-dated from the plans, which would re-assert the measurement this column replaces |
 
 ### checklist_acknowledgements *(migration 002; one row per event, overwritten on re-acknowledgement)*
 

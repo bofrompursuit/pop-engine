@@ -1,6 +1,7 @@
 import express, { type Express, type Response } from "express";
 import { describeEngine, EvaluationError } from "@pop-engine/engine";
 import { createCheckinsRouter } from "./checkins";
+import { createChecklistRouter, type ChecklistDependencies } from "./checklist";
 import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 import { createPublicPageRouter } from "./public-page";
@@ -9,6 +10,8 @@ import { createRsvpsRouter } from "./rsvps";
 export type AppDependencies = EventsDependencies & {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
   planService?: PlanService;
+  /** Same contract for F-202: the checklist routes register only when storage is supplied. */
+  checklist?: ChecklistDependencies;
 };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
@@ -28,7 +31,10 @@ export function createApp(dependencies: AppDependencies): Express {
     res.setHeader("Access-Control-Allow-Credentials", "true");
     if (req.method === "OPTIONS") {
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      // X-Filename carries a document upload's display name (F-202). A preflight that lists a
+      // header this allowlist omits fails in the browser before the route is ever reached, and
+      // web and api are separately hosted, so that is the normal path rather than an edge case.
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Filename");
       res.sendStatus(204);
       return;
     }
@@ -55,6 +61,9 @@ export function createApp(dependencies: AppDependencies): Express {
   // /api/events/:id/public-page routes on the same router.
   app.use(createPublicPageRouter({ database: dependencies.database }));
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
+  if (dependencies.checklist !== undefined) {
+    app.use("/api", createChecklistRouter(dependencies.checklist));
+  }
 
   return app;
 }

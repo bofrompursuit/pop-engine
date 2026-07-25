@@ -5,6 +5,12 @@ import { createApp } from "./app";
 import { holidayCalendarWarning, pinnedCalendar, todayInJurisdiction } from "./calendar";
 import { createPlanService } from "./plan";
 import { loadRuleset, rulesFilePath, syncPermitRules } from "./ruleset";
+import {
+  createS3DocumentStorage,
+  s3ClientFor,
+  s3SettingsFromEnv,
+  unconfiguredDocumentStorage,
+} from "./storage";
 
 // Long-lived process (ARCHITECTURE.md AD-1). This server also hosts the in-process
 // 60s alert poller once F-203 (issue #8) lands, which is why the api must stay on an
@@ -44,11 +50,24 @@ const planService = createPlanService(pool, engineRuleset, pinnedCalendar, today
 const calendarWarning = holidayCalendarWarning(pinnedCalendar(engineRuleset.calendarId));
 if (calendarWarning !== null) console.warn(calendarWarning);
 
+// The bucket is optional at boot so the api still runs against a bare local database
+// (DEPLOY.md: the scaffold needs no cloud accounts). Without it the upload and download routes
+// answer 503 rather than accepting a document nowhere stores.
+const s3Settings = s3SettingsFromEnv(process.env);
+if (s3Settings === null) {
+  console.warn("S3_* is not configured; F-202 document upload and download will return 503");
+}
+const documentStorage =
+  s3Settings === null
+    ? unconfiguredDocumentStorage()
+    : createS3DocumentStorage(s3ClientFor(s3Settings), s3Settings.bucket);
+
 createApp({
   database: pool,
   intakeContract: parseIntakeContract(ruleset.document),
   today,
   planService,
+  checklist: { database: pool, storage: documentStorage },
 }).listen(PORT, () => {
   console.log(`pop-engine-api listening on :${PORT}`);
 });
