@@ -138,6 +138,22 @@ const PLAN_ITEM_COLUMNS = `id, plan_id, rule_ids, permit_name, agency, kind, dis
  */
 const PLAN_ITEM_ORDER = `latest_apply_date NULLS LAST, permit_name, rule_ids`;
 
+/**
+ * The order of checklist rows created together, which is a different question.
+ *
+ * Every task of one materialization shares a `created_at` (Postgres fixes `current_timestamp` per
+ * transaction), so this is not a tiebreak that rarely fires: it decides the whole order of a
+ * cohort, and for a first checklist that is the entire list. It therefore may not read anything an
+ * evaluation recomputes, and `latest_apply_date` is exactly that. `cohort_position` is the filing
+ * order the requirement had when it became a task, written once and never rewritten (migration
+ * 007), so the checklist still leads with the soonest deadline without re-reading a date that a
+ * later plan moved.
+ *
+ * `rule_ids` last is what makes the order total, and is what rows predating migration 007 fall
+ * through to: `materialize` keeps one row per requirement, so no two rows can share it.
+ */
+const CHECKLIST_COHORT_ORDER = `checklist.cohort_position, item.rule_ids`;
+
 type ChecklistRow = PlanItemRow & {
   checklist_item_id: string;
   plan_item_id: string;
@@ -317,17 +333,17 @@ async function taskCreatedByRequirement(
 }
 
 /**
- * Every checklist row of the event, ordered by filing date. `checklistView` then stably re-groups
- * them by when each requirement first appeared, which is the display order.
+ * Every checklist row of the event, in the order rows created together are displayed in.
+ * `checklistView` then stably re-groups them by when each requirement first appeared, which is the
+ * display order.
  *
- * Deliberately says nothing about the plan each row currently points at. Postgres fixes
- * `current_timestamp` per transaction, so every task of one materialization shares a `created_at`
- * and this order is what decides between them. The plan a row points at is not a property of the
- * task at all, it is a property of the last regeneration that kept it. A rescope re-points the
- * survivors at the new plan and leaves a dropped requirement on the plan that raised it, so
- * ordering on `plan.generated_at` sorted the struck row ahead of the cohort it was created with
- * and moved rows the organizer had been working. That is the derivation from plan timestamps
- * migration 004 was added to remove; it survived here as the tiebreak (#92).
+ * Deliberately says nothing about the plan each row currently points at, nor about anything that
+ * plan recomputed. The plan a row points at is not a property of the task, it is a property of the
+ * last regeneration that kept it: a rescope re-points the survivors and leaves a dropped
+ * requirement on the plan that raised it, so ordering on `plan.generated_at` sorted the struck row
+ * ahead of the cohort it was created with, and ordering on `latest_apply_date` reshuffled the
+ * cohort whenever a recalculated date crossed a historical one. Both are the derivation from plan
+ * data that migration 004 was added to remove, one layer apart (#92, and #111 round 1).
  */
 async function checklistRows(database: Queryable, eventId: string): Promise<ChecklistRow[]> {
   const { rows } = await database.query<ChecklistRow>(
@@ -340,9 +356,7 @@ async function checklistRows(database: Queryable, eventId: string): Promise<Chec
        JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
        JOIN permit_plans AS plan ON plan.id = item.plan_id
       WHERE plan.event_id = $1
-      ORDER BY ${PLAN_ITEM_ORDER.split(", ")
-        .map((key) => `item.${key}`)
-        .join(", ")}`,
+      ORDER BY ${CHECKLIST_COHORT_ORDER}`,
     [eventId],
   );
   return rows;
@@ -504,10 +518,14 @@ async function materialize(client: PoolClient, eventId: string, planId: string):
     if (!TRACKABLE_FINDING_KINDS.has(item.kind)) continue;
     const tracked = trackedByKey.get(requirementKey(item.rule_ids));
     if (tracked === undefined) {
+      // `created` is this task's position among the tasks this call creates, and the loop walks
+      // the plan in published filing-date order, so the position freezes that order at creation
+      // (migration 007). Recorded rather than re-read, because the date it came from is
+      // recalculated by every later regeneration and the order the organizer learned is not.
       await client.query(
-        `INSERT INTO checklist_items (id, plan_item_id) VALUES ($1, $2)
+        `INSERT INTO checklist_items (id, plan_item_id, cohort_position) VALUES ($1, $2, $3)
            ON CONFLICT (plan_item_id) DO NOTHING`,
-        [randomUUID(), item.id],
+        [randomUUID(), item.id, created],
       );
       created += 1;
       continue;

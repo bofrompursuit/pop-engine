@@ -198,7 +198,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
    */
   const insertPlan = async (
     eventId: string,
-    items: readonly { ruleIds: string[]; kind: string }[],
+    items: readonly { ruleIds: string[]; kind: string; latestApplyDate?: string }[],
     generatedAt: string,
     eventRevision = 1,
   ): Promise<string> => {
@@ -233,9 +233,9 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       await pool.query(
         `INSERT INTO permit_plan_items
            (id, plan_id, rule_ids, triggered_by, sources, kind, disposition, deadline_status,
-            verification_status, permit_name)
+            verification_status, permit_name, latest_apply_date)
          VALUES ($1, $2, $3, '[]'::jsonb, '[]'::jsonb, $4, $5, 'not_applicable',
-                 'SOURCE_CONFIRMED', $6)`,
+                 'SOURCE_CONFIRMED', $6, $7)`,
         [
           randomUUID(),
           planId,
@@ -243,6 +243,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
           item.kind,
           item.kind === "advisory" ? "advisory" : "required",
           publishedName(item.ruleIds[0] as string),
+          item.latestApplyDate ?? null,
         ],
       );
     }
@@ -958,15 +959,33 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // implicit and two edits would remove it silently: dropping the foreign key, and weakening
       // this route's lock to FOR NO KEY UPDATE, which does NOT conflict with FOR KEY SHARE.
       //
+      // It waits for the insert to be observably blocked rather than sleeping and assuming it is.
+      // A fixed window is the vacuous pass this test exists to prevent: on a loaded worker the
+      // request can still be starting up when the window closes, and "it has not finished" then
+      // holds for a generation nothing is serializing at all, so the guard stays green through
+      // the very edit it guards against. Not reaching the insert is a failure here, not a pass.
+      //
       // The holder stands in for the checklist's own transaction: it takes exactly the lock the
       // POST takes, and holds it for as long as the test needs.
       const eventId = await createEvent(scenario("A"));
       await generatePlan(eventId);
       const api = appWith(fakeStorage());
 
+      /** The generation's own backend, waiting on a lock at the statement this test is about. */
+      const blockedOnInsert = async (): Promise<boolean> => {
+        const { rows } = await pool.query(
+          `SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND wait_event_type = 'Lock'
+              AND query LIKE 'INSERT INTO permit_plans%'`,
+        );
+        return rows.length > 0;
+      };
+
       const holder = await pool.connect();
       let settled = false;
-      let inFlight: Promise<request.Response>;
+      let committed = false;
+      let inFlight: Promise<request.Response> | undefined;
       try {
         await holder.query("BEGIN");
         await holder.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
@@ -977,17 +996,37 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
             settled = true;
             return response;
           });
+        // An assertion below may fail before this is awaited, and an unhandled rejection would
+        // then be reported instead of the assertion that actually failed.
+        void inFlight.catch(() => undefined);
 
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        const deadline = Date.now() + 10_000;
+        let blocked = false;
+        while (!blocked && Date.now() < deadline && !settled) {
+          blocked = await blockedOnInsert();
+          if (!blocked) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(
+          blocked,
+          "the generation never blocked on a lock at INSERT INTO permit_plans, so nothing " +
+            "serialized it and this test asserted nothing",
+        ).toBe(true);
+
         const { rows } = await holder.query<{ count: string }>(
           "SELECT count(*) AS count FROM permit_plans WHERE event_id = $1",
           [eventId],
         );
-        expect(settled, "the generation committed while the event row was locked").toBe(false);
+        expect(settled, "the generation answered while the event row was locked").toBe(false);
         expect(rows[0]?.count, "a plan committed while the event row was locked").toBe("1");
 
         await holder.query("COMMIT");
+        committed = true;
       } finally {
+        // Releasing a client does not end its transaction: without this, a failed assertion
+        // returns a connection to the pool idle in transaction, still holding the event-row lock,
+        // and the blocked generation and the suite's cleanup both wait on it until the run times
+        // out. A regression would then read as flake rather than as itself.
+        if (!committed) await holder.query("ROLLBACK").catch(() => undefined);
         holder.release();
       }
 
@@ -1275,6 +1314,52 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         A,
         C,
       ]);
+    });
+
+    it("does not reshuffle a cohort when a regeneration moves the filing dates", async () => {
+      // The other half of the same defect. Rows created together share a `created_at`, so the
+      // query's order decides between them, and reading a recalculated field there reshuffles the
+      // list on regeneration just as reading the plan's timestamp did. A retained row is re-pointed
+      // at the new plan's date while a dropped row keeps the last-known date of the plan that
+      // raised it, so the two are not even measured against the same evaluation: here the retained
+      // item's new date crosses the dropped item's historical one, which is the Scenario A rescope
+      // ladder, and under a filing-date order the pair swaps.
+      //
+      // The order that must hold is the one the organizer learned: filing order as it stood when
+      // the tasks were created, which `cohort_position` froze.
+      const eventId = await createEvent(scenario("A"));
+      const api = appWith(fakeStorage());
+
+      await insertPlan(
+        eventId,
+        [
+          { ruleIds: [A], kind: "permit", latestApplyDate: "2026-08-01" },
+          { ruleIds: [B], kind: "permit", latestApplyDate: "2026-08-20" },
+        ],
+        "2026-07-22T10:00:00Z",
+      );
+      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(created.status).toBe(201);
+      const before = (created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0]);
+
+      // Drops A, which keeps 2026-08-01, and recalculates B to a date ahead of it.
+      await insertPlan(
+        eventId,
+        [{ ruleIds: [B], kind: "permit", latestApplyDate: "2026-07-25" }],
+        "2026-07-22T11:00:00Z",
+      );
+      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(reviewed.status).toBe(200);
+
+      const after = (reviewed.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0]);
+      expect(after, "the cohort was reordered by a date the regeneration moved").toEqual(before);
+      // Named as well as unchanged, so "stable" cannot be satisfied by freezing a wrong order:
+      // A led at creation because 2026-08-01 was the sooner deadline then.
+      expect(after).toEqual([A, B]);
+      expect(
+        (reviewed.body.items as ChecklistItemView[]).find((item) => item.ruleIds[0] === A)
+          ?.inLatestPlan,
+      ).toBe(false);
     });
 
     it("does not reshuffle the list when the organizer works an item", async () => {
