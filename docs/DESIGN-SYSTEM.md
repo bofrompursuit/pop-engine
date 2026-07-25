@@ -1,4 +1,7 @@
-# DESIGN.md — PopEngine Design System & UI Specifications
+# PopEngine Design System
+
+**STATUS:** APPROVED
+**AUTHORITATIVE FOR:** UI / UX Specs & Design Language
 
 > Directly adapted from the architectural design language of Aura’s **Altitude MTL** template (monochrome palette, spatial coordinate tagging, clean typography hierarchy, and structured modular cards) for **PopEngine**'s NYC event intake and permitting engine.
 
