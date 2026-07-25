@@ -941,6 +941,67 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
   // Review round 1, findings 1 and 2: a checklist may not present a plan that no longer answers
   // the current intake, and "the plan changed" must survive a regeneration that moved only dates.
+  describe("a plan generated while a checklist is being created", () => {
+    it("holds a generation behind the event lock the checklist takes", async () => {
+      // The checklist decides which plan it is materializing under the event row lock and then
+      // acknowledges that plan, so a generation committing inside that window would have the POST
+      // acknowledge a superseded plan and answer planChanged: false while a newer one exists.
+      // #92 read `plan.ts`, which takes no lock of its own, and concluded nothing prevents it.
+      //
+      // Postgres does. `permit_plans.event_id` references `events`, so every plan insert takes a
+      // FOR KEY SHARE row lock on the parent event, and FOR UPDATE conflicts with it: the insert
+      // waits for the checklist's transaction to end. Verified rather than assumed: under the
+      // held lock the generation waits on `Lock: transactionid` at `INSERT INTO permit_plans`,
+      // holding a tuple lock on `events`, and it commits only once the lock is released.
+      //
+      // So this pins the property rather than any one mechanism, because the mechanism is
+      // implicit and two edits would remove it silently: dropping the foreign key, and weakening
+      // this route's lock to FOR NO KEY UPDATE, which does NOT conflict with FOR KEY SHARE.
+      //
+      // The holder stands in for the checklist's own transaction: it takes exactly the lock the
+      // POST takes, and holds it for as long as the test needs.
+      const eventId = await createEvent(scenario("A"));
+      await generatePlan(eventId);
+      const api = appWith(fakeStorage());
+
+      const holder = await pool.connect();
+      let settled = false;
+      let inFlight: Promise<request.Response>;
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
+
+        inFlight = request(api)
+          .post(`/api/events/${eventId}/plan`)
+          .then((response) => {
+            settled = true;
+            return response;
+          });
+
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const { rows } = await holder.query<{ count: string }>(
+          "SELECT count(*) AS count FROM permit_plans WHERE event_id = $1",
+          [eventId],
+        );
+        expect(settled, "the generation committed while the event row was locked").toBe(false);
+        expect(rows[0]?.count, "a plan committed while the event row was locked").toBe("1");
+
+        await holder.query("COMMIT");
+      } finally {
+        holder.release();
+      }
+
+      // Released, so it proceeds: serialized, not refused.
+      const generated = await inFlight;
+      expect(generated.status).toBe(201);
+      const { rows } = await pool.query<{ count: string }>(
+        "SELECT count(*) AS count FROM permit_plans WHERE event_id = $1",
+        [eventId],
+      );
+      expect(rows[0]?.count).toBe("2");
+    });
+  });
+
   describe("a plan the event has moved past", () => {
     it("refuses to create a checklist from a plan older than the event's revision", async () => {
       const eventId = await createEvent(scenario("A"));
@@ -1171,6 +1232,48 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect((read.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
         B,
         A,
+      ]);
+    });
+
+    it("keeps a dropped item in its cohort instead of leading the list with it", async () => {
+      // Every task of one materialization shares a `created_at`, because Postgres fixes
+      // `current_timestamp` per transaction, so their relative order is decided entirely by the
+      // query's tiebreak, and the tiebreak must not read the plan each row currently points at.
+      // After this rescope the struck row still points at the plan it was raised by while its
+      // cohort-mate has been re-pointed forward, so ordering on `plan.generated_at` puts the
+      // struck row first and moves a row the organizer has been working.
+      //
+      // Three plans, so the plan a row points at, the plan a requirement first appeared in, and
+      // the order the tasks were created are three different things. C appears in the first plan,
+      // is absent when the checklist is created, and returns last; its published name sorts first,
+      // so it can only come last by having become a task last.
+      const eventId = await createEvent(scenario("A"));
+      const api = appWith(fakeStorage());
+
+      await insertPlan(eventId, permits(C), "2026-07-22T10:00:00Z");
+      await insertPlan(eventId, permits(A, B), "2026-07-22T11:00:00Z");
+      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(created.status).toBe(201);
+      // One transaction, so A and B tie on creation and the filing-date order decides.
+      expect((created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
+        B,
+        A,
+      ]);
+
+      // Drops A, keeps B, brings C back.
+      await insertPlan(eventId, permits(B, C), "2026-07-22T12:00:00Z");
+      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(reviewed.status).toBe(201);
+
+      const items = reviewed.body.items as ChecklistItemView[];
+      expect(items.map((item) => item.ruleIds[0])).toEqual([B, A, C]);
+      // A is the struck one, and it did not move: it is history in place, not a new first row.
+      expect(items.find((item) => item.ruleIds[0] === A)?.inLatestPlan).toBe(false);
+      const read = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect((read.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
+        B,
+        A,
+        C,
       ]);
     });
 
@@ -1478,13 +1581,15 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(JSON.stringify(response.body)).not.toContain("connection terminated");
     });
 
-    it("keeps the object when the insert committed but the client never heard so", async () => {
+    it("reports the document it stored when the insert committed but the client never heard so", async () => {
       const storage = fakeStorage();
-      const { body } = await checklistFor("A", storage);
+      const { eventId, body } = await checklistFor("A", storage);
       const itemId = body.items[0]?.id as string;
       // The row lands and the connection then drops before the result returns: the query rejects
-      // while the metadata exists. Deleting here is what would leave a document pointing at
-      // nothing.
+      // while the metadata exists. The lookup settles that it exists, and a stored document
+      // reported as a failure is a wrong answer the code already has the truth to avoid. The
+      // organizer retries, and each retry generates new ids and a new key, so every one of them
+      // writes another object and another row for the same upload.
       const failing = poolIntercepting((text, values) =>
         text.includes("INSERT INTO documents")
           ? pool
@@ -1495,14 +1600,26 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       const response = await uploadWith(failing, storage, itemId);
 
-      expect(response.status).toBe(500);
-      const { rows } = await pool.query<{ storage_key: string }>(
-        "SELECT storage_key FROM documents WHERE checklist_item_id = $1",
+      const { rows } = await pool.query<{ id: string; storage_key: string; filename: string }>(
+        "SELECT id, storage_key, filename FROM documents WHERE checklist_item_id = $1",
         [itemId],
       );
       expect(rows).toHaveLength(1);
+      // The same answer the success path gives, describing the row that is actually there.
+      expect(response.status).toBe(201);
+      expect(response.body.id).toBe(rows[0]?.id);
+      expect(response.body.filename).toBe(rows[0]?.filename);
+      expect(response.body.contentType).toBe("application/pdf");
+      expect(response.body.sizeBytes).toBe(PDF.length);
+      expect(typeof response.body.uploadedAt).toBe("string");
       // The row survived, so the bytes it names must too.
       expect(storage.objects.has(rows[0]?.storage_key as string)).toBe(true);
+      expect(storage.objects.size).toBe(1);
+      // And it is listed exactly once, not as a duplicate of a retry.
+      const listed = await request(appWith(storage)).get(`/api/events/${eventId}/checklist`);
+      expect(
+        (listed.body.items as ChecklistItemView[]).find((item) => item.id === itemId)?.documents,
+      ).toHaveLength(1);
     });
 
     it("keeps the object when nothing can say whether the row was written", async () => {

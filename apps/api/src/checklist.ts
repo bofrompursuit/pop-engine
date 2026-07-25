@@ -317,8 +317,17 @@ async function taskCreatedByRequirement(
 }
 
 /**
- * Every checklist row of the event, ordered by filing date within a plan. `checklistView` then
- * stably re-groups them by when each requirement first appeared, which is the display order.
+ * Every checklist row of the event, ordered by filing date. `checklistView` then stably re-groups
+ * them by when each requirement first appeared, which is the display order.
+ *
+ * Deliberately says nothing about the plan each row currently points at. Postgres fixes
+ * `current_timestamp` per transaction, so every task of one materialization shares a `created_at`
+ * and this order is what decides between them. The plan a row points at is not a property of the
+ * task at all, it is a property of the last regeneration that kept it. A rescope re-points the
+ * survivors at the new plan and leaves a dropped requirement on the plan that raised it, so
+ * ordering on `plan.generated_at` sorted the struck row ahead of the cohort it was created with
+ * and moved rows the organizer had been working. That is the derivation from plan timestamps
+ * migration 004 was added to remove; it survived here as the tiebreak (#92).
  */
 async function checklistRows(database: Queryable, eventId: string): Promise<ChecklistRow[]> {
   const { rows } = await database.query<ChecklistRow>(
@@ -331,7 +340,7 @@ async function checklistRows(database: Queryable, eventId: string): Promise<Chec
        JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
        JOIN permit_plans AS plan ON plan.id = item.plan_id
       WHERE plan.event_id = $1
-      ORDER BY plan.generated_at, ${PLAN_ITEM_ORDER.split(", ")
+      ORDER BY ${PLAN_ITEM_ORDER.split(", ")
         .map((key) => `item.${key}`)
         .join(", ")}`,
     [eventId],
@@ -633,8 +642,15 @@ async function removeOrphanedObject(storage: DocumentStorage, key: string): Prom
   }
 }
 
-/** Whether the metadata row exists after the insert reported failure. */
-type MetadataOutcome = "written" | "not_written" | "unknown";
+/**
+ * Whether the metadata row exists after the insert reported failure, and the row itself when it
+ * does. The lookup has already read it, and a caller that has to re-read it to answer would be
+ * making a second trip for something it was just handed.
+ */
+type MetadataOutcome =
+  | { state: "written"; row: DocumentRow }
+  | { state: "not_written" }
+  | { state: "unknown" };
 
 /**
  * A rejected query is not the same as a rejected statement. If Postgres commits the insert and
@@ -657,15 +673,17 @@ async function metadataOutcome(
   documentId: string,
   error: unknown,
 ): Promise<MetadataOutcome> {
-  if (error instanceof DatabaseError) return "not_written";
+  if (error instanceof DatabaseError) return { state: "not_written" };
   try {
-    const { rows } = await database.query<{ id: string }>(
-      "SELECT id FROM documents WHERE id = $1",
+    const { rows } = await database.query<DocumentRow>(
+      `SELECT id, checklist_item_id, filename, content_type, size_bytes, uploaded_at
+         FROM documents WHERE id = $1`,
       [documentId],
     );
-    return rows.length > 0 ? "written" : "not_written";
+    const row = rows[0];
+    return row === undefined ? { state: "not_written" } : { state: "written", row };
   } catch {
-    return "unknown";
+    return { state: "unknown" };
   }
 }
 
@@ -864,16 +882,23 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         res.status(201).json(documentView(created[0] as DocumentRow));
       } catch (error) {
         const outcome = await metadataOutcome(database, documentId, error);
-        if (outcome === "not_written") {
+        if (outcome.state === "written") {
+          // The row is there and the object is there; only the result was lost. Reporting a
+          // failure would tell the organizer a stored document did not store, and the retry that
+          // invites writes a second object and a second row: new id, new key, every attempt.
+          // The upload succeeded, so it is answered as one, from the row that proves it.
+          res.status(201).json(documentView(outcome.row));
+          return;
+        }
+        if (outcome.state === "not_written") {
           // Nothing references the object and nothing will, so a retry writes exactly one.
           await removeOrphanedObject(storage, storageKey);
         } else {
-          // Either the row is there and the client simply never heard so, or nobody can say.
-          // Deleting on that would leave a document the organizer can click and get nothing
-          // from, so the bytes stay and the key is logged instead.
+          // Nobody can say whether the row landed. Deleting on that would leave a document the
+          // organizer can click and get nothing from, so the bytes stay and the key is logged.
           console.error(
             `document ${documentId} may have been written for object ${storageKey}; the object ` +
-              `is kept and needs reconciling by hand (metadata outcome: ${outcome})`,
+              `is kept and needs reconciling by hand (metadata outcome: ${outcome.state})`,
             error,
           );
         }
