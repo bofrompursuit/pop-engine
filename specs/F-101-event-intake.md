@@ -1,6 +1,6 @@
 # F-101 · Event Intake Questionnaire
 
-**Status:** APPROVED (2026-07-24 by the product owner; see `docs/BASELINE.md`). Reviewer not yet recorded — governance §7 also asks for one.
+**Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 2 · **Depends on:** events schema (Phase 0), ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** everything (single source of truth)
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline.
 
@@ -24,19 +24,20 @@ The field list, enums, and asked-when conditions come from the ruleset's `intake
 ## Outputs
 
 - `POST /api/events` → created event row (revision_counter = 1); per-field validation errors.
+- `GET /api/events/:id` → the stored event row, so a saved event can be reloaded for viewing or editing (`ARCHITECTURE.md` API Surface assigns this route to F-101).
 - `PATCH /api/events/:id` → updated row; server bumps `revision_counter` and marks any existing plan stale.
 
 ## Acceptance Criteria
 
 1. All six fixture scenarios (`docs/test-scenario-answer-key.md` v3) are enterable exactly as specified; each produces an event row with the mapped values.
-2. Conditional fields appear only when triggered: SAPO classification only for obstructing public-way events; street size only for street events; plaza level only for plazas; dimensions only for selected structure types; audibility only for private-venue sound; license/assembly questions only when relevant. A typical event answers 10–15 questions.
-3. "I don't know" is accepted wherever the registry declares an `unknown` value (street_event_size, plaza_level, sound_audible_from_public_way, venue_license_covers_event_area, venue_has_assembly_approval, structure_over_10ft_tall, obstructs_public_way) and stored as `unknown`, never silently defaulted. Numeric fields on a selected structure/generator may be left blank (stored NULL → engine evaluates unknown).
+2. Conditional fields appear only when triggered, per the registry's `asked_when` conditions, which are authoritative: SAPO classification whenever `obstructs_public_way != no` (so `unknown` still asks it — a material unknown must not be hidden); street size only for street events; plaza level only for plazas; dimensions only for selected structure types; audibility only for private-venue sound; license/assembly questions only when relevant. Low-burden events answer 13–14 questions (Scenarios B, C); SAPO and max-complexity events answer more (A 17, D 16, F 18, E 24), because four registry fields carry no `asked_when` and are always asked.
+3. "I don't know" is accepted wherever the registry declares an `unknown` value (sapo_event_type, street_event_size, plaza_level, sound_audible_from_public_way, venue_license_covers_event_area, venue_has_assembly_approval, structure_over_10ft_tall, obstructs_public_way) and stored as `unknown`, never silently defaulted. The registry is authoritative for this list. Numeric fields on a selected structure/generator may be left blank (stored NULL → engine evaluates unknown).
 4. Contradiction checks block submission with a specific message, never silently resolve:
    - dimensions entered for an unselected structure type
    - sapo_event_type = block_party while selling_anything or alcohol is true → warn inline that this conflicts with block-party eligibility (submission allowed; the plan will show PROHIBITED_OR_INELIGIBLE)
    - generator specs without generator_present; license/assembly answers without their trigger conditions
    - event_date in the past; headcount ≤ 0
-5. Coverage warning (inline, non-blocking): alcohol + public location renders "Alcohol in public space is not covered by this ruleset version; requirements will not be evaluated. Confirm with the relevant agency." The plan additionally carries ADV-ALCOHOL-PUBLIC-001.
+5. Coverage warning (inline, non-blocking): alcohol + public location renders `ADV-ALCOHOL-PUBLIC-001`'s published `advisory_text` verbatim, alongside its `verification.status`. The rule is the source of the wording; this spec does not paraphrase it (authority order: primary source → published rule → fixture → engine → UI). The plan additionally carries the same advisory.
 6. Intake completes in under 2 minutes for a typical event (rehearsal-timed; PRD metric).
 7. Works on mobile and desktop viewports.
 8. Editing any field after a plan exists bumps `revision_counter` server-side, marks the plan stale in the UI, and offers one-click regeneration.

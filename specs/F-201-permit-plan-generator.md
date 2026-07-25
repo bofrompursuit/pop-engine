@@ -1,6 +1,6 @@
 # F-201 · Permit Plan Generator
 
-**Status:** APPROVED (2026-07-24 by the product owner; see `docs/BASELINE.md`). Reviewer not yet recorded — governance §7 also asks for one.
+**Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline.
 
@@ -24,7 +24,7 @@ As an independent organizer, I get the complete list of requirements my specific
 
 1. Every finding references its rule ID and the intake answers that triggered it; dedupe-merged findings retain every contributing rule.
 2. Every finding renders source citation + verification status. RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders **both readings with both sources** (never silently resolved); COVERAGE_GAP advisories assert nothing.
-3. Same event revision + same ruleset version + same `today` + same calendar → byte-identical plan (determinism metric).
+3. Same event revision + same ruleset version + same `today` + same calendar → byte-identical **evaluation result** (verdict, finding set, and every computed date and status). Persistence identity is excluded: each generation is a new immutable `permit_plans` row, so `id` and `generated_at` differ by design (`ARCHITECTURE.md` permit_plans). Determinism is asserted on the engine output and the plan snapshot, not on the row's identity columns.
 4. The near-empty result is first-class: "no new city event requirement identified from your answers" plus triggered advisories and named confirmations (Scenario B). Over-prescribing and overclaiming emptiness are both failure modes.
 5. Rule-evaluation failure returns an explicit error; a partial plan is never presented as complete; a failure never yields a "no requirement" result.
 6. Boot validation: the api refuses to start if the ruleset fails schema check (33 rules + 4 advisories, all trigger fields declared).
