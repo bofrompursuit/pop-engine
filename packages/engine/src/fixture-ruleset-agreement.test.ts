@@ -19,7 +19,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { evaluate, parseEngineRuleset } from "./index";
+import { evaluate, parseEngineRuleset, triggerFields } from "./index";
+import { UNCONSUMED_INTAKE_FIELDS } from "./ruleset";
 import type { EventIntake, HolidayCalendar } from "./types";
 import {
   FIXTURE_TODAY,
@@ -63,9 +64,86 @@ function expectedRuleIds(scenario: string): string[] {
   return [...new Set(findings.match(RULE_ID) ?? [])];
 }
 
-type Reached = { fired: string[]; conditional: string[] };
+/**
+ * The intake the answer key documents for a scenario, and the prose it states that this cannot
+ * read.
+ *
+ * The key's Inputs line is written for people: `field=value` pairs separated by ·, with emphasis,
+ * parenthetical commentary, and free-form phrases like "no structures". The pairs are read; the
+ * prose is returned rather than guessed at, so what this comparison does not cover is visible
+ * instead of implied. A parenthetical carrying an `=` is unwrapped rather than dropped, because
+ * three scenarios state real answers inside brackets.
+ */
+function documentedInputs(scenario: string): {
+  pairs: Map<string, string>;
+  prose: string[];
+} {
+  const section = answerKey
+    .split(/^## Scenario /m)
+    .find((candidate) => candidate.startsWith(`${scenario} `));
+  if (section === undefined) throw new Error(`answer key has no Scenario ${scenario} section`);
+  const line = section.split("\n").find((candidate) => candidate.startsWith("**Inputs:**"));
+  if (line === undefined) throw new Error(`Scenario ${scenario} states no inputs`);
 
-function reachedIn(scenario: string): Reached {
+  const body = line
+    .replace("**Inputs:**", "")
+    .replace(/\*\*/g, "")
+    .replace(/\(([^)]*)\)/g, (_whole, inner: string) => (inner.includes("=") ? `· ${inner}` : ""));
+
+  const pairs = new Map<string, string>();
+  const prose: string[] = [];
+  for (const segment of body.split(/[·,;]/)) {
+    const token = segment.trim();
+    if (token === "") continue;
+    const pair = /^([a-z0-9_]+)\s*=\s*(.+)$/.exec(token);
+    if (pair?.[1] !== undefined && pair[2] !== undefined) pairs.set(pair[1], pair[2].trim());
+    else prose.push(token);
+  }
+  return { pairs, prose };
+}
+
+/** The key writes one field in shorthand; every other name is the registry's own. */
+const DOCUMENTED_FIELD_ALIASES: Readonly<Record<string, string>> = {
+  open_to_public: "event_open_to_public",
+};
+
+/** Read the documented text as the type the fixture holds, so a comparison is like for like. */
+function asFixtureType(documented: string, fixtureValue: unknown): unknown {
+  if (typeof fixtureValue === "boolean") return documented === "yes";
+  if (typeof fixtureValue === "number") return Number(documented);
+  if (Array.isArray(fixtureValue)) {
+    return documented
+      .replace(/^\[|\]$/g, "")
+      .split("/")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "");
+  }
+  return documented;
+}
+
+/**
+ * The prose each scenario states that the pair reader cannot compare. Recorded so the gap is
+ * explicit: if the key rewords one of these, or adds a new statement, this fails and someone
+ * decides whether it can now be compared rather than it quietly going unchecked.
+ */
+const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
+  A: ["brooklyn", "no structures", "no flame", "no generator", "no alcohol"],
+  B: ["manhattan", "private_venue", "no structures/flame/generator/alcohol"],
+  C: ["brooklyn", "park", "no food", "nothing else"],
+  D: ["queens", "street", "no public food service", "neighbors' own grills", "no alcohol"],
+  E: ["manhattan", "plaza", "battery none", "no alcohol"],
+  F: ["manhattan", "private_venue", "food catered", "nothing sold"],
+};
+
+/**
+ * The rules a scenario reaches: fired or conditional, in one list.
+ *
+ * Deliberately not two lists. Every check here asks the same question — does this scenario reach
+ * this rule — and twice now a call site answered it with `fired` alone: once in the metadata
+ * check, once in the answer-key comparison. A conditional finding is a line the organizer sees, so
+ * a rule reached through a material unknown is reached. One helper owns the notion.
+ */
+function reachedIn(scenario: string): string[] {
   const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
   if (fixture === undefined) throw new Error(`no intake fixture for Scenario ${scenario}`);
   const plan = evaluate(
@@ -74,12 +152,9 @@ function reachedIn(scenario: string): Reached {
     FIXTURE_TODAY,
     calendar,
   );
-  return {
-    fired: plan.verdictDetail.trace.filter((entry) => entry.result === "true").map((e) => e.ruleId),
-    conditional: plan.verdictDetail.trace
-      .filter((entry) => entry.result === "unknown")
-      .map((entry) => entry.ruleId),
-  };
+  return plan.verdictDetail.trace
+    .filter((entry) => entry.result === "true" || entry.result === "unknown")
+    .map((entry) => entry.ruleId);
 }
 
 /**
@@ -89,13 +164,13 @@ function reachedIn(scenario: string): Reached {
 const KNOWN_DISAGREEMENTS: readonly {
   scenarios: readonly string[];
   ruleId: string;
-  kind: "fires-but-key-omits" | "claims-scenario-it-cannot-reach" | "reaches-scenario-it-omits";
+  kind: "reaches-but-key-omits" | "claims-scenario-it-cannot-reach" | "reaches-scenario-it-omits";
   issue: string;
 }[] = [
   {
     scenarios: ["F"],
     ruleId: "ADV-VENUE-OCCUPANCY-001",
-    kind: "fires-but-key-omits",
+    kind: "reaches-but-key-omits",
     issue:
       "#89 item 5: the advisory triggers on location_type = private_venue alone, so it fires in F, " +
       "and it names F in its own exercised_by_scenarios — but F's expected findings omit it. " +
@@ -125,6 +200,16 @@ const KNOWN_DISAGREEMENTS: readonly {
     issue:
       "#89: the rule fires in B and B's expected findings list it, but its exercised_by_scenarios " +
       "names only A and E.",
+  },
+  {
+    scenarios: ["A", "B", "C", "D", "F"],
+    ruleId: "FDNY-GENERATOR-001",
+    kind: "reaches-but-key-omits",
+    issue:
+      "#88: the same unanswered battery_system_kwh as the metadata entry below, seen from the " +
+      "other side. Because the rule is conditional in these five scenarios, each plan carries an " +
+      "FDNY line their expected findings do not list. One root cause, two checks — recorded twice " +
+      "so resolving the fixture question clears both rather than leaving one silently exempt.",
   },
   {
     scenarios: ["E"],
@@ -173,6 +258,42 @@ export function metadataOmissions(
 const scenarios = SCENARIO_INTAKE_FIXTURES.map((fixture) => fixture.scenario);
 
 describe("the fixture suite and the published ruleset agree", () => {
+  it.each(scenarios)("Scenario %s evaluates the intake the answer key documents", (scenario) => {
+    // Without this the guard checks rule ids against a fixture it never verifies: change a
+    // scenario's inputs in the key and every suite here stays green while evaluating the old one.
+    const { pairs } = documentedInputs(scenario);
+    const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
+    const submission = fixtureSubmission(fixture as (typeof SCENARIO_INTAKE_FIXTURES)[number]);
+    const declared = new Set(ruleset.intakeFields.map((field) => field.field));
+
+    for (const [documentedName, documentedValue] of pairs) {
+      const field = DOCUMENTED_FIELD_ALIASES[documentedName] ?? documentedName;
+      // A name the registry does not declare means the key uses a shorthand nobody mapped; that
+      // has to be noticed rather than skipped.
+      expect(declared, `Scenario ${scenario} documents "${documentedName}"`).toContain(field);
+      expect(
+        submission[field],
+        `Scenario ${scenario}: the key documents ${field}=${documentedValue}`,
+      ).toEqual(asFixtureType(documentedValue, submission[field]));
+    }
+  });
+
+  it.each(scenarios)("Scenario %s states nothing this comparison silently skips", (scenario) => {
+    const { pairs, prose } = documentedInputs(scenario);
+    // Guards the reader itself: a reformat that stopped matching would leave the comparison above
+    // asserting nothing at all.
+    expect(pairs.size, `Scenario ${scenario} documented pairs`).toBeGreaterThanOrEqual(5);
+    expect(prose, `Scenario ${scenario} prose the reader cannot compare`).toEqual(
+      UNCOMPARED_PROSE[scenario],
+    );
+  });
+
+  it("evaluates on the clock the answer key pins", () => {
+    const clock = /`today = (\d{4}-\d{2}-\d{2})`/.exec(answerKey)?.[1];
+    expect(clock, "the key states its fixture clock").toBeDefined();
+    expect(FIXTURE_TODAY).toBe(clock);
+  });
+
   it("reads a rule id out of every scenario's expected findings", () => {
     // Guards the scrape itself: a reformat of the key that stopped matching would otherwise turn
     // this whole file into a no-op that still reports green.
@@ -187,30 +308,30 @@ describe("the fixture suite and the published ruleset agree", () => {
     expect(expectedRuleIds("D")).not.toContain("SAPO-BLOCK-PARTY-ELIG-001");
   });
 
-  it.each(scenarios)("Scenario %s fires nothing the answer key omits", (scenario) => {
+  it.each(scenarios)("Scenario %s reaches nothing the answer key omits", (scenario) => {
+    // Reached, not fired. A conditional finding is a line the organizer sees, so a rule reached
+    // through a material unknown and absent from the key is a false addition just as a fired one
+    // is — and checking only fired meant deleting a conditional line from the key went unnoticed.
     const expected = expectedRuleIds(scenario);
     const unlisted = reachedIn(scenario)
-      .fired.filter((ruleId) => !expected.includes(ruleId))
-      .filter((ruleId) => !isKnown(scenario, ruleId, "fires-but-key-omits"));
+      .filter((ruleId) => !expected.includes(ruleId))
+      .filter((ruleId) => !isKnown(scenario, ruleId, "reaches-but-key-omits"));
     expect(
       unlisted,
-      `rules that fire in ${scenario} but are absent from its expected findings`,
+      `rules ${scenario} reaches, fired or conditional, that its expected findings omit`,
     ).toEqual([]);
   });
 
   it.each(scenarios)("Scenario %s reaches everything the answer key lists", (scenario) => {
     // A listed rule may be conditional rather than firing — the key lists the DOB structure rules
     // in E precisely because they are unresolved — but it may not be inert.
-    const { fired, conditional } = reachedIn(scenario);
-    const inert = expectedRuleIds(scenario).filter(
-      (ruleId) => !fired.includes(ruleId) && !conditional.includes(ruleId),
-    );
+    const reached = reachedIn(scenario);
+    const inert = expectedRuleIds(scenario).filter((ruleId) => !reached.includes(ruleId));
     expect(inert, `rules the key lists for ${scenario} that no intake answer reaches`).toEqual([]);
   });
 
   it.each(scenarios)("Scenario %s agrees with exercised_by_scenarios", (scenario) => {
-    const { fired, conditional } = reachedIn(scenario);
-    const reached = new Set([...fired, ...conditional]);
+    const reached = reachedIn(scenario);
     const claims = new Map(
       [...publishedRuleset.rules, ...publishedRuleset.advisories].map((rule) => [
         rule.id,
@@ -219,12 +340,12 @@ describe("the fixture suite and the published ruleset agree", () => {
     );
 
     const claimsButCannotReach = [...claims]
-      .filter(([ruleId, listed]) => listed.includes(scenario) && !reached.has(ruleId))
+      .filter(([ruleId, listed]) => listed.includes(scenario) && !reached.includes(ruleId))
       .map(([ruleId]) => ruleId)
       .filter((ruleId) => !isKnown(scenario, ruleId, "claims-scenario-it-cannot-reach"));
     expect(claimsButCannotReach, `rules claiming ${scenario} that it never reaches`).toEqual([]);
 
-    const reachesButOmits = metadataOmissions(scenario, [...reached], claims).filter(
+    const reachesButOmits = metadataOmissions(scenario, reached, claims).filter(
       (ruleId) => !isKnown(scenario, ruleId, "reaches-scenario-it-omits"),
     );
     expect(
@@ -258,25 +379,57 @@ describe("the fixture suite and the published ruleset agree", () => {
     // list becomes a place where a real finding can hide behind an issue number.
     for (const entry of KNOWN_DISAGREEMENTS) {
       for (const scenario of entry.scenarios) {
-        const { fired, conditional } = reachedIn(scenario);
-        const reached = new Set([...fired, ...conditional]);
+        const reached = reachedIn(scenario);
         const claims =
           [...publishedRuleset.rules, ...publishedRuleset.advisories].find(
             (rule) => rule.id === entry.ruleId,
           )?.exercised_by_scenarios ?? [];
 
         const stillDisagrees =
-          entry.kind === "fires-but-key-omits"
-            ? fired.includes(entry.ruleId) && !expectedRuleIds(scenario).includes(entry.ruleId)
+          entry.kind === "reaches-but-key-omits"
+            ? reached.includes(entry.ruleId) && !expectedRuleIds(scenario).includes(entry.ruleId)
             : entry.kind === "claims-scenario-it-cannot-reach"
-              ? claims.includes(scenario) && !reached.has(entry.ruleId)
-              : reached.has(entry.ruleId) && !claims.includes(scenario);
+              ? claims.includes(scenario) && !reached.includes(entry.ruleId)
+              : reached.includes(entry.ruleId) && !claims.includes(scenario);
 
         expect(
           stillDisagrees,
           `${entry.ruleId} / Scenario ${scenario} no longer disagrees — remove its allowlist entry`,
         ).toBe(true);
       }
+    }
+  });
+
+  it("keeps the unconsumed-field exemptions current with the published registry", () => {
+    // The loader applies this list to any ruleset, so whether an entry is still needed can only be
+    // judged against the artifact it was written about. Two ways to go stale: the field gained a
+    // consumer, or it left the registry — the second matters because a dead entry would silently
+    // cover the name if it were ever reintroduced without one.
+    const declared = new Set(ruleset.intakeFields.map((field) => field.field));
+    for (const [field, reason] of Object.entries(UNCONSUMED_INTAKE_FIELDS)) {
+      expect(
+        declared,
+        `${field} is exempted but the published registry no longer declares it`,
+      ).toContain(field);
+      expect(reason, `${field} needs a reason, not just an exemption`).not.toBe("");
+    }
+
+    // And the exemptions must still be the only unconsumed fields: anything newly inert fails the
+    // load, but a field that quietly gained a consumer would leave a dead entry behind.
+    const consumed = new Set([
+      ...ruleset.rules.flatMap((rule) => triggerFields(rule.trigger)),
+      ...ruleset.intakeFields.flatMap((field) =>
+        (field.askedWhenClauses ?? []).map((clause) => clause.field),
+      ),
+      "event_date",
+      ...ruleset.rules.flatMap((rule) =>
+        rule.levelBinding === null
+          ? []
+          : [rule.levelBinding.levelField, rule.levelBinding.multiBlockField],
+      ),
+    ]);
+    for (const field of Object.keys(UNCONSUMED_INTAKE_FIELDS)) {
+      expect(consumed, `${field} is now consumed; remove its exemption`).not.toContain(field);
     }
   });
 

@@ -613,7 +613,7 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
  * rule acts on, recorded rather than deleted: removing a published intake field is a rules-owner
  * change, and one of these is an open product question. A NEW unconsumed field fails the load.
  */
-const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
+export const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
   borough: "Display and future jurisdiction routing (F-207). No NYC rule varies by borough today.",
   food_affinity_private_exception_claimed:
     "Collected for the Health Code Art. 88 private-function exemption, which DOHMH-EXEMPTION-001 " +
@@ -624,45 +624,23 @@ const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The intake fields a rule's own published deadline reads.
+ * The intake fields the published deadlines read.
  *
- * Derived from the deadline structure rather than from a named binding. A `published_minimum_by_level`
- * deadline declares its own `levels` map, so the field it keys on is the one whose declared values
- * cover every published level, and the multi-block variant is only needed when some level publishes
- * `multi_block_days`. Reading it this way keeps the guard resting on published data: a ruleset that
- * declares a level-shaped field while publishing no by-level deadline now fails the orphan check
- * instead of being waved through, and nothing here depends on an unapproved constant.
+ * Reads the binding rather than inferring one. Since nyc.v2.4 a by-level deadline names the fields
+ * it keys on, and for the superseded versions that did not the loader supplies them from its closed
+ * compatibility record; either way `parseRule` has already resolved and validated the pair before
+ * this guard runs. Inferring it a second time here would be a second answer that can drift from the
+ * one the evaluator uses, which is how a loader comes to accept an artifact the evaluator cannot
+ * run.
  */
-function deadlineConsumedFields(
-  intakeFields: readonly IntakeFieldDefinition[],
-  published: readonly EngineRule[],
-): Set<string> {
+function deadlineConsumedFields(published: readonly EngineRule[]): Set<string> {
   // Every backward date is counted from the event date, whatever the deadline type.
   const consumed = new Set<string>([EVENT_DATE_FIELD]);
 
   for (const rule of published) {
-    if (rule.deadline?.type !== "published_minimum_by_level") continue;
-    const levels = Object.values(rule.deadline.levels);
-    const levelKeys = Object.keys(rule.deadline.levels);
-
-    const levelField = intakeFields.find(
-      (field) => field.values !== null && levelKeys.every((key) => field.values?.includes(key)),
-    );
-    if (levelField === undefined) continue;
-    consumed.add(levelField.field);
-
-    // A level that publishes a distinct multi-block window needs a flag saying whether the event
-    // spans blocks. The registry asks that flag alongside the level, under the same scoping
-    // condition, which is what identifies it without naming it here.
-    if (!levels.some((level) => level.multiBlockDays !== null)) continue;
-    const multiBlockFlag = intakeFields.find(
-      (field) =>
-        field.type === "boolean" &&
-        field.field !== levelField.field &&
-        field.askedWhen !== null &&
-        field.askedWhen === levelField.askedWhen,
-    );
-    if (multiBlockFlag !== undefined) consumed.add(multiBlockFlag.field);
+    if (rule.levelBinding === null) continue;
+    consumed.add(rule.levelBinding.levelField);
+    consumed.add(rule.levelBinding.multiBlockField);
   }
 
   return consumed;
@@ -674,7 +652,7 @@ function rejectUnconsumedFields(
 ): void {
   const consumed = new Set<string>([
     ...published.flatMap((rule) => triggerFields(rule.trigger)),
-    ...deadlineConsumedFields(intakeFields, published),
+    ...deadlineConsumedFields(published),
     ...intakeFields.flatMap((field) =>
       (field.askedWhenClauses ?? []).map((clause) => clause.field),
     ),
