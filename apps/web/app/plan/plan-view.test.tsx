@@ -21,7 +21,7 @@ const publishedRuleset: {
     id: string;
     output: Record<string, string>;
     source?: { citation: string; urls: string[] };
-    verification: { status: string };
+    verification: { status: string; qualification?: string };
   }[];
 } = JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.3.json"), "utf8"));
 
@@ -500,7 +500,15 @@ describe("dated lines that publish no deadline prose", () => {
     expect(line.getByText(/published deadline missed/)).toBeDefined();
   });
 
-  it("renders the dependency window a gated line cannot be filed before", async () => {
+  it("dates when a gated line can realistically be pursued, without barring an earlier filing", async () => {
+    // NYPD-SOUND-PARKS-DEP-001 carries verification.qualification "sequencing detail
+    // RESEARCH_REQUIRED", and the engine dates this from the upstream processing range precisely
+    // because a strict issued-before-filed order is not confirmed. "Not before" would assert the
+    // sequencing the verification owner declined to assert, one layer above the engine that
+    // deliberately stopped short of it.
+    const dependency = publishedRule("NYPD-SOUND-PARKS-DEP-001");
+    expect(dependency.verification.qualification).toBe("sequencing detail RESEARCH_REQUIRED");
+
     const line = await lineFor(
       finding({
         ruleIds: ["NYPD-SOUND-PARKS-DEP-001"],
@@ -508,11 +516,23 @@ describe("dated lines that publish no deadline prose", () => {
         latestApplyDate: "2026-09-11",
         applyAfterDate: "2026-08-26",
         deadlineStatus: "on_track",
+        noteText: dependency.output.note_text ?? null,
       }),
     );
 
     expect(line.getByText(/apply by 2026-09-11/)).toBeDefined();
-    expect(line.getByText(/not before 2026-08-26/)).toBeDefined();
+    expect(line.getByText(/earliest realistic filing 2026-08-26/)).toBeDefined();
+
+    // No wording anywhere on the line may read as a prohibition on filing earlier.
+    const rendered = line.getByRole("heading").closest("article")?.textContent ?? "";
+    expect(rendered).not.toMatch(/not before/i);
+    expect(rendered).not.toMatch(/cannot be filed/i);
+    expect(rendered).not.toMatch(/must not/i);
+
+    // The published caveat is on the line in the words the verification owner approved, not a
+    // paraphrase, so the uncertainty travels with the date.
+    expect(line.getByText(String(dependency.output.note_text))).toBeDefined();
+    expect(String(dependency.output.note_text)).toContain("not confirmed by located primary text");
   });
 
   it("still renders the published prose when a rule does carry it", async () => {

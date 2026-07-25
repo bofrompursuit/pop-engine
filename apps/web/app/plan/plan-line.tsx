@@ -120,9 +120,17 @@ export function PlanLine({ finding }: { finding: Finding }) {
               {finding.deadlineDisplay !== null && " · "}apply by {finding.latestApplyDate}
             </span>
           )}
-          {/* A dependency-gated line cannot be filed before its upstream decision lands. */}
+          {/* When pursuit can realistically begin, NOT a bar on filing earlier. The engine dates
+              this from the upstream's published processing range and says in
+              findings.ts why it stops short of the stronger claim: the strictness of the
+              ordering is RESEARCH_REQUIRED on the dependency rule, whose own note_text — rendered
+              on this line above — states that a strict issued-before-filed sequence is not
+              confirmed by located primary text. "Not before" would assert the sequencing the
+              verification owner declined to assert. */}
           {finding.applyAfterDate !== null && (
-            <span className="line__deadline-after"> · not before {finding.applyAfterDate}</span>
+            <span className="line__deadline-after">
+              {" · "}earliest realistic filing {finding.applyAfterDate}
+            </span>
           )}
           {finding.deadlineStatus !== "not_applicable" && (
             <span className="line__deadline-status">
