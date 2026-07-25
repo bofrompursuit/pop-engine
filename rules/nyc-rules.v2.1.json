@@ -191,7 +191,7 @@
     {
       "id": "DOHMH-ORGANIZER-NOTIFY-001", "kind": "notification",
       "trigger": { "all": [ { "field": "food_present", "op": "bool", "value": true }, { "field": "event_open_to_public", "op": "eq", "value": "yes" }, { "field": "food_vendor_count", "op": "gte", "value": 1 } ] },
-      "output": { "requirement_name": "Organizer notification to DOHMH", "agency": "DOHMH", "deadline": { "type": "published_minimum", "calendar_days": 30, "display": "at least 30 days before the event" }, "fee": null, "notes": ["Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.", "On privately owned property: also provide a signed contract with the property owner."] },
+      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Organizer notification to DOHMH", "agency": "DOHMH", "deadline": { "type": "published_minimum", "calendar_days": 30, "display": "at least 30 days before the event" }, "fee": null, "notes": ["Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.", "On privately owned property: also provide a signed contract with the property owner."] },
       "source": { "citation": "DOHMH Event Sponsor Guidelines PDF + DOHMH temporary-events page", "urls": ["https://www.nyc.gov/assets/doh/downloads/pdf/rii/temp-vendors.pdf", "https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page"] },
       "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #9" }, "exercised_by_scenarios": ["A", "E"]
     },
