@@ -74,29 +74,21 @@ describe.runIf(databaseUrl.length > 0)("boot refuses a malformed ruleset before 
     await admin.end();
   }, 30_000);
 
-  it(
-    "fails on the artifact and never reaches the read model",
-    async () => {
-      const result = await runBoot(await cyclicRulesetFile());
+  it("fails on the artifact and never reaches the read model", async () => {
+    const result = await runBoot(await cyclicRulesetFile());
 
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toMatch(/scoping is cyclic/);
-      // The probe database has no permit_rules. Had the sync run first, that is the error we
-      // would see instead, so its absence is the proof that nothing was written.
-      expect(result.stderr).not.toMatch(/permit_rules/);
-    },
-    90_000,
-  );
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/scoping is cyclic/);
+    // The probe database has no permit_rules. Had the sync run first, that is the error we
+    // would see instead, so its absence is the proof that nothing was written.
+    expect(result.stderr).not.toMatch(/permit_rules/);
+  }, 90_000);
 
-  it(
-    "does reach the read model once the artifact is valid",
-    async () => {
-      const result = await runBoot(rulesFilePath());
+  it("does reach the read model once the artifact is valid", async () => {
+    const result = await runBoot(rulesFilePath());
 
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toMatch(/permit_rules/);
-      expect(result.stderr).not.toMatch(/scoping is cyclic/);
-    },
-    90_000,
-  );
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/permit_rules/);
+    expect(result.stderr).not.toMatch(/scoping is cyclic/);
+  }, 90_000);
 });

@@ -5,7 +5,7 @@
 
 | Concern | Artifact | Status | Needs |
 |---|---|---|---|
-| Product requirements | `docs/PRD.md` | APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.4 on 2026-07-25 with no regulatory change | — |
+| Product requirements | `docs/PRD.md` | APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change | — |
 | Feature registry + phasing | `docs/ROADMAP.md` | APPROVED (2026-07-22) | — |
 | Delivery lanes, gates, demo | `docs/DESIGN.md` | APPROVED (2026-07-22) | — |
 | Technical architecture (Phase 0–1.5) | `docs/ARCHITECTURE.md` | APPROVED (2026-07-22) | events-schema migration still needs all-4-devs sign-off (Phase 0 / OPEN-QUESTIONS B-3); F-301 promotion columns in migration 005 (#100 / #104) await that same ack |
@@ -13,12 +13,13 @@
 | Governance | `docs/DOCUMENTATION-GOVERNANCE.md` | APPROVED (adopted 2026-07-22; authority-by-concern + conflict protocol in force) | — |
 | Agent/contributor rules | `/AGENTS.md` + `/CONTRIBUTING.md` | APPROVED (2026-07-22) | — |
 | Deployment providers (Phase 0) | Provider baseline below + `DEPLOY.md` | APPROVED (2026-07-23, issue #1) | provisioning is a runbook; secrets set per environment |
-| **Current NYC ruleset** | `rules/nyc-rules.v2.4.json` (nyc.v2.4) | **APPROVED** — v2.1 team-ratified 2026-07-22 (OPEN-QUESTIONS B-2, all four devs); v2.2, v2.3 and v2.4 authorized by the product owner 2026-07-25, each for the semantic change named in its own `provenance` | per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build (verification issue; OPEN-QUESTIONS §2) |
+| **Current NYC ruleset** | `rules/nyc-rules.v2.5.json` (nyc.v2.5) | **APPROVED** — v2.1 team-ratified 2026-07-22 (OPEN-QUESTIONS B-2, all four devs); v2.2, v2.3, v2.4 and v2.5 authorized by the product owner 2026-07-25, each for the semantic change named in its own `provenance` | per-fact promotion SOURCE_CONFIRMED → VERIFIED continues during the build (verification issue; OPEN-QUESTIONS §2) |
 | **Scenario fixtures** | `docs/test-scenario-answer-key.md` (v3) | **APPROVED** (2026-07-22, with the ruleset) | now the green-gate acceptance suite |
 | Evidence record | `docs/VERIFICATION-SOURCES.md` | ACTIVE RECORD (Rounds 1–2, 2026-07-22) | grows with each verification pass |
 | Open questions | `docs/OPEN-QUESTIONS.md` | ACTIVE REGISTER | — |
 | Phase 1 specs | `specs/F-*.md` | APPROVED (2026-07-22; F-101/F-102/F-201 approved 2026-07-24, re-read before building) | specs carry no per-file status header, so this row is their only approval record (governance §7) |
 | Superseded/draft material | `rules/proposals/*`, `docs/proposals/*` | ARCHIVED / PROPOSED drafts | never build from these |
+| Ruleset v2.4 lineage | git commit `98dc5f8` | SUPERSEDED (2026-07-25 by nyc.v2.5) | historical only; v2.5 gates `battery_system_kwh` behind a new `battery_present` question and accepts an optional `verification.last_verified_date`. Unlike v2.2–v2.4 it changes evaluated output: FDNY-GENERATOR-001 no longer reports MAY_BE_REQUIRED in the five scenarios with no generator. No expected finding in the answer key moves — the key never listed it there |
 | Ruleset v2.3 lineage | git commit `5f32040` | SUPERSEDED (2026-07-25 by nyc.v2.4) | historical only; v2.4 publishes two facts the engine previously held in code — the intake fields SAPO-PLAZA-001's by-level deadline keys on, and DOB-TENT-001's exactly-400-sq-ft conditionality — and changes no regulatory content |
 | Ruleset v2.2 lineage | git commit `3a1b7ba` | SUPERSEDED (2026-07-25 by nyc.v2.3) | historical only; v2.3 makes DOB-ASSEMBLY-001's published "earlier than 10 days" bound machine-readable and changes no regulatory content |
 | Ruleset v2.1 lineage | git commit `b0214b4` | SUPERSEDED (2026-07-25 by nyc.v2.2) | historical only; v2.2 changes one rule's disposition (DOHMH-ORGANIZER-NOTIFY-001) and no regulatory content |

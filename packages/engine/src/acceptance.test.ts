@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { countBusinessDays, differenceInCalendarDays, evaluate, parseEngineRuleset } from "./index";
+import { SCENARIO_INTAKE_FIXTURES, fixtureSubmission } from "./intake/scenario-intake-fixtures";
 import type { EventIntake, Finding, PermitPlan, PublishedHolidayCalendar } from "./types";
 
 const TODAY = "2026-07-22";
@@ -22,7 +23,7 @@ const TODAY = "2026-07-22";
 const ruleset = parseEngineRuleset(
   JSON.parse(
     readFileSync(
-      fileURLToPath(new URL("../../../rules/nyc-rules.v2.4.json", import.meta.url)),
+      fileURLToPath(new URL("../../../rules/nyc-rules.v2.5.json", import.meta.url)),
       "utf8",
     ),
   ),
@@ -73,9 +74,12 @@ const baseIntake: EventIntake = {
   open_flame_or_cooking: ["none"],
   generator_present: false,
   // The answer key describes no battery system in any scenario ("battery none" in E, no power
-  // equipment in the others); 0 is that answer. Left unanswered it would be a material unknown,
-  // which is the engine's correct behavior for a question nobody answered.
-  battery_system_kwh: 0,
+  // equipment in the others). Since nyc.v2.5 that is said by answering the question the registry
+  // actually asks: `battery_present` is collected of every event, and `battery_system_kwh` is only
+  // asked when it is true. Before, this file answered a kWh of 0 while the shared intake fixtures
+  // left it unanswered, so the same six scenarios disagreed about the battery between two fixture
+  // sets and only one of them saw FDNY-GENERATOR-001 (recorded against #88 on #91).
+  battery_present: false,
   alcohol: false,
 };
 
@@ -779,11 +783,46 @@ describe("Boundary and unit fixtures (AC 8)", () => {
     ]);
   });
 
+  it("reports the FDNY permit only where the answer key lists it", () => {
+    // The shared intake fixtures, not this file's own base intake — that is where the defect lived.
+    // `battery_system_kwh` had no asked_when and is nullable, so it was in scope and unanswered for
+    // every event, the trigger's battery disjunct evaluated unknown, and the whole any(...) with
+    // it. Five scenarios with no generator at all were told a fire-department permit may be
+    // required; the answer key lists FDNY-GENERATOR-001 in Scenario E only. Over-prescribing is a
+    // named failure mode (F-201 AC 4).
+    const disposition = (scenario: string) => {
+      const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
+      if (fixture === undefined) throw new Error(`no fixture for Scenario ${scenario}`);
+      return evaluate(
+        fixtureSubmission(fixture) as EventIntake,
+        ruleset,
+        TODAY,
+        calendar,
+      ).findings.find((finding) => finding.ruleIds.includes("FDNY-GENERATOR-001"))?.disposition;
+    };
+
+    for (const scenario of ["A", "B", "C", "D", "F"]) {
+      expect(
+        disposition(scenario),
+        `Scenario ${scenario} has no generator and no battery`,
+      ).toBeUndefined();
+    }
+    // E keeps it on gasoline alone: 5 gal > 2.5, with no battery either. The scoping fix must not
+    // silence the rule where it genuinely fires.
+    expect(disposition("E")).toBe("required");
+  });
+
   it("battery 20 kWh stays clear and 20.1 kWh triggers", () => {
-    expect(ruleIdsOf(plan({ ...neutralIntake, battery_system_kwh: 20 }))).toEqual([]);
-    expect(ruleIdsOf(plan({ ...neutralIntake, battery_system_kwh: 20.1 }))).toEqual([
+    const withBattery = { ...neutralIntake, battery_present: true };
+    expect(ruleIdsOf(plan({ ...withBattery, battery_system_kwh: 20 }))).toEqual([]);
+    expect(ruleIdsOf(plan({ ...withBattery, battery_system_kwh: 20.1 }))).toEqual([
       "FDNY-GENERATOR-001",
     ]);
+    // The third case the boundary needs and could not be written before nyc.v2.5: no battery at
+    // all, as distinct from a battery of zero. It was previously indistinguishable from an
+    // unanswered question, which is what reported the permit as MAY_BE_REQUIRED to every organizer
+    // who had no generator either.
+    expect(ruleIdsOf(plan({ ...neutralIntake, battery_present: false }))).toEqual([]);
   });
 
   it("street_event_size unknown renders CONDITIONAL listing the published deadline ladder", () => {

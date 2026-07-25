@@ -1,8 +1,8 @@
-# PopEngine — Scenario Fixtures v3 (derived from ruleset nyc.v2.4)
+# PopEngine — Scenario Fixtures v3 (derived from ruleset nyc.v2.5)
 
-**Status:** APPROVED — fixtures v3 team-ratified 2026-07-22 with ruleset v2.1 (OPEN-QUESTIONS B-2, all four devs); they remain the green-gate suite against nyc.v2.4, whose v2.2, v2.3 and v2.4 changes were product-owner authorized 2026-07-25 and moved no expected output. See `docs/BASELINE.md`. Now the green-gate acceptance suite. Individual regulatory facts still promote SOURCE_CONFIRMED → VERIFIED during the build via the ruleset's `verification` blocks (OPEN-QUESTIONS §2); that promotion is the verification owner's, per CONTRIBUTING Golden Rule 2.
+**Status:** APPROVED — fixtures v3 team-ratified 2026-07-22 with ruleset v2.1 (OPEN-QUESTIONS B-2, all four devs); they remain the green-gate suite against nyc.v2.5; the v2.2, v2.3 and v2.4 changes were product-owner authorized 2026-07-25 and moved no expected output, and v2.5 moved the five scenarios named in its own provenance. See `docs/BASELINE.md`. Now the green-gate acceptance suite. Individual regulatory facts still promote SOURCE_CONFIRMED → VERIFIED during the build via the ruleset's `verification` blocks (OPEN-QUESTIONS §2); that promotion is the verification owner's, per CONTRIBUTING Golden Rule 2.
 **Supersedes:** the v1 answer key (six scenarios, R1–R13; recoverable at git `28e937d`) and the unapproved v2 draft suite (preserved at `docs/proposals/regulatory-scenarios-v2-draft.md`).
-**Authority hierarchy:** approved primary source → published rule (`nyc-rules.v2.4.json`) → this fixture suite → engine output → UI copy. **This document is derived from the ruleset, not an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong; if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority.
+**Authority hierarchy:** approved primary source → published rule (`nyc-rules.v2.5.json`) → this fixture suite → engine output → UI copy. **This document is derived from the ruleset, not an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong; if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority.
 **Evidence:** every regulatory fact traces via the ruleset's `evidence` refs to fetch-confirmed quotes in `VERIFICATION-SOURCES.md` (Rounds 1–2, 2026-07-22).
 **Fixture clock:** `today = 2026-07-22` (Wednesday). All dates computed from it. Business-day math is actual-calendar (no holidays fall in any fixture window; the pinned holiday calendar is a RESEARCH item for other dates).
 
@@ -116,7 +116,7 @@ Top-level verdict stays four-state; per-finding deadline statuses (ON_TRACK / DE
 - tent_area_sqft 401 → DOB-TENT-001 REQUIRED; 400 → CONDITIONAL; 399 → nothing (absent other triggers).
 - stage 2.0 ft / 120 sqft → no DOB-STAGE-001 (needs > 2 ft); 2.5 ft / 119 sqft → no; 2.5 ft / 120 sqft → yes.
 - generator 2.5 gal gasoline → no FDNY permit (needs > 2.5); 2.6 → yes; 39.9 kW → no DEP registration; 40 kW → yes (inclusive).
-- battery 20 kWh → no; 20.1 kWh → yes.
+- battery 20 kWh → no; 20.1 kWh → yes; no battery at all → no. The third case is expressible from nyc.v2.5: `battery_present` is asked of every event and `battery_system_kwh` only when it is yes, so "no battery" and "a battery of zero" are different answers. Before, an unanswered kWh was a material unknown, and FDNY-GENERATOR-001 read MAY_BE_REQUIRED for every event with no generator either.
 - street_event_size=unknown → CONDITIONAL listing the 14/30/45-day ladder.
 - sapo_event_type=other_sapo_class → ADV-SAPO-OTHER-CLASS-001 coverage advisory with reference deadlines (incl. the Single Block Festival OFFICIAL_CONFLICT).
 - obstructs_public_way=no on a sidewalk → SAPO-SCOPE-001 no-new-requirement note.

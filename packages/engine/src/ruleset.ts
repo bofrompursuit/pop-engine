@@ -481,6 +481,7 @@ function parseRule(
     dedupeKey: optionalString(output, "dedupe_key"),
     verificationStatus,
     verificationQualification: optionalString(verification, "qualification"),
+    verificationLastVerifiedDate: optionalString(verification, "last_verified_date"),
     source: parseSource(rule.source, `${label}.source`),
   };
 }
