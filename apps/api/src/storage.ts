@@ -6,7 +6,13 @@
 // endpoint, SigV4 signed URLs — DEPLOY.md §1) is reached through the standard S3 client, so
 // swapping providers is a change of endpoint and credentials, not of callers.
 
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import type { Readable } from "node:stream";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
@@ -22,10 +28,17 @@ export class DocumentStorageError extends Error {
 }
 
 export type DocumentStorage = {
-  /** Writes the object, replacing any object already at `key`. */
-  put(key: string, body: Buffer, contentType: string): Promise<void>;
+  /**
+   * Streams `body` to the object at `key`, replacing anything already there. `sizeBytes` is the
+   * declared length: S3 needs it up front to sign a single-part PUT, and it is what makes this a
+   * stream rather than a buffer — the api never holds the whole file (ARCHITECTURE API Surface,
+   * "the api streams to S3").
+   */
+  put(key: string, body: Readable, contentType: string, sizeBytes: number): Promise<void>;
   /** A URL that grants read access to `key` for `expiresInSeconds` and no longer. */
   signedDownloadUrl(key: string, expiresInSeconds: number): Promise<string>;
+  /** Removes the object. Used to compensate an upload whose metadata write then failed. */
+  remove(key: string): Promise<void>;
 };
 
 export type S3StorageSettings = {
@@ -74,7 +87,7 @@ export function s3ClientFor(settings: S3StorageSettings): S3Client {
 
 export function createS3DocumentStorage(client: S3Client, bucket: string): DocumentStorage {
   return {
-    async put(key, body, contentType) {
+    async put(key, body, contentType, sizeBytes) {
       try {
         await client.send(
           new PutObjectCommand({
@@ -82,12 +95,21 @@ export function createS3DocumentStorage(client: S3Client, bucket: string): Docum
             Key: key,
             Body: body,
             ContentType: contentType,
-            ContentLength: body.byteLength,
+            ContentLength: sizeBytes,
           }),
         );
       } catch (error) {
         // The bucket name, endpoint and signing identity all live in SDK error text.
         console.error("document upload to object storage failed", error);
+        throw new DocumentStorageError("document storage is unavailable");
+      }
+    },
+
+    async remove(key) {
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (error) {
+        console.error("removing an orphaned document object failed", error);
         throw new DocumentStorageError("document storage is unavailable");
       }
     },
@@ -116,5 +138,6 @@ export function unconfiguredDocumentStorage(): DocumentStorage {
   return {
     put: async () => unavailable(),
     signedDownloadUrl: async () => unavailable(),
+    remove: async () => unavailable(),
   };
 }

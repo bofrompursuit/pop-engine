@@ -7,10 +7,15 @@
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Readable } from "node:stream";
+import type { Express } from "express";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CHECKLIST_STATUSES,
   parseEngineRuleset,
   parseIntakeContract,
   type EngineRuleset,
@@ -23,7 +28,6 @@ import {
   fixtureSubmission,
 } from "@pop-engine/engine/fixtures";
 import { createApp } from "./app";
-import { CHECKLIST_STATUSES } from "./checklist";
 import { createPlanService } from "./plan";
 import { loadRuleset, rulesFilePath } from "./ruleset";
 import { DocumentStorageError, type DocumentStorage } from "./storage";
@@ -37,19 +41,35 @@ const PNG = Buffer.concat([
   Buffer.alloc(64, 0),
 ]);
 
-type FakeStorage = DocumentStorage & {
-  objects: Map<string, { body: Buffer; contentType: string }>;
+type StoredObject = {
+  body: Buffer;
+  contentType: string;
+  sizeBytes: number;
+  /** Whether the route handed over a stream rather than a fully-read buffer. */
+  receivedStream: boolean;
+};
+type FakeStorage = DocumentStorage & { objects: Map<string, StoredObject> };
+
+/** Drains the stream the route hands over, which is also how a real adapter consumes it. */
+const collect = async (body: Readable): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
 };
 
 const fakeStorage = (): FakeStorage => {
-  const objects = new Map<string, { body: Buffer; contentType: string }>();
+  const objects = new Map<string, StoredObject>();
   return {
     objects,
-    put: async (key, body, contentType) => {
-      objects.set(key, { body, contentType });
+    put: async (key, body, contentType, sizeBytes) => {
+      const receivedStream = typeof (body as { pipe?: unknown }).pipe === "function";
+      objects.set(key, { body: await collect(body), contentType, sizeBytes, receivedStream });
     },
     signedDownloadUrl: async (key, expiresInSeconds) =>
       `https://storage.test/${key}?X-Amz-Expires=${expiresInSeconds}`,
+    remove: async (key) => {
+      objects.delete(key);
+    },
   };
 };
 
@@ -58,6 +78,9 @@ const unreachableStorage = (): DocumentStorage => ({
     throw new DocumentStorageError("document storage is unavailable");
   },
   signedDownloadUrl: async () => {
+    throw new DocumentStorageError("document storage is unavailable");
+  },
+  remove: async () => {
     throw new DocumentStorageError("document storage is unavailable");
   },
 });
@@ -81,11 +104,45 @@ type ChecklistItemView = {
   permitName: string | null;
   kind: string;
   verificationStatus: string;
+  deadlineStatus: string;
   portalUrl: string | null;
+  publishedNotes: string[];
+  noteText: string | null;
+  conflictText: string | null;
+  deadlineDisplay: string | null;
+  sources: { ruleId: string; citation: string; urls: string[] }[];
   documents: { id: string; filename: string; contentType: string; sizeBytes: number }[];
 };
 
 const ruleIdsOf = (items: ChecklistItemView[]): string[][] => items.map((item) => item.ruleIds);
+
+/**
+ * A POST with no `Content-Length`. Node falls back to chunked encoding when the length is not
+ * declared, which supertest will not do — and a chunked body is exactly what the route refuses,
+ * because sizing it would mean holding all of it.
+ */
+const chunkedUpload = (app: Express, path: string, body: Buffer): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const { port } = server.address() as AddressInfo;
+      const outgoing = httpRequest(
+        {
+          host: "127.0.0.1",
+          port,
+          path,
+          method: "POST",
+          headers: { "content-type": "application/pdf" },
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => server.close(() => resolve(response.statusCode ?? 0)));
+        },
+      );
+      outgoing.once("error", (error) => server.close(() => reject(error)));
+      outgoing.write(body);
+      outgoing.end();
+    });
+  });
 
 describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
   let pool: Pool;
@@ -134,19 +191,43 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
    * A plan written directly, for shapes the six approved scenarios do not produce: a plan with no
    * trackable line, and a dedupe-merged line carrying two rule ids. `generatedAt` is explicit so
    * "the latest plan" is decided by the test rather than by insert timing.
+   *
+   * The finding renderings are written empty. These plans exist to exercise item identity, not
+   * published text, and inventing notes for a real rule id would be worse than carrying none;
+   * the rendering path is covered against engine-generated plans instead.
    */
   const insertPlan = async (
     eventId: string,
     items: readonly { ruleIds: string[]; kind: string }[],
     generatedAt: string,
+    eventRevision = 1,
   ): Promise<string> => {
     const planId = randomUUID();
     await pool.query(
       `INSERT INTO permit_plans
          (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot,
           generated_at)
-       VALUES ($1, $2, 1, $3, 'conditional', '{}'::jsonb, '{}'::jsonb, $4)`,
-      [planId, eventId, ruleset.rulesetVersion, generatedAt],
+       VALUES ($1, $2, $5, $3, 'conditional', $6::jsonb, '{}'::jsonb, $4)`,
+      [
+        planId,
+        eventId,
+        ruleset.rulesetVersion,
+        generatedAt,
+        eventRevision,
+        JSON.stringify({
+          finding_renderings: items.map((item) => ({
+            rule_ids: item.ruleIds,
+            notes: [],
+            note_text: null,
+            conflict_text: null,
+            deadline_display: null,
+            slack_days: null,
+            deadline_unknown_fields: [],
+            timeline_unresolved_reason: null,
+            portal_instructions: null,
+          })),
+        }),
+      ],
     );
     for (const item of items) {
       await pool.query(
@@ -768,6 +849,321 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         expect(response.status).toBe(400);
         expect(response.body.error).toContain("must be a uuid");
       }
+    });
+  });
+
+  // Review round 1, findings 1 and 2: a checklist may not present a plan that no longer answers
+  // the current intake, and "the plan changed" must survive a regeneration that moved only dates.
+  describe("a plan the event has moved past", () => {
+    it("refuses to create a checklist from a plan older than the event's revision", async () => {
+      const eventId = await createEvent(scenario("A"));
+      await generatePlan(eventId);
+      const api = appWith(fakeStorage());
+
+      // The edit bumps revision_counter; the plan still pins the revision it evaluated.
+      await request(api).patch(`/api/events/${eventId}`).send({ street_event_size: "medium" });
+      const refused = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toContain("regenerate the plan first");
+      const { rows } = await pool.query(
+        `SELECT checklist.id FROM checklist_items AS checklist
+           JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+           JOIN permit_plans AS plan ON plan.id = item.plan_id
+          WHERE plan.event_id = $1`,
+        [eventId],
+      );
+      expect(rows).toHaveLength(0);
+
+      // Regenerating clears it, and the checklist then covers the rescoped requirements.
+      await generatePlan(eventId);
+      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(created.status).toBe(201);
+      expect(
+        (created.body.items as ChecklistItemView[]).some(
+          (item) => item.ruleIds[0] === "SAPO-STREET-MEDIUM-001",
+        ),
+      ).toBe(true);
+    });
+
+    it("says on read that the latest plan predates the current intake", async () => {
+      const { eventId } = await checklistFor("A");
+      const api = appWith(fakeStorage());
+
+      const before = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect(before.body.planStale).toBe(false);
+
+      await request(api).patch(`/api/events/${eventId}`).send({ street_event_size: "medium" });
+
+      const after = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect(after.body.planStale).toBe(true);
+    });
+
+    it("flags a regeneration that changed only the filing dates, and clears it once re-created", async () => {
+      const { eventId, body } = await checklistFor("A");
+      const api = appWith(fakeStorage());
+      const before = body.items.map((item) => item.latestApplyDate);
+
+      // Moving the date regenerates every deadline while the requirement set stays identical:
+      // the case a comparison of added and removed rule ids cannot see.
+      await request(api).patch(`/api/events/${eventId}`).send({ event_date: "2026-10-14" });
+      await generatePlan(eventId);
+
+      const read = await request(api).get(`/api/events/${eventId}/checklist`);
+      const after = (read.body.items as ChecklistItemView[]).map((item) => item.latestApplyDate);
+      expect(ruleIdsOf(read.body.items as ChecklistItemView[])).toEqual(ruleIdsOf(body.items));
+      expect(after).not.toEqual(before);
+      expect(read.body.planChanged).toBe(true);
+
+      // Re-creating the checklist is the organizer accepting the new plan, so the prompt clears
+      // rather than latching on for the rest of the event's life.
+      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(accepted.status).toBe(200);
+      expect(accepted.body.planChanged).toBe(false);
+      expect((accepted.body.items as ChecklistItemView[]).map((item) => item.id)).toEqual(
+        body.items.map((item) => item.id),
+      );
+    });
+
+    it("carries status, notes and documents across the re-point", async () => {
+      const storage = fakeStorage();
+      const { eventId, body } = await checklistFor("A", storage);
+      const api = appWith(storage);
+      const itemId = body.items[0]?.id as string;
+      await request(api)
+        .patch(`/api/checklist-items/${itemId}`)
+        .send({ status: "approved", notes: "approved by SAPO" });
+      await request(api)
+        .post(`/api/checklist-items/${itemId}/documents`)
+        .set("Content-Type", "application/pdf")
+        .send(PDF);
+
+      await request(api).patch(`/api/events/${eventId}`).send({ event_date: "2026-10-14" });
+      await generatePlan(eventId);
+      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      const item = (accepted.body.items as ChecklistItemView[]).find(
+        (candidate) => candidate.id === itemId,
+      );
+      expect(item?.status).toBe("approved");
+      expect(item?.notes).toBe("approved by SAPO");
+      expect(item?.documents).toHaveLength(1);
+      // Re-pointed at the current plan's row, so the deadline it shows is the recalculated one.
+      expect(item?.planItemId).not.toBe(body.items[0]?.planItemId);
+      expect(item?.inLatestPlan).toBe(true);
+    });
+  });
+
+  // Review round 1, finding 7: a date and a status are not the whole regulatory answer.
+  describe("published regulatory content on checklist items", () => {
+    it("carries the confirm-with-agency notes and sources of a research_required deadline", async () => {
+      const { body } = await checklistFor("A");
+      const vendor = body.items.find((item) => item.ruleIds[0] === "DOHMH-VENDOR-PERMIT-001");
+
+      // No computable date: everything this line means is in the published text.
+      expect(vendor?.latestApplyDate).toBeNull();
+      expect(vendor?.deadlineStatus).toBe("not_calculable");
+      expect(vendor?.publishedNotes.join(" ")).toContain("onfirm with");
+      expect(vendor?.sources[0]?.citation).toBeTruthy();
+      expect(vendor?.sources[0]?.urls.length).toBeGreaterThan(0);
+    });
+
+    it("carries both readings and every source of an OFFICIAL_CONFLICT permit", async () => {
+      // The answer key's headcount=20 boundary, where the exactly-20 Parks rule stops being
+      // dormant. Its verification status is OFFICIAL_CONFLICT in the published ruleset.
+      const eventId = await createEvent({ ...scenario("C"), headcount: 20 });
+      await generatePlan(eventId);
+      const response = await request(appWith(fakeStorage())).post(
+        `/api/events/${eventId}/checklist`,
+      );
+
+      const conflicted = (response.body.items as ChecklistItemView[]).find(
+        (item) => item.ruleIds[0] === "PARKS-EVENT-EXACTLY-20-001",
+      );
+      expect(conflicted?.verificationStatus).toBe("OFFICIAL_CONFLICT");
+      // Both readings ride on the item; nothing here resolves the conflict to one of them.
+      expect(conflicted?.conflictText).toBeTruthy();
+      expect(conflicted?.sources.length).toBeGreaterThan(0);
+    });
+
+    it("refuses to serve an item whose published text is missing rather than dropping it", async () => {
+      const eventId = await createEvent(scenario("A"));
+      await generatePlan(eventId);
+      // A plan whose renderings were lost is a partial answer, and F-201 AC 5 already settled
+      // that a partial plan is never served as a complete one.
+      await pool.query(
+        `UPDATE permit_plans SET verdict_detail = verdict_detail - 'finding_renderings'
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      const response = await request(appWith(fakeStorage())).post(
+        `/api/events/${eventId}/checklist`,
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.body.error).toBe("checklist request failed");
+      // The client is told nothing about the database or the plan's internals.
+      expect(JSON.stringify(response.body)).not.toContain("verdict_detail");
+    });
+  });
+
+  // Review round 1, findings 3, 4 and 5.
+  describe("how a document gets to the bucket", () => {
+    it("hands storage the request stream and the declared length, never a buffer it read itself", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      // Several chunks' worth, so this exercises the streamed path and the pushed-back head
+      // rather than a body that happened to arrive whole in one read.
+      const large = Buffer.concat([PDF, Buffer.alloc(256 * 1024, 0x20)]);
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${body.items[0]?.id}/documents`)
+        .set("Content-Type", "application/pdf")
+        .send(large);
+
+      expect(upload.status).toBe(201);
+      const [stored] = [...storage.objects.values()];
+      expect(stored?.receivedStream).toBe(true);
+      expect(stored?.sizeBytes).toBe(large.byteLength);
+      // Every byte arrived, and the bytes peeked for the format check were not eaten.
+      expect(stored?.body).toEqual(large);
+      expect(upload.body.sizeBytes).toBe(large.byteLength);
+    });
+
+    it("stores a body that ends inside the format check, since that stream cannot be pushed back", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      // A JPEG's signature is its whole content here: the request ends before the peek is full.
+      const tiny = Buffer.from([0xff, 0xd8, 0xff]);
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${body.items[0]?.id}/documents`)
+        .set("Content-Type", "image/jpeg")
+        .send(tiny);
+
+      expect(upload.status).toBe(201);
+      expect([...storage.objects.values()][0]?.body).toEqual(tiny);
+    });
+
+    it("keeps every document on an item, oldest first", async () => {
+      const storage = fakeStorage();
+      const { eventId, body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const api = appWith(storage);
+
+      for (const filename of ["application.pdf", "site-map.png"]) {
+        await request(api)
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", filename.endsWith(".pdf") ? "application/pdf" : "image/png")
+          .set("X-Filename", filename)
+          .send(filename.endsWith(".pdf") ? PDF : PNG);
+      }
+
+      const read = await request(api).get(`/api/events/${eventId}/checklist`);
+      const item = (read.body.items as ChecklistItemView[]).find((entry) => entry.id === itemId);
+      expect(item?.documents.map((document) => document.filename)).toEqual([
+        "application.pdf",
+        "site-map.png",
+      ]);
+      expect(storage.objects.size).toBe(2);
+    });
+
+    it("refuses an upload that declares no length, since sizing it would mean buffering it", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+
+      const status = await chunkedUpload(
+        appWith(storage),
+        `/api/checklist-items/${body.items[0]?.id}/documents`,
+        PDF,
+      );
+
+      expect(status).toBe(411);
+      expect(storage.objects.size).toBe(0);
+    });
+
+    it("removes the uploaded object when the metadata write fails", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const failing = Object.create(pool) as Pool;
+      failing.query = ((text: string, values?: unknown[]) =>
+        typeof text === "string" && text.includes("INSERT INTO documents")
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : pool.query(text as never, values as never)) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          checklist: { database: failing, storage },
+        }),
+      )
+        .post(`/api/checklist-items/${body.items[0]?.id}/documents`)
+        .set("Content-Type", "application/pdf")
+        .send(PDF);
+
+      expect(response.status).toBe(500);
+      // No row, and no object left behind for it to have pointed at.
+      expect(storage.objects.size).toBe(0);
+      const { rows } = await pool.query("SELECT id FROM documents WHERE checklist_item_id = $1", [
+        body.items[0]?.id,
+      ]);
+      expect(rows).toHaveLength(0);
+      // The driver's message never reaches the client.
+      expect(JSON.stringify(response.body)).not.toContain("connection terminated");
+    });
+
+    it("still reports the write failure when the compensating delete also fails", async () => {
+      const { body } = await checklistFor("A");
+      const stubborn: DocumentStorage = {
+        put: async () => {},
+        signedDownloadUrl: async () => "",
+        remove: async () => {
+          throw new DocumentStorageError("document storage is unavailable");
+        },
+      };
+      const failing = Object.create(pool) as Pool;
+      failing.query = ((text: string, values?: unknown[]) =>
+        typeof text === "string" && text.includes("INSERT INTO documents")
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : pool.query(text as never, values as never)) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          checklist: { database: failing, storage: stubborn },
+        }),
+      )
+        .post(`/api/checklist-items/${body.items[0]?.id}/documents`)
+        .set("Content-Type", "application/pdf")
+        .send(PDF);
+
+      // The orphan is logged for manual deletion; the client is told about the write, not the
+      // cleanup, and no metadata row exists either way.
+      expect(response.status).toBe(500);
+      const { rows } = await pool.query("SELECT id FROM documents WHERE checklist_item_id = $1", [
+        body.items[0]?.id,
+      ]);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("lets a browser preflight the upload header it is told to send", async () => {
+      // web and api are separately hosted, so an upload from the browser preflights first. A
+      // header missing from the allowlist fails there, before any of this feature's code runs.
+      const response = await request(appWith(fakeStorage()))
+        .options("/api/checklist-items/00000000-0000-4000-8000-000000000000/documents")
+        .set("Origin", "http://localhost:3000")
+        .set("Access-Control-Request-Method", "POST")
+        .set("Access-Control-Request-Headers", "content-type,x-filename");
+
+      expect(response.status).toBe(204);
+      expect((response.headers["access-control-allow-headers"] ?? "").toLowerCase()).toContain(
+        "x-filename",
+      );
     });
   });
 });

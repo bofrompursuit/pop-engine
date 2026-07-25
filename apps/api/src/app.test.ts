@@ -48,6 +48,8 @@ describe("api scaffold", () => {
     const res = await request(createScaffoldApp()).options("/health");
     expect(res.status).toBe(204);
     expect(res.headers["access-control-allow-methods"]).toContain("POST");
-    expect(res.headers["access-control-allow-headers"]).toBe("Content-Type");
+    // X-Filename carries a document upload's display name (F-202); a header the allowlist omits
+    // fails the browser's preflight before any route runs.
+    expect(res.headers["access-control-allow-headers"]).toBe("Content-Type, X-Filename");
   });
 });

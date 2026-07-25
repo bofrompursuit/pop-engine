@@ -4,39 +4,28 @@
 // of the latest plan, each still linked to the plan item it came from, so rule, deadline,
 // citation and portal travel with the work (spec AC 1).
 //
-// Plans are immutable snapshots (AD-7), so a rescope produces a NEW plan rather than editing
-// the old one. Supersession is therefore a relationship between two plans, not a flag on
-// either: this file computes it by comparing the requirement identities in the latest plan
-// with the ones the checklist already tracks, and returns the answer as explicit fields
-// (`planChanged`, `inLatestPlan`) so a client renders rather than re-derives it. Nothing is
-// ever deleted or rewritten (spec AC 6).
+// Plans are immutable snapshots (AD-7), so a rescope produces a NEW plan rather than editing the
+// old one. Supersession is therefore a relationship between two plans, not a flag on either: this
+// file computes it by comparing the plan-item rows the checklist points at with the latest plan's,
+// and returns the answer as explicit fields (`planChanged`, `inLatestPlan`, `planStale`) so a
+// client renders rather than re-derives it. Nothing is ever deleted or rewritten (spec AC 6).
 
 import { randomUUID } from "node:crypto";
-import express, { Router, type NextFunction, type Request, type Response } from "express";
+import { Readable } from "node:stream";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import { CHECKLIST_STATUSES } from "@pop-engine/engine";
 import type {
+  ChecklistStatus,
+  Deadline,
   Disposition,
   DeadlineStatus,
+  Finding,
   FindingKind,
   VerificationStatus,
 } from "@pop-engine/engine";
-import { calendarDateFrom } from "./plan";
+import { calendarDateFrom, renderingKey, PlanIntegrityError, type FindingRendering } from "./plan";
 import { DocumentStorageError, type DocumentStorage } from "./storage";
-
-/**
- * The statuses `checklist_items.status` accepts. Kept in the same shape as `ruleset.ts`'s
- * enum constants, and checked against the live CHECK constraint by `checklist.test.ts`, so
- * this list cannot drift from the schema unnoticed (the failure mode behind issues #70/#73/#76).
- */
-export const CHECKLIST_STATUSES = [
-  "not_started",
-  "in_progress",
-  "submitted",
-  "approved",
-  "rejected",
-] as const;
-
-export type ChecklistStatus = (typeof CHECKLIST_STATUSES)[number];
 
 const isChecklistStatus = (value: unknown): value is ChecklistStatus =>
   typeof value === "string" && (CHECKLIST_STATUSES as readonly string[]).includes(value);
@@ -68,6 +57,11 @@ const DOCUMENT_TYPES = {
 type DocumentContentType = keyof typeof DOCUMENT_TYPES;
 
 const DOCUMENT_CONTENT_TYPES = Object.keys(DOCUMENT_TYPES) as DocumentContentType[];
+
+/** Enough of the body to hold the longest signature above, and no more. */
+const SIGNATURE_BYTES = Math.max(
+  ...Object.values(DOCUMENT_TYPES).map((type) => type.signature.length),
+);
 
 /**
  * Long enough for a browser to follow the redirect and download, short enough that a URL that
@@ -109,11 +103,13 @@ const requirementKey = (ruleIds: readonly string[]): string => [...ruleIds].sort
 
 type PlanItemRow = {
   id: string;
+  plan_id: string;
   rule_ids: string[];
   permit_name: string | null;
   agency: string | null;
   kind: FindingKind;
   disposition: Disposition;
+  deadline: Deadline | null;
   latest_apply_date: Date | string | null;
   apply_after_date: Date | string | null;
   deadline_status: DeadlineStatus;
@@ -121,10 +117,13 @@ type PlanItemRow = {
   fee_display: string | null;
   portal_name: string | null;
   portal_url: string | null;
+  sources: Finding["sources"];
+  source_url: string | null;
 };
 
-const PLAN_ITEM_COLUMNS = `id, rule_ids, permit_name, agency, kind, disposition, latest_apply_date,
-   apply_after_date, deadline_status, verification_status, fee_display, portal_name, portal_url`;
+const PLAN_ITEM_COLUMNS = `id, plan_id, rule_ids, permit_name, agency, kind, disposition, deadline,
+   latest_apply_date, apply_after_date, deadline_status, verification_status, fee_display,
+   portal_name, portal_url, sources, source_url`;
 
 /**
  * Plan items carry uuid primary keys, so the table has no stable order of its own (F-201 hit
@@ -154,30 +153,119 @@ const isoDate = (value: Date | string | null): string | null =>
   value === null ? null : calendarDateFrom(value);
 
 /**
- * The plan context a checklist row renders: deadline, agency, portal, verification badge.
- * Spec AC 5 puts the dates where the work happens, so they ride on every item.
+ * The plan context a checklist row renders: deadline, agency, portal, verification badge — and
+ * every published qualification that goes with them.
+ *
+ * A date and a status are not the whole regulatory answer. A `research_required` deadline has no
+ * date at all and its meaning lives entirely in the published notes ("confirm the lead time with
+ * the agency"); an OFFICIAL_CONFLICT line means nothing without both readings and both sources.
+ * Dropping any of that renders an unresolved requirement as a resolved one, which AGENTS.md
+ * forbids end to end. The persisted rendering fields ride in the plan's `verdict_detail` because
+ * the item table has no columns for them (see `plan.ts`); they are carried through here rather
+ * than restated, so there is one copy of each string.
  */
-const planContext = (item: PlanItemRow) => ({
+const planContext = (item: PlanItemRow, rendering: FindingRendering) => ({
   ruleIds: item.rule_ids,
   permitName: item.permit_name,
   agency: item.agency,
   kind: item.kind,
   disposition: item.disposition,
+  deadline: item.deadline,
+  deadlineDisplay: rendering.deadline_display,
   latestApplyDate: isoDate(item.latest_apply_date),
   applyAfterDate: isoDate(item.apply_after_date),
   deadlineStatus: item.deadline_status,
+  slackDays: rendering.slack_days,
+  deadlineUnknownFields: rendering.deadline_unknown_fields,
+  timelineUnresolvedReason: rendering.timeline_unresolved_reason,
   verificationStatus: item.verification_status,
+  // `publishedNotes`, not `notes`: a checklist item already has `notes`, and those are the
+  // organizer's. Published regulatory text and a user's scratchpad must never share a field.
+  publishedNotes: rendering.notes,
+  noteText: rendering.note_text,
+  // Both readings of an OFFICIAL_CONFLICT rule; never resolved to one silently.
+  conflictText: rendering.conflict_text,
   feeDisplay: item.fee_display,
   portalName: item.portal_name,
   portalUrl: item.portal_url,
+  portalInstructions: rendering.portal_instructions,
+  sources: item.sources,
+  sourceUrl: item.source_url,
 });
 
-async function latestPlanId(database: Queryable, eventId: string): Promise<string | null> {
-  const { rows } = await database.query<{ id: string }>(
-    `SELECT id FROM permit_plans WHERE event_id = $1 ORDER BY generated_at DESC, id DESC LIMIT 1`,
+type LatestPlan = {
+  id: string;
+  /** The `events.revision_counter` this plan evaluated (AD-13). */
+  eventRevision: number;
+  /** The event's revision now. Higher than `eventRevision` means the plan is stale. */
+  currentRevision: number;
+};
+
+async function latestPlan(database: Queryable, eventId: string): Promise<LatestPlan | null> {
+  const { rows } = await database.query<{
+    id: string;
+    event_revision: number;
+    revision_counter: number;
+  }>(
+    `SELECT plan.id, plan.event_revision, event.revision_counter
+       FROM permit_plans AS plan
+       JOIN events AS event ON event.id = plan.event_id
+      WHERE plan.event_id = $1
+      ORDER BY plan.generated_at DESC, plan.id DESC LIMIT 1`,
     [eventId],
   );
-  return rows[0]?.id ?? null;
+  const row = rows[0];
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    eventRevision: row.event_revision,
+    currentRevision: row.revision_counter,
+  };
+}
+
+/**
+ * The per-finding text each plan persists in `verdict_detail` (see `plan.ts`), keyed by plan and
+ * by the rule ids of the finding it belongs to.
+ */
+async function renderingsFor(
+  database: Queryable,
+  planIds: readonly string[],
+): Promise<Map<string, FindingRendering>> {
+  const byPlanAndRules = new Map<string, FindingRendering>();
+  if (planIds.length === 0) return byPlanAndRules;
+  const { rows } = await database.query<{
+    id: string;
+    finding_renderings: FindingRendering[] | null;
+  }>(
+    `SELECT id, verdict_detail->'finding_renderings' AS finding_renderings
+       FROM permit_plans WHERE id = ANY($1)`,
+    [planIds],
+  );
+  for (const row of rows) {
+    for (const rendering of row.finding_renderings ?? []) {
+      byPlanAndRules.set(`${row.id}:${renderingKey(rendering.rule_ids)}`, rendering);
+    }
+  }
+  return byPlanAndRules;
+}
+
+/**
+ * A plan item whose published text cannot be found is a partial answer, and F-201 AC 5 already
+ * settled that a partial plan is never served as a complete one. Failing is louder than quietly
+ * rendering a `research_required` permit with no "confirm with agency" on it.
+ */
+function renderingOrFail(
+  renderings: Map<string, FindingRendering>,
+  item: PlanItemRow,
+): FindingRendering {
+  const rendering = renderings.get(`${item.plan_id}:${renderingKey(item.rule_ids)}`);
+  if (rendering === undefined) {
+    throw new PlanIntegrityError(
+      item.plan_id,
+      `no stored rendering for finding ${renderingKey(item.rule_ids)}`,
+    );
+  }
+  return rendering;
 }
 
 async function planItems(database: Queryable, planId: string): Promise<PlanItemRow[]> {
@@ -190,9 +278,37 @@ async function planItems(database: Queryable, planId: string): Promise<PlanItemR
 }
 
 /**
- * Every checklist row of the event, oldest plan first, then by filing date within a plan. That
- * order is also the display order the spec asks for: rows created from a later plan land after
- * the ones already being worked, which is what "new items appended" means (AC 6).
+ * When each requirement first appeared in any of this event's plans, keyed the same way identity
+ * is. It is what "new items appended" orders by (AC 6): a requirement raised by a later plan
+ * sorts after everything already being worked, and it keeps doing so after `materialize`
+ * re-points the rows at the current plan, which the plan's own timestamp no longer distinguishes.
+ */
+async function firstSeenByRequirement(
+  database: Queryable,
+  eventId: string,
+): Promise<Map<string, number>> {
+  const { rows } = await database.query<{ rule_ids: string[]; first_seen: Date }>(
+    `SELECT item.rule_ids, min(plan.generated_at) AS first_seen
+       FROM permit_plan_items AS item
+       JOIN permit_plans AS plan ON plan.id = item.plan_id
+      WHERE plan.event_id = $1
+      GROUP BY item.rule_ids`,
+    [eventId],
+  );
+  const firstSeen = new Map<string, number>();
+  for (const row of rows) {
+    // Grouped on the stored array, so the same set written in a different order arrives as two
+    // groups; identity says they are one requirement, and the earlier sighting is the one.
+    const key = requirementKey(row.rule_ids);
+    const at = row.first_seen.getTime();
+    firstSeen.set(key, Math.min(firstSeen.get(key) ?? at, at));
+  }
+  return firstSeen;
+}
+
+/**
+ * Every checklist row of the event, ordered by filing date within a plan. `checklistView` then
+ * stably re-groups them by when each requirement first appeared, which is the display order.
  */
 async function checklistRows(database: Queryable, eventId: string): Promise<ChecklistRow[]> {
   const { rows } = await database.query<ChecklistRow>(
@@ -245,20 +361,33 @@ const documentView = (row: DocumentRow) => ({
  * The whole checklist for an event: its items with live plan context, the read-only lines of
  * the latest plan, and whether the plan the checklist was built from has been superseded.
  */
-async function checklistView(database: Queryable, eventId: string, planId: string) {
-  const items = await checklistRows(database, eventId);
-  const latestItems = await planItems(database, planId);
+async function checklistView(database: Queryable, eventId: string, plan: LatestPlan) {
+  const unordered = await checklistRows(database, eventId);
+  const firstSeen = await firstSeenByRequirement(database, eventId);
+  // Stable, so the filing-date order the query already applied survives as the tiebreak.
+  const items = [...unordered].sort(
+    (left, right) =>
+      (firstSeen.get(requirementKey(left.rule_ids)) ?? 0) -
+      (firstSeen.get(requirementKey(right.rule_ids)) ?? 0),
+  );
+  const latestItems = await planItems(database, plan.id);
   const documents = await documentsFor(
     database,
     items.map((item) => item.checklist_item_id),
   );
+  const renderings = await renderingsFor(database, [
+    plan.id,
+    ...new Set(items.map((item) => item.plan_id)),
+  ]);
 
   const latestByKey = new Map(latestItems.map((item) => [requirementKey(item.rule_ids), item]));
-  const trackedKeys = new Set(items.map((item) => requirementKey(item.rule_ids)));
 
   const view = items.map((item) => {
-    const key = requirementKey(item.rule_ids);
-    const current = latestByKey.get(key);
+    const current = latestByKey.get(requirementKey(item.rule_ids));
+    // Deadlines come from the latest plan while the requirement still stands: the plan is
+    // recalculated, not patched (PRD principle 6). A dropped requirement keeps the dates of
+    // the last plan that raised it, which is the honest last-known state.
+    const source = current ?? item;
     return {
       id: item.checklist_item_id,
       planItemId: item.plan_item_id,
@@ -267,10 +396,7 @@ async function checklistView(database: Queryable, eventId: string, planId: strin
       updatedAt: item.updated_at.toISOString(),
       // A requirement the latest plan no longer raises is struck through, never deleted (AC 6).
       inLatestPlan: current !== undefined,
-      // Deadlines come from the latest plan while the requirement still stands: the plan is
-      // recalculated, not patched (PRD principle 6). A dropped requirement keeps the dates of
-      // the last plan that raised it, which is the honest last-known state.
-      ...planContext(current ?? item),
+      ...planContext(source, renderingOrFail(renderings, source)),
       documents: (documents.get(item.checklist_item_id) ?? []).map(documentView),
     };
   });
@@ -283,39 +409,71 @@ async function checklistView(database: Queryable, eventId: string, planId: strin
     ]),
   );
 
+  // Identity is the plan-item ROW, not the requirement. A regeneration writes new rows for the
+  // same requirements, so this is true whenever the checklist is not pointing at the current
+  // plan — including the common rescope where the requirements are unchanged and only the filing
+  // dates moved, which a set comparison of rule ids cannot see. `materialize` re-points the rows,
+  // so re-creating the checklist is what clears the flag.
+  const trackedItemIds = new Set(items.map((item) => item.plan_item_id));
+  const planChanged =
+    trackedItemIds.size !== trackable.length ||
+    trackable.some((item) => !trackedItemIds.has(item.id));
+
   return {
     eventId,
-    planId,
-    // Either the latest plan raises a requirement nothing tracks yet, or the checklist tracks
-    // one the latest plan dropped. Both mean "plan has changed; review items" (AC 6).
-    planChanged:
-      view.some((item) => !item.inLatestPlan) ||
-      trackable.some((item) => !trackedKeys.has(requirementKey(item.rule_ids))),
+    planId: plan.id,
+    planChanged,
+    // The event has been edited since even the latest plan was generated (AD-13), so these
+    // requirements answer an intake the organizer has already moved on from. Creation is refused
+    // in that state; a read says so rather than presenting the plan as current.
+    planStale: plan.eventRevision < plan.currentRevision,
     statusRollup,
     items: view,
     // Advisories, notifications, prohibitions and notes: shown for context, not tracked.
     contextItems: latestItems
       .filter((item) => !TRACKABLE_FINDING_KINDS.has(item.kind))
-      .map(planContext),
+      .map((item) => planContext(item, renderingOrFail(renderings, item))),
   };
 }
 
-/** Materialize the missing rows, returning how many were created. Idempotent by construction. */
+/**
+ * Bring the checklist into line with the latest plan, returning how many items were created.
+ *
+ * A requirement already tracked is re-pointed at the current plan's row rather than left on the
+ * superseded one: `checklist_items` is mutable user state, not a plan snapshot, so moving the
+ * link neither deletes nor rewrites history, and the status, notes and documents ride along. It
+ * is also what makes `planChanged` fall back to false once the organizer has re-created the
+ * checklist — without it, the AC 6 prompt would latch on at the first regeneration and never
+ * clear. A requirement the latest plan dropped keeps pointing at the last plan that raised it,
+ * which is what still renders it struck through.
+ */
 async function materialize(client: PoolClient, eventId: string, planId: string): Promise<number> {
-  const tracked = new Set(
-    (await checklistRows(client, eventId)).map((item) => requirementKey(item.rule_ids)),
+  const trackedByKey = new Map(
+    (await checklistRows(client, eventId)).map((item) => [
+      requirementKey(item.rule_ids),
+      item.checklist_item_id,
+    ]),
   );
-  const missing = (await planItems(client, planId)).filter(
-    (item) => TRACKABLE_FINDING_KINDS.has(item.kind) && !tracked.has(requirementKey(item.rule_ids)),
-  );
-  for (const item of missing) {
-    await client.query(
-      `INSERT INTO checklist_items (id, plan_item_id) VALUES ($1, $2)
-         ON CONFLICT (plan_item_id) DO NOTHING`,
-      [randomUUID(), item.id],
-    );
+  let created = 0;
+  for (const item of await planItems(client, planId)) {
+    if (!TRACKABLE_FINDING_KINDS.has(item.kind)) continue;
+    const tracked = trackedByKey.get(requirementKey(item.rule_ids));
+    if (tracked === undefined) {
+      await client.query(
+        `INSERT INTO checklist_items (id, plan_item_id) VALUES ($1, $2)
+           ON CONFLICT (plan_item_id) DO NOTHING`,
+        [randomUUID(), item.id],
+      );
+      created += 1;
+      continue;
+    }
+    // Deliberately does not touch `updated_at`: re-pointing is not the organizer doing something.
+    await client.query("UPDATE checklist_items SET plan_item_id = $2 WHERE id = $1", [
+      tracked,
+      item.id,
+    ]);
   }
-  return missing.length;
+  return created;
 }
 
 const notFound = (res: Response, message: string): void => {
@@ -362,6 +520,68 @@ function displayFilename(supplied: string | undefined, extension: string): strin
 const startsWithSignature = (body: Buffer, signature: readonly number[]): boolean =>
   body.length >= signature.length && signature.every((byte, index) => body[index] === byte);
 
+/** The declared body length, or null when the client sent none or sent nonsense. */
+function declaredLength(req: Request): number | null {
+  const header = req.get("content-length");
+  if (header === undefined) return null;
+  const length = Number(header);
+  return Number.isInteger(length) && length >= 0 ? length : null;
+}
+
+/**
+ * Read the leading `size` bytes without consuming them, so the format check runs before a single
+ * byte is forwarded to storage. Only the head is buffered; the rest of the body is never held in
+ * memory. `ended` says the whole body arrived within those bytes, which matters because a stream
+ * cannot be unshifted after it has ended — the caller re-sends the head instead.
+ */
+function peek(req: Request, size: number): Promise<{ head: Buffer; ended: boolean }> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let buffered = 0;
+    const settle = (ended: boolean): void => {
+      req.removeListener("readable", take);
+      req.removeListener("end", atEnd);
+      const head = Buffer.concat(chunks, buffered);
+      if (!ended && head.length > 0) req.unshift(head);
+      resolve({ head, ended });
+    };
+    const atEnd = (): void => settle(true);
+    function take(): void {
+      let chunk: Buffer | null;
+      while ((chunk = req.read() as Buffer | null) !== null) {
+        chunks.push(chunk);
+        buffered += chunk.length;
+        if (buffered >= size) {
+          settle(false);
+          return;
+        }
+      }
+    }
+    req.once("error", reject);
+    req.on("readable", take);
+    req.once("end", atEnd);
+    take();
+  });
+}
+
+/**
+ * Delete an object whose metadata write failed, so the bucket does not keep bytes nothing points
+ * at. If the delete itself fails there is nothing further to try — the repository has no cleanup
+ * queue, and the outbox that would give one is Phase 2 (ARCHITECTURE-FUTURE) — so the key is
+ * logged for manual deletion and the original failure is still what the client is told. The
+ * object is unreferenced either way: no `documents` row was written, so no download can reach it.
+ */
+async function removeOrphanedObject(storage: DocumentStorage, key: string): Promise<void> {
+  try {
+    await storage.remove(key);
+  } catch (error) {
+    console.error(
+      `orphaned document object ${key} could not be removed and needs manual deletion`,
+      error,
+    );
+  }
+}
+
 export function createChecklistRouter(dependencies: ChecklistDependencies): Router {
   const { database, storage } = dependencies;
   const router = Router();
@@ -386,14 +606,26 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
           notFound(res, `event ${eventId} not found`);
           return;
         }
-        const planId = await latestPlanId(client, eventId);
-        if (planId === null) {
+        const plan = await latestPlan(client, eventId);
+        if (plan === null) {
           await client.query("ROLLBACK");
           notFound(res, `no plan generated for event ${eventId}`);
           return;
         }
-        const created = await materialize(client, eventId, planId);
-        const view = await checklistView(client, eventId, planId);
+        // A plan pins the revision it evaluated (AD-13). If the event has been edited since,
+        // materializing it would present requirements computed from an intake the organizer has
+        // already replaced, silently omitting anything the edit introduced — a checklist that
+        // looks current and is not. Read under the same row lock as the event, so an edit
+        // committing mid-request cannot slip past this.
+        if (plan.eventRevision < plan.currentRevision) {
+          await client.query("ROLLBACK");
+          res.status(409).json({
+            error: `plan for event ${eventId} was generated against revision ${plan.eventRevision}, but the event is at revision ${plan.currentRevision}; regenerate the plan first`,
+          });
+          return;
+        }
+        const created = await materialize(client, eventId, plan.id);
+        const view = await checklistView(client, eventId, plan);
         await client.query("COMMIT");
         // A second call creates nothing and returns the checklist that already exists.
         res.status(created > 0 ? 201 : 200).json(view);
@@ -411,12 +643,12 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
     handle(async (req, res) => {
       const eventId = req.params.id ?? "";
       if (rejectMalformedId(eventId, res, "event id")) return;
-      const planId = await latestPlanId(database, eventId);
-      if (planId === null) {
+      const plan = await latestPlan(database, eventId);
+      if (plan === null) {
         notFound(res, `no plan generated for event ${eventId}`);
         return;
       }
-      res.json(await checklistView(database, eventId, planId));
+      res.json(await checklistView(database, eventId, plan));
     }),
   );
 
@@ -478,7 +710,6 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
 
   router.post(
     "/checklist-items/:id/documents",
-    express.raw({ type: DOCUMENT_CONTENT_TYPES, limit: MAX_DOCUMENT_BYTES }),
     handle(async (req, res) => {
       const checklistItemId = req.params.id ?? "";
       if (rejectMalformedId(checklistItemId, res, "checklist item id")) return;
@@ -486,18 +717,32 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
       const contentType = (req.get("content-type") ?? "").split(";")[0]?.trim() ?? "";
       const accepted = DOCUMENT_TYPES[contentType as DocumentContentType] as
         (typeof DOCUMENT_TYPES)[DocumentContentType] | undefined;
-      const body: unknown = req.body;
-      if (accepted === undefined || !Buffer.isBuffer(body)) {
+      if (accepted === undefined) {
         res
           .status(415)
           .json({ error: `content type must be one of ${DOCUMENT_CONTENT_TYPES.join(", ")}` });
         return;
       }
-      if (body.byteLength === 0) {
+
+      // The declared length is what bounds the upload and what S3 signs the PUT against. Without
+      // it the only way to know the size is to buffer the whole body, which is the thing this
+      // route exists not to do, so an undeclared length is refused rather than guessed at.
+      const sizeBytes = declaredLength(req);
+      if (sizeBytes === null) {
+        res.status(411).json({ error: "content-length is required to upload a document" });
+        return;
+      }
+      if (sizeBytes === 0) {
         res.status(400).json({ error: "document body is empty" });
         return;
       }
-      if (!startsWithSignature(body, accepted.signature)) {
+      if (sizeBytes > MAX_DOCUMENT_BYTES) {
+        res.status(413).json({ error: `document must be ${MAX_DOCUMENT_BYTES} bytes or smaller` });
+        return;
+      }
+
+      const { head, ended } = await peek(req, SIGNATURE_BYTES);
+      if (!startsWithSignature(head, accepted.signature)) {
         res.status(400).json({ error: `document contents are not a valid ${contentType} file` });
         return;
       }
@@ -515,18 +760,27 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
       // its bytes land or overwrite another item's document.
       const storageKey = `checklist-items/${checklistItemId}/${randomUUID()}.${accepted.extension}`;
       // Storage first, metadata second: a failed upload leaves no row pointing at bytes that
-      // are not there (spec edge case), and the client can simply retry.
-      await storage.put(storageKey, body, contentType);
+      // are not there (spec edge case), and the client can simply retry. The request itself is
+      // what gets streamed — a body that ended inside the peek is re-sent from the head, since
+      // an ended stream cannot be unshifted.
+      await storage.put(storageKey, ended ? Readable.from(head) : req, contentType, sizeBytes);
 
       const documentId = randomUUID();
       const filename = displayFilename(req.get("x-filename"), accepted.extension);
-      const { rows: created } = await database.query<DocumentRow>(
-        `INSERT INTO documents (id, checklist_item_id, filename, content_type, size_bytes, storage_key)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, checklist_item_id, filename, content_type, size_bytes, uploaded_at`,
-        [documentId, checklistItemId, filename, contentType, body.byteLength, storageKey],
-      );
-      res.status(201).json(documentView(created[0] as DocumentRow));
+      try {
+        const { rows: created } = await database.query<DocumentRow>(
+          `INSERT INTO documents (id, checklist_item_id, filename, content_type, size_bytes, storage_key)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, checklist_item_id, filename, content_type, size_bytes, uploaded_at`,
+          [documentId, checklistItemId, filename, contentType, sizeBytes, storageKey],
+        );
+        res.status(201).json(documentView(created[0] as DocumentRow));
+      } catch (error) {
+        // The object is already in the bucket and nothing will ever reference it, so it is
+        // removed before the failure is reported. A retry then writes exactly one object.
+        await removeOrphanedObject(storage, storageKey);
+        throw error;
+      }
     }),
   );
 
@@ -552,17 +806,9 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
     }),
   );
 
-  // Router-level failures: an oversized body is rejected by the body parser before the route
-  // runs, and it must answer in JSON like every other error rather than as an HTML stack.
+  // Anything a route threw answers in JSON like every other error, rather than as an HTML stack
+  // from Express's default handler.
   router.use((error: unknown, _req: Request, res: Response, _next: NextFunction): void => {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      (error as { type?: string }).type === "entity.too.large"
-    ) {
-      res.status(413).json({ error: `document must be ${MAX_DOCUMENT_BYTES} bytes or smaller` });
-      return;
-    }
     respondWithFailure(res, error, "checklist request failed");
   });
 

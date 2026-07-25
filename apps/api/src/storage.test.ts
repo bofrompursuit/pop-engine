@@ -3,6 +3,7 @@
 // client's `send` stubbed. What is asserted is what the api is responsible for — the object
 // key, the declared content type, the URL's lifetime, and that no SDK text escapes.
 
+import { Readable } from "node:stream";
 import { S3Client } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -22,6 +23,7 @@ const SETTINGS = {
 };
 
 const PDF = Buffer.from("%PDF-1.7 synthetic");
+const pdfStream = (): Readable => Readable.from(PDF);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -61,13 +63,15 @@ describe("S3-compatible document storage", () => {
     const send = vi.spyOn(client, "send").mockResolvedValue(undefined as never);
     const storage = createS3DocumentStorage(client, SETTINGS.bucket);
 
-    await storage.put("checklist-items/abc/def.pdf", PDF, "application/pdf");
+    const body = pdfStream();
+    await storage.put("checklist-items/abc/def.pdf", body, "application/pdf", PDF.byteLength);
 
     expect(send).toHaveBeenCalledTimes(1);
+    // The stream is handed to the SDK as-is: the adapter never reads it into a buffer.
     expect(send.mock.calls[0]?.[0].input).toEqual({
       Bucket: SETTINGS.bucket,
       Key: "checklist-items/abc/def.pdf",
-      Body: PDF,
+      Body: body,
       ContentType: "application/pdf",
       ContentLength: PDF.byteLength,
     });
@@ -97,10 +101,35 @@ describe("S3-compatible document storage", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const storage = createS3DocumentStorage(client, SETTINGS.bucket);
 
-    await expect(storage.put("key.pdf", PDF, "application/pdf")).rejects.toThrow(
+    await expect(
+      storage.put("key.pdf", pdfStream(), "application/pdf", PDF.byteLength),
+    ).rejects.toThrow(new DocumentStorageError("document storage is unavailable"));
+    expect(logged).toHaveBeenCalledWith("document upload to object storage failed", providerError);
+  });
+
+  it("deletes the object at a key, for compensating a failed metadata write", async () => {
+    const client = s3ClientFor(SETTINGS);
+    const send = vi.spyOn(client, "send").mockResolvedValue(undefined as never);
+    const storage = createS3DocumentStorage(client, SETTINGS.bucket);
+
+    await storage.remove("checklist-items/abc/def.pdf");
+
+    expect(send.mock.calls[0]?.[0].input).toEqual({
+      Bucket: SETTINGS.bucket,
+      Key: "checklist-items/abc/def.pdf",
+    });
+  });
+
+  it("reports a failed deletion as our own message", async () => {
+    const client = s3ClientFor(SETTINGS);
+    vi.spyOn(client, "send").mockRejectedValue(new Error("AccessDenied for pop-engine-documents"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const storage = createS3DocumentStorage(client, SETTINGS.bucket);
+
+    await expect(storage.remove("key.pdf")).rejects.toThrow(
       new DocumentStorageError("document storage is unavailable"),
     );
-    expect(logged).toHaveBeenCalledWith("document upload to object storage failed", providerError);
+    expect(logged).toHaveBeenCalledOnce();
   });
 
   it("reports a signing failure as our own message", async () => {
@@ -124,7 +153,10 @@ describe("unconfigured document storage", () => {
     const storage = unconfiguredDocumentStorage();
     const notConfigured = new DocumentStorageError("document storage is not configured");
 
-    await expect(storage.put("key.pdf", PDF, "application/pdf")).rejects.toThrow(notConfigured);
+    await expect(
+      storage.put("key.pdf", pdfStream(), "application/pdf", PDF.byteLength),
+    ).rejects.toThrow(notConfigured);
     await expect(storage.signedDownloadUrl("key.pdf", 300)).rejects.toThrow(notConfigured);
+    await expect(storage.remove("key.pdf")).rejects.toThrow(notConfigured);
   });
 });
