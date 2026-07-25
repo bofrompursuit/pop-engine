@@ -86,7 +86,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | Column | Type | Notes |
 |---|---|---|
 | ruleset_version + rule_id | text + text, composite PK | version-safe: two ruleset versions can coexist for comparison/rollback (AD-13) |
-| kind | text | permit, insurance, notification, registration, eligibility, prohibition, dependency, classification, advisory, note |
+| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, classification, advisory, note) | the rule's own kind; `classification` is a rule role that persists as a `note` finding, so this set is one wider than `permit_plan_items.kind` |
 | title / agency | text | |
 | trigger | jsonb | condition tree (see Rules Engine) |
 | output | jsonb | name/variants, typed deadline, fee, portal, paths, notes |

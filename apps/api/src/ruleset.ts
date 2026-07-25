@@ -32,7 +32,7 @@ const DEFAULT_RULES_FILE = fileURLToPath(
   new URL("../../../rules/nyc-rules.v2.1.json", import.meta.url),
 );
 
-const RULE_KINDS = new Set([
+export const RULE_KINDS = new Set([
   "permit",
   "insurance",
   "notification",
@@ -45,7 +45,7 @@ const RULE_KINDS = new Set([
   "note",
 ]);
 const CONDITION_OPERATORS = new Set(["eq", "in", "gt", "gte", "bool", "contains", "contains_any"]);
-const VERIFICATION_STATUSES = new Set([
+export const VERIFICATION_STATUSES = new Set([
   "SOURCE_CONFIRMED",
   "OFFICIAL_CONFLICT",
   "RESEARCH_REQUIRED",
