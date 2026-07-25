@@ -11,7 +11,7 @@ import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Readable } from "node:stream";
 import type { Express } from "express";
-import { Pool } from "pg";
+import { DatabaseError, Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -249,6 +249,36 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     return planId;
   };
 
+  /**
+   * The real pool, with `query` intercepted. Returning a promise from `intercept` replaces the
+   * query; returning null lets it through. Used to stage the failures a document upload has to
+   * survive without lying about what it stored.
+   */
+  const poolIntercepting = (
+    intercept: (text: string, values: readonly unknown[]) => Promise<never> | null,
+  ): Pool => {
+    const proxy = Object.create(pool) as Pool;
+    proxy.query = ((text: string, values?: unknown[]) => {
+      const replaced = typeof text === "string" ? intercept(text, values ?? []) : null;
+      return replaced ?? pool.query(text as never, values as never);
+    }) as Pool["query"];
+    return proxy;
+  };
+
+  /** An upload driven against a checklist item, with the database staged by the caller. */
+  const uploadWith = (database: Pool, storage: DocumentStorage, checklistItemId: string) =>
+    request(
+      createApp({
+        database: pool,
+        intakeContract,
+        today: () => FIXTURE_TODAY,
+        checklist: { database, storage },
+      }),
+    )
+      .post(`/api/checklist-items/${checklistItemId}/documents`)
+      .set("Content-Type", "application/pdf")
+      .send(PDF);
+
   /** A scenario event with its plan and checklist already materialized. */
   const checklistFor = async (
     scenarioId: string,
@@ -457,9 +487,10 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const split = await request(api).post(`/api/events/${eventId}/checklist`);
 
       expect(split.status).toBe(201);
-      // Partial overlap is not a match: the organizer is told the plan changed rather than
-      // having "submitted" carried onto a line whose scope just changed.
-      expect(split.body.planChanged).toBe(true);
+      // Partial overlap is not a match, so "submitted" is not carried onto a line whose scope
+      // just changed. This POST is the organizer accepting the new plan, so the prompt clears;
+      // its rise and fall across every shape of regeneration is pinned below.
+      expect(split.body.planChanged).toBe(false);
       const items = split.body.items as ChecklistItemView[];
       expect(items).toHaveLength(3);
       const [kept, ...appended] = items;
@@ -509,7 +540,8 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       );
       expect(items.at(-1)?.ruleIds.slice().sort()).toEqual([...MERGED].sort());
       expect(items.at(-1)?.inLatestPlan).toBe(true);
-      expect(merged.body.planChanged).toBe(true);
+      // Cleared by this POST: the merged row is now tracked and the two struck rows are history.
+      expect(merged.body.planChanged).toBe(false);
 
       // And one checklist row per plan item, which is what the constraint exists to guarantee.
       const { rows } = await pool.query<{ count: string }>(
@@ -801,7 +833,8 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const rescoped = await request(api).post(`/api/events/${eventId}/checklist`);
 
       expect(rescoped.status).toBe(201);
-      expect(rescoped.body.planChanged).toBe(true);
+      // The rescope raised the prompt (asserted on the read below); this POST answers it.
+      expect(rescoped.body.planChanged).toBe(false);
       const items = rescoped.body.items as ChecklistItemView[];
       // Nothing is deleted: the large-event line survives with its status and note intact,
       // marked as no longer in the plan so the UI can strike it through.
@@ -1001,6 +1034,118 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     });
   });
 
+  /**
+   * Every shape of regeneration, rise and fall, in one place.
+   *
+   * `planChanged` has now been wrong twice in opposite directions — a comparison of rule-id sets
+   * missed a date-only regeneration, and a comparison of counts let a retained struck-through row
+   * hold the prompt open forever. Both were correct about the case they were written for. These
+   * cases are kept together so a future change cannot fix one shape and silently re-break another;
+   * a fix that only satisfies its own case fails here.
+   *
+   * The plans are written directly so each shape is exactly one difference, rather than whatever
+   * a rescope happens to produce.
+   */
+  describe("planChanged across every shape of regeneration", () => {
+    const A = "SAPO-STREET-LARGE-001";
+    const B = "NYPD-SOUND-001";
+    const C = "DOHMH-VENDOR-PERMIT-001";
+    const permits = (...ruleIds: string[]) =>
+      ruleIds.map((id) => ({ ruleIds: [id], kind: "permit" }));
+
+    /** An event whose checklist is materialized from a first synthetic plan. */
+    const startedFrom = async (ruleIds: string[]) => {
+      const eventId = await createEvent(scenario("A"));
+      await insertPlan(eventId, permits(...ruleIds), "2026-07-22T10:00:00Z");
+      const api = appWith(fakeStorage());
+      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(first.status).toBe(201);
+      expect(first.body.planChanged).toBe(false);
+      return { eventId, api };
+    };
+
+    const flagOn = async (api: ReturnType<typeof appWith>, eventId: string): Promise<boolean> =>
+      (await request(api).get(`/api/events/${eventId}/checklist`)).body.planChanged;
+
+    it("stays clear when nothing has been regenerated", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      expect(await flagOn(api, eventId)).toBe(false);
+      const again = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(again.status).toBe(200);
+      expect(again.body.planChanged).toBe(false);
+    });
+
+    it("rises for a regeneration that changed nothing but the plan, and clears on re-materialize", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      // The same requirements, new rows: the date-only rescope.
+      await insertPlan(eventId, permits(A, B), "2026-07-22T11:00:00Z");
+
+      expect(await flagOn(api, eventId)).toBe(true);
+      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+        false,
+      );
+      expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("rises for an added requirement, and clears on re-materialize", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      await insertPlan(eventId, permits(A, B, C), "2026-07-22T11:00:00Z");
+
+      expect(await flagOn(api, eventId)).toBe(true);
+      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(accepted.status).toBe(201);
+      expect(accepted.body.planChanged).toBe(false);
+      expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("rises for a removed requirement, and clears on re-materialize even though the row is kept", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
+
+      expect(await flagOn(api, eventId)).toBe(true);
+      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(accepted.body.planChanged).toBe(false);
+      // The retained row is history, not a pending review: it must not hold the prompt open on
+      // this read or any later one.
+      expect(await flagOn(api, eventId)).toBe(false);
+      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+        false,
+      );
+
+      // And it is still there, struck through, with nothing deleted (AC 6).
+      const items = (await request(api).get(`/api/events/${eventId}/checklist`)).body
+        .items as ChecklistItemView[];
+      expect(items).toHaveLength(2);
+      expect(items.find((item) => item.ruleIds[0] === B)?.inLatestPlan).toBe(false);
+    });
+
+    it("rises for a merge, and clears on re-materialize with both retained rows struck", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      await insertPlan(eventId, [{ ruleIds: [A, B], kind: "permit" }], "2026-07-22T11:00:00Z");
+
+      expect(await flagOn(api, eventId)).toBe(true);
+      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+        false,
+      );
+      expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("stays raised for as long as the organizer has not re-materialized", async () => {
+      const { eventId, api } = await startedFrom([A, B]);
+
+      await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
+
+      // Reading the checklist is not reviewing it; only re-creating it clears the prompt.
+      expect(await flagOn(api, eventId)).toBe(true);
+      expect(await flagOn(api, eventId)).toBe(true);
+    });
+  });
+
   // Review round 1, finding 7: a date and a status are not the whole regulatory answer.
   describe("published regulatory content on checklist items", () => {
     it("carries the confirm-with-agency notes and sources of a research_required deadline", async () => {
@@ -1130,29 +1275,45 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(storage.objects.size).toBe(0);
     });
 
-    it("removes the uploaded object when the metadata write fails", async () => {
+    /**
+     * What the api does with the bytes when the metadata write reports failure.
+     *
+     * A rejected query is not the same as a rejected statement: Postgres can commit the insert and
+     * the connection can drop before the result gets back. Round 1 deleted the object after any
+     * rejection, which turned that case into a `documents` row pointing at bytes that no longer
+     * exist — a document the organizer can see and click and get nothing from. The rule these
+     * cases pin is that the object is only deleted when the row is known to be absent, because an
+     * orphaned object is a failure nobody sees and orphaned metadata is a visible lie.
+     */
+    it("deletes the object when the server rejected the statement outright", async () => {
       const storage = fakeStorage();
       const { body } = await checklistFor("A", storage);
-      const failing = Object.create(pool) as Pool;
-      failing.query = ((text: string, values?: unknown[]) =>
-        typeof text === "string" && text.includes("INSERT INTO documents")
-          ? Promise.reject(new Error("connection terminated unexpectedly"))
-          : pool.query(text as never, values as never)) as Pool["query"];
+      const rejected = new DatabaseError("insert or update violates foreign key", 1, "error");
+      rejected.code = "23503";
+      const failing = poolIntercepting((text) =>
+        text.includes("INSERT INTO documents") ? Promise.reject(rejected) : null,
+      );
 
-      const response = await request(
-        createApp({
-          database: pool,
-          intakeContract,
-          today: () => FIXTURE_TODAY,
-          checklist: { database: failing, storage },
-        }),
-      )
-        .post(`/api/checklist-items/${body.items[0]?.id}/documents`)
-        .set("Content-Type", "application/pdf")
-        .send(PDF);
+      const response = await uploadWith(failing, storage, body.items[0]?.id as string);
+
+      // The server answered, so the statement never committed and nothing can reference the bytes.
+      expect(response.status).toBe(500);
+      expect(storage.objects.size).toBe(0);
+      expect(JSON.stringify(response.body)).not.toContain("foreign key");
+    });
+
+    it("deletes the object when the connection failed and the row is confirmed absent", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const failing = poolIntercepting((text) =>
+        text.includes("INSERT INTO documents")
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : null,
+      );
+
+      const response = await uploadWith(failing, storage, body.items[0]?.id as string);
 
       expect(response.status).toBe(500);
-      // No row, and no object left behind for it to have pointed at.
       expect(storage.objects.size).toBe(0);
       const { rows } = await pool.query("SELECT id FROM documents WHERE checklist_item_id = $1", [
         body.items[0]?.id,
@@ -1160,6 +1321,50 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(rows).toHaveLength(0);
       // The driver's message never reaches the client.
       expect(JSON.stringify(response.body)).not.toContain("connection terminated");
+    });
+
+    it("keeps the object when the insert committed but the client never heard so", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      // The row lands and the connection then drops before the result returns: the query rejects
+      // while the metadata exists. Deleting here is what would leave a document pointing at
+      // nothing.
+      const failing = poolIntercepting((text, values) =>
+        text.includes("INSERT INTO documents")
+          ? pool
+              .query(text, values as unknown[])
+              .then(() => Promise.reject(new Error("connection terminated unexpectedly")))
+          : null,
+      );
+
+      const response = await uploadWith(failing, storage, itemId);
+
+      expect(response.status).toBe(500);
+      const { rows } = await pool.query<{ storage_key: string }>(
+        "SELECT storage_key FROM documents WHERE checklist_item_id = $1",
+        [itemId],
+      );
+      expect(rows).toHaveLength(1);
+      // The row survived, so the bytes it names must too.
+      expect(storage.objects.has(rows[0]?.storage_key as string)).toBe(true);
+    });
+
+    it("keeps the object when nothing can say whether the row was written", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      // The insert fails ambiguously and the database cannot be reached to settle it either.
+      const failing = poolIntercepting((text) =>
+        text.includes("documents")
+          ? Promise.reject(new Error("connection terminated unexpectedly"))
+          : null,
+      );
+
+      const response = await uploadWith(failing, storage, body.items[0]?.id as string);
+
+      expect(response.status).toBe(500);
+      // Unknown is not the same as failed, so the bytes stay and the key is logged for cleanup.
+      expect(storage.objects.size).toBe(1);
     });
 
     it("still reports the write failure when the compensating delete also fails", async () => {

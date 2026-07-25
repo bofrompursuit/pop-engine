@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type NextFunction, type Request, type Response } from "express";
+import { DatabaseError } from "pg";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 import { CHECKLIST_STATUSES } from "@pop-engine/engine";
 import type {
@@ -409,15 +410,17 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     ]),
   );
 
-  // Identity is the plan-item ROW, not the requirement. A regeneration writes new rows for the
-  // same requirements, so this is true whenever the checklist is not pointing at the current
-  // plan — including the common rescope where the requirements are unchanged and only the filing
-  // dates moved, which a set comparison of rule ids cannot see. `materialize` re-points the rows,
-  // so re-creating the checklist is what clears the flag.
+  // One question, asked of the latest plan only: is there a line in it the checklist is not
+  // pointing at? `materialize` re-points every surviving requirement at the current plan's row,
+  // so after it runs the answer is no; a regeneration makes it yes again, including the rescope
+  // where the requirements are identical and only the filing dates moved.
+  //
+  // Deliberately one-directional. Retained struck-through rows point at older plans by design —
+  // they are history, not a pending review — and they are absent from `trackable`, so no count
+  // of them and nothing else the checklist keeps can hold the prompt open. Only the latest plan
+  // can raise it, and only re-materializing can clear it (spec AC 6).
   const trackedItemIds = new Set(items.map((item) => item.plan_item_id));
-  const planChanged =
-    trackedItemIds.size !== trackable.length ||
-    trackable.some((item) => !trackedItemIds.has(item.id));
+  const planChanged = trackable.some((item) => !trackedItemIds.has(item.id));
 
   return {
     eventId,
@@ -565,11 +568,11 @@ function peek(req: Request, size: number): Promise<{ head: Buffer; ended: boolea
 }
 
 /**
- * Delete an object whose metadata write failed, so the bucket does not keep bytes nothing points
- * at. If the delete itself fails there is nothing further to try — the repository has no cleanup
- * queue, and the outbox that would give one is Phase 2 (ARCHITECTURE-FUTURE) — so the key is
- * logged for manual deletion and the original failure is still what the client is told. The
- * object is unreferenced either way: no `documents` row was written, so no download can reach it.
+ * Delete an object whose metadata write is known not to have landed, so the bucket does not keep
+ * bytes nothing points at. If the delete itself fails there is nothing further to try — the
+ * repository has no cleanup queue, and the outbox that would give one is Phase 2
+ * (ARCHITECTURE-FUTURE) — so the key is logged for manual deletion and the original failure is
+ * still what the client is told.
  */
 async function removeOrphanedObject(storage: DocumentStorage, key: string): Promise<void> {
   try {
@@ -579,6 +582,42 @@ async function removeOrphanedObject(storage: DocumentStorage, key: string): Prom
       `orphaned document object ${key} could not be removed and needs manual deletion`,
       error,
     );
+  }
+}
+
+/** Whether the metadata row exists after the insert reported failure. */
+type MetadataOutcome = "written" | "not_written" | "unknown";
+
+/**
+ * A rejected query is not the same as a rejected statement. If Postgres commits the insert and
+ * the connection drops before the result gets back, node-postgres rejects while the row exists.
+ *
+ * That distinction decides which failure the organizer gets, and the two are not equally bad. An
+ * orphaned object costs storage and nobody ever sees it. Orphaned metadata is a document the
+ * organizer can see in their checklist and click and get nothing from — a visible lie about what
+ * they uploaded. So the object is deleted only when the row is known to be absent, and every
+ * uncertain path keeps the bytes.
+ *
+ * `DatabaseError` means the server answered with an error, so the statement never committed. Any
+ * other failure happened somewhere in the round trip and settles nothing by itself, so the id —
+ * freshly generated and unique to this request, which no retry or concurrent upload can reuse —
+ * is looked up once. A lookup that cannot answer leaves the outcome unknown, and unknown keeps
+ * the object.
+ */
+async function metadataOutcome(
+  database: Queryable,
+  documentId: string,
+  error: unknown,
+): Promise<MetadataOutcome> {
+  if (error instanceof DatabaseError) return "not_written";
+  try {
+    const { rows } = await database.query<{ id: string }>(
+      "SELECT id FROM documents WHERE id = $1",
+      [documentId],
+    );
+    return rows.length > 0 ? "written" : "not_written";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -776,9 +815,20 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         );
         res.status(201).json(documentView(created[0] as DocumentRow));
       } catch (error) {
-        // The object is already in the bucket and nothing will ever reference it, so it is
-        // removed before the failure is reported. A retry then writes exactly one object.
-        await removeOrphanedObject(storage, storageKey);
+        const outcome = await metadataOutcome(database, documentId, error);
+        if (outcome === "not_written") {
+          // Nothing references the object and nothing will, so a retry writes exactly one.
+          await removeOrphanedObject(storage, storageKey);
+        } else {
+          // Either the row is there and the client simply never heard so, or nobody can say.
+          // Deleting on that would leave a document the organizer can click and get nothing
+          // from, so the bytes stay and the key is logged instead.
+          console.error(
+            `document ${documentId} may have been written for object ${storageKey}; the object ` +
+              `is kept and needs reconciling by hand (metadata outcome: ${outcome})`,
+            error,
+          );
+        }
         throw error;
       }
     }),
