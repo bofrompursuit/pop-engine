@@ -322,6 +322,11 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
            SELECT id FROM permit_plans WHERE event_id = ANY($1))`,
         [createdEventIds],
       );
+      // Before the plans it references: the acknowledgement's composite FK is what stops one
+      // event's checklist naming another event's plan, and it holds here too.
+      await pool.query("DELETE FROM checklist_acknowledgements WHERE event_id = ANY($1)", [
+        createdEventIds,
+      ]);
       await pool.query("DELETE FROM permit_plans WHERE event_id = ANY($1)", [createdEventIds]);
       await pool.query("DELETE FROM events WHERE id = ANY($1)", [createdEventIds]);
     }
@@ -1133,6 +1138,74 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         false,
       );
       expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("rises when the regeneration removes every trackable requirement", async () => {
+      // The case that defeated all four earlier shapes. Each of them asked the checklist whether
+      // the latest plan held a line it was not pointing at; with every requirement gone there is
+      // no such line, so the answer was no and the largest possible change to a plan produced
+      // silence. Scenario B is exactly this plan — advisories only, nothing to track.
+      const { eventId, api } = await startedFrom([A, B]);
+
+      await insertPlan(
+        eventId,
+        [{ ruleIds: ["ADV-NOISE-CODE-001"], kind: "advisory" }],
+        "2026-07-22T11:00:00Z",
+      );
+
+      expect(await flagOn(api, eventId)).toBe(true);
+      // Both retained rows are struck through and nothing is deleted, so an empty trackable set on
+      // the new plan is not an empty checklist.
+      const items = (await request(api).get(`/api/events/${eventId}/checklist`)).body
+        .items as ChecklistItemView[];
+      expect(items).toHaveLength(2);
+      expect(items.every((item) => !item.inLatestPlan)).toBe(true);
+
+      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+        false,
+      );
+      expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("answers from the acknowledgement row and from nothing else", async () => {
+      // Pins the mechanism rather than the outcome. If the flag were still being derived from the
+      // checklist's own rows, removing the acknowledgement would leave it unchanged; instead the
+      // question becomes unanswerable and the checklist reads as never reviewed.
+      const { eventId, api } = await startedFrom([A, B]);
+      await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
+      expect(await flagOn(api, eventId)).toBe(true);
+
+      const { rowCount } = await pool.query(
+        "DELETE FROM checklist_acknowledgements WHERE event_id = $1",
+        [eventId],
+      );
+      expect(rowCount).toBe(1);
+      expect(await flagOn(api, eventId)).toBe(false);
+    });
+
+    it("moves the acknowledgement forward on every review rather than accumulating rows", async () => {
+      // One row per event (migration 002), and `acknowledged_at` must actually advance: Postgres
+      // does not re-evaluate the column default on conflict, so an upsert that sets only plan_id
+      // would report the first review forever.
+      const { eventId, api } = await startedFrom([A, B]);
+      const acknowledgement = async () =>
+        (
+          await pool.query<{ plan_id: string; acknowledged_at: Date }>(
+            "SELECT plan_id, acknowledged_at FROM checklist_acknowledgements WHERE event_id = $1",
+            [eventId],
+          )
+        ).rows;
+
+      const [first] = await acknowledgement();
+      const secondPlan = await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
+      await request(api).post(`/api/events/${eventId}/checklist`);
+
+      const rows = await acknowledgement();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.plan_id).toBe(secondPlan);
+      expect(rows[0]?.acknowledged_at.getTime()).toBeGreaterThan(
+        first?.acknowledged_at.getTime() ?? 0,
+      );
     });
 
     it("stays raised for as long as the organizer has not re-materialized", async () => {

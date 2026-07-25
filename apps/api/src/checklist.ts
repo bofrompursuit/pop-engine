@@ -362,6 +362,21 @@ const documentView = (row: DocumentRow) => ({
  * The whole checklist for an event: its items with live plan context, the read-only lines of
  * the latest plan, and whether the plan the checklist was built from has been superseded.
  */
+/**
+ * The plan the organizer last converted into a checklist, or null if they never have.
+ *
+ * `materialize` writes this row in the same transaction that creates the checklist, so a checklist
+ * cannot exist without one. That is what makes its absence mean "no checklist yet" rather than
+ * "checklist of unknown vintage".
+ */
+async function acknowledgedPlanId(database: Queryable, eventId: string): Promise<string | null> {
+  const { rows } = await database.query<{ plan_id: string }>(
+    "SELECT plan_id FROM checklist_acknowledgements WHERE event_id = $1",
+    [eventId],
+  );
+  return rows[0]?.plan_id ?? null;
+}
+
 async function checklistView(database: Queryable, eventId: string, plan: LatestPlan) {
   const unordered = await checklistRows(database, eventId);
   const firstSeen = await firstSeenByRequirement(database, eventId);
@@ -402,7 +417,6 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     };
   });
 
-  const trackable = latestItems.filter((item) => TRACKABLE_FINDING_KINDS.has(item.kind));
   const statusRollup = Object.fromEntries(
     CHECKLIST_STATUSES.map((status) => [
       status,
@@ -410,17 +424,21 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     ]),
   );
 
-  // One question, asked of the latest plan only: is there a line in it the checklist is not
-  // pointing at? `materialize` re-points every surviving requirement at the current plan's row,
-  // so after it runs the answer is no; a regeneration makes it yes again, including the rescope
-  // where the requirements are identical and only the filing dates moved.
+  // Asked of the plan and the acknowledgement, never of the checklist's own rows: is the latest
+  // plan the one the organizer last reviewed? `materialize` records the plan it ran against, so
+  // the answer is no immediately afterwards and yes again the moment a regeneration replaces it —
+  // including the rescope where the requirements are identical and only the filing dates moved.
   //
-  // Deliberately one-directional. Retained struck-through rows point at older plans by design —
-  // they are history, not a pending review — and they are absent from `trackable`, so no count
-  // of them and nothing else the checklist keeps can hold the prompt open. Only the latest plan
-  // can raise it, and only re-materializing can clear it (spec AC 6).
-  const trackedItemIds = new Set(items.map((item) => item.plan_item_id));
-  const planChanged = trackable.some((item) => !trackedItemIds.has(item.id));
+  // Every earlier shape of this asked the checklist to report on a plan it does not hold, and each
+  // one broke on the same case: a regeneration that removes every trackable requirement leaves
+  // nothing on the latest plan to compare against, so the largest possible change produced
+  // silence. Comparing two plan ids has no such blind spot, because it never consults the item
+  // set — the item set being empty tells it nothing and therefore hides nothing.
+  //
+  // Null means no checklist has ever been created, which is not a change to review; the organizer
+  // is offered creation instead (AC 6 flags an existing checklist).
+  const acknowledged = await acknowledgedPlanId(database, eventId);
+  const planChanged = acknowledged !== null && acknowledged !== plan.id;
 
   return {
     eventId,
@@ -476,6 +494,21 @@ async function materialize(client: PoolClient, eventId: string, planId: string):
       item.id,
     ]);
   }
+
+  // Converting the plan into a checklist is the organizer reviewing it (AC 1, and AC 6's "review
+  // items" — the same idempotent call, which is why this needs no endpoint of its own). One row
+  // per event, so a later review replaces the earlier one rather than accumulating.
+  //
+  // `acknowledged_at` is set explicitly because Postgres does not re-evaluate a column default on
+  // conflict: updating `plan_id` alone would leave the timestamp reporting the first review
+  // forever (migration 002).
+  await client.query(
+    `INSERT INTO checklist_acknowledgements (event_id, plan_id, acknowledged_at)
+       VALUES ($1, $2, current_timestamp)
+     ON CONFLICT (event_id)
+       DO UPDATE SET plan_id = EXCLUDED.plan_id, acknowledged_at = EXCLUDED.acknowledged_at`,
+    [eventId, planId],
+  );
   return created;
 }
 
