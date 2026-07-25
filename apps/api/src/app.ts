@@ -1,6 +1,7 @@
 import express, { type Express, type Response } from "express";
 import { describeEngine, EvaluationError } from "@pop-engine/engine";
 import { createCheckinsRouter } from "./checkins";
+import { createChecklistRouter, type ChecklistDependencies } from "./checklist";
 import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 import { createRsvpsRouter } from "./rsvps";
@@ -8,6 +9,8 @@ import { createRsvpsRouter } from "./rsvps";
 export type AppDependencies = EventsDependencies & {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
   planService?: PlanService;
+  /** Same contract for F-202: the checklist routes register only when storage is supplied. */
+  checklist?: ChecklistDependencies;
 };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
@@ -51,6 +54,9 @@ export function createApp(dependencies: AppDependencies): Express {
     createRsvpsRouter({ database: dependencies.database, today: dependencies.today }),
   );
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
+  if (dependencies.checklist !== undefined) {
+    app.use("/api", createChecklistRouter(dependencies.checklist));
+  }
 
   return app;
 }
