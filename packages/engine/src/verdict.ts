@@ -10,12 +10,14 @@ import {
 import { UNKNOWN_ANSWER } from "./conditions";
 import { triggerFields } from "./ruleset";
 import type {
-  BranchOutcome,
   EngineRuleset,
   EventIntake,
   Finding,
+  IntakeValue,
   MissingFact,
   RescopeSuggestion,
+  TriggerNode,
+  UnresolvedTimeline,
   Verdict,
   VerdictDetail,
 } from "./types";
@@ -71,6 +73,11 @@ export function computeWindowVerdict(findings: readonly Finding[]): WindowVerdic
 const ruleIdsOf = (findings: readonly Finding[]): string[] =>
   findings.flatMap((finding) => finding.ruleIds).sort();
 
+/**
+ * What a branch has to agree on before its unknown can be called immaterial: ARCHITECTURE step 3
+ * makes an unknown that changes the finding set OR THE TIMELINE conditional, so the signature
+ * carries each finding's date, not just the verdict.
+ */
 const branchSignature = (verdict: Verdict, findings: readonly Finding[]): string =>
   [
     verdict,
@@ -91,78 +98,160 @@ function describeDifference(base: readonly Finding[], candidate: readonly Findin
   return parts.length === 0 ? "same findings, re-dated" : parts.join("; ");
 }
 
-type Evaluated = { readonly findings: readonly Finding[]; readonly window: WindowVerdict };
+type BranchValue = { readonly display: string; readonly value: IntakeValue };
 
-function evaluateWith(
-  intake: EventIntake,
+/**
+ * Declared alternatives for a field, minus its current answer and minus `unknown`. Booleans
+ * enumerate as true/false: the registry declares no `values` for them, but an unanswered flag has
+ * exactly two branches and leaving it out would drop it from the branch table (P1-B).
+ */
+function alternativeValues(
   field: string,
-  value: string,
+  intake: EventIntake,
   ruleset: EngineRuleset,
-  context: PlanContext,
-): Evaluated {
-  const branchIntake = { ...intake, [field]: value };
-  const findings = resolveFindings(branchIntake, ruleset, {
-    ...context,
-    intake: branchIntake,
-  }).findings;
-  return { findings, window: computeWindowVerdict(findings) };
-}
-
-/** Declared alternatives for a field, minus its current answer and minus `unknown`. */
-function alternativeValues(field: string, intake: EventIntake, ruleset: EngineRuleset): string[] {
+): BranchValue[] {
   const definition = ruleset.intakeFields.find((entry) => entry.field === field);
-  const values = definition?.values ?? null;
-  if (values === null) return [];
-  return values.filter(
-    (value) =>
-      value !== intake[field] && !(RESCOPE_EXCLUDES_UNKNOWN_VALUES && value === UNKNOWN_ANSWER),
-  );
+  if (definition === undefined) return [];
+  if (definition.values !== null) {
+    return definition.values
+      .filter(
+        (value) =>
+          value !== intake[field] && !(RESCOPE_EXCLUDES_UNKNOWN_VALUES && value === UNKNOWN_ANSWER),
+      )
+      .map((value) => ({ display: value, value }));
+  }
+  if (definition.type === "boolean") {
+    return [true, false]
+      .filter((value) => value !== intake[field])
+      .map((value) => ({ display: String(value), value }));
+  }
+  return [];
 }
 
-function buildMissingFacts(
-  unknownFields: readonly string[],
+/**
+ * The published thresholds that decide a field the engine cannot enumerate, so a numeric unknown
+ * still tells a client what to ask for instead of leaving an empty branch table (P2).
+ */
+function publishedThresholds(field: string, ruleset: EngineRuleset): string | null {
+  const described: string[] = [];
+  const walk = (node: TriggerNode, ruleId: string): void => {
+    if ("field" in node) {
+      if (node.field !== field || typeof node.value !== "number") return;
+      const comparison = node.op === "gt" ? "above" : node.op === "gte" ? "at or above" : null;
+      if (comparison !== null) described.push(`${ruleId} applies ${comparison} ${node.value}`);
+      return;
+    }
+    for (const child of "all" in node ? node.all : node.any) walk(child, ruleId);
+  };
+  for (const rule of ruleset.rules) walk(rule.trigger, rule.id);
+  return described.length === 0 ? null : described.join("; ");
+}
+
+type ConditionalEvaluation = {
+  readonly findings: readonly Finding[];
+  readonly window: WindowVerdict;
+  readonly verdict: Verdict;
+  readonly missingFacts: readonly MissingFact[];
+  readonly unresolvedTimelines: readonly UnresolvedTimeline[];
+};
+
+/**
+ * ARCHITECTURE step 3, recursively: every branch is evaluated FULLY, which means the unknowns that
+ * remain inside a branch are branched there too. Resolving one field and then running the plain
+ * window check would let the others vanish from that branch's verdict (P1-C).
+ */
+function evaluateConditional(
   intake: EventIntake,
   ruleset: EngineRuleset,
   context: PlanContext,
-  base: readonly Finding[],
-): {
-  readonly missingFacts: readonly MissingFact[];
-  readonly branchesDiverge: boolean;
-  readonly allBranchable: boolean;
-} {
-  const ordered = ruleset.intakeFields
-    .map((definition) => definition.field)
-    .filter((field) => unknownFields.includes(field));
-  const missingFacts: MissingFact[] = [];
-  let branchesDiverge = false;
-  let allBranchable = ordered.length === unknownFields.length;
+): ConditionalEvaluation {
+  const resolved = resolveFindings(intake, ruleset, context);
+  const window = computeWindowVerdict(resolved.findings);
+  const unresolvedTimelines = resolved.findings
+    .filter((finding) => finding.timelineUnresolvedReason !== null)
+    .map((finding) => ({
+      ruleIds: finding.ruleIds,
+      reason: finding.timelineUnresolvedReason as string,
+    }));
 
-  for (const field of ordered) {
+  const unknownFields = ruleset.intakeFields
+    .map((definition) => definition.field)
+    .filter((field) => resolved.unknownFields.includes(field));
+
+  const missingFacts: MissingFact[] = [];
+  const pathVerdicts: Verdict[] = [];
+  let diverges = false;
+  let hasNonEnumerableUnknown = false;
+
+  for (const field of unknownFields) {
     const values = alternativeValues(field, intake, ruleset);
     if (values.length === 0) {
-      // A numeric or free-form unknown cannot be enumerated into branches, but it is still material.
-      allBranchable = false;
+      hasNonEnumerableUnknown = true;
+      missingFacts.push({ field, branches: [], thresholds: publishedThresholds(field, ruleset) });
       continue;
     }
-    const branches = values.map((value) => ({
-      value,
-      ...evaluateWith(intake, field, value, ruleset, context),
-    }));
-    const outcomes: BranchOutcome[] = branches.map((branch) => ({
-      value: branch.value,
-      verdict: branch.window.verdict,
-      reason: describeDifference(base, branch.findings),
-    }));
-    // ARCHITECTURE step 3: an unknown that changes the finding set *or the timeline* is
-    // conditional, so the signature carries each finding's date, not just the verdict.
-    const signatures = branches.map((branch) =>
-      branchSignature(branch.window.verdict, branch.findings),
-    );
-    if (new Set(signatures).size > 1) branchesDiverge = true;
-    missingFacts.push({ field, branches: outcomes });
+
+    const branches = values.map((candidate) => {
+      const branchIntake = { ...intake, [field]: candidate.value };
+      return {
+        display: candidate.display,
+        ...evaluateConditional(branchIntake, ruleset, { ...context, intake: branchIntake }),
+      };
+    });
+
+    missingFacts.push({
+      field,
+      thresholds: null,
+      branches: branches.map((branch) => ({
+        value: branch.display,
+        verdict: branch.verdict,
+        reason: describeDifference(resolved.findings, branch.findings),
+      })),
+    });
+
+    const signatures = branches.map((branch) => branchSignature(branch.verdict, branch.findings));
+    if (new Set(signatures).size > 1) diverges = true;
+    pathVerdicts.push(...branches.map((branch) => branch.verdict));
   }
 
-  return { missingFacts, branchesDiverge, allBranchable };
+  return {
+    findings: resolved.findings,
+    window,
+    verdict: resolveVerdict({
+      window,
+      pathVerdicts,
+      diverges,
+      hasNonEnumerableUnknown,
+      hasUnresolvedTimeline: unresolvedTimelines.length > 0,
+    }),
+    missingFacts,
+    unresolvedTimelines,
+  };
+}
+
+function resolveVerdict({
+  window,
+  pathVerdicts,
+  diverges,
+  hasNonEnumerableUnknown,
+  hasUnresolvedTimeline,
+}: {
+  window: WindowVerdict;
+  pathVerdicts: readonly Verdict[];
+  diverges: boolean;
+  hasNonEnumerableUnknown: boolean;
+  hasUnresolvedTimeline: boolean;
+}): Verdict {
+  // A closed published window is not softened by an unknown that cannot reopen it: when every
+  // path misses, the plan misses. This only ever makes a verdict worse, so it cannot overclaim.
+  if (pathVerdicts.length > 0 && pathVerdicts.every((verdict) => verdict === "INFEASIBLE")) {
+    return "INFEASIBLE";
+  }
+  if (window.verdict === "INFEASIBLE" && pathVerdicts.length === 0) return "INFEASIBLE";
+  // An unknown that moves the finding set or the timeline, one the registry cannot enumerate, or a
+  // published window we cannot date, all leave the outcome genuinely undetermined.
+  if (diverges || hasNonEnumerableUnknown || hasUnresolvedTimeline) return "CONDITIONAL";
+  return pathVerdicts.length > 0 ? (pathVerdicts[0] as Verdict) : window.verdict;
 }
 
 /** Fields whose `asked_when` chain the blocking rule ultimately hangs off (proposals §6, R1). */
@@ -193,7 +282,7 @@ function buildRescopeSuggestions(
   intake: EventIntake,
   ruleset: EngineRuleset,
   context: PlanContext,
-  base: Evaluated,
+  base: { readonly findings: readonly Finding[]; readonly verdict: Verdict },
 ): RescopeSuggestion[] {
   const blockingRules = ruleset.rules.filter((rule) => blocking.ruleIds.includes(rule.id));
   const triggerFieldNames = blockingRules.flatMap((rule) => triggerFields(rule.trigger));
@@ -207,9 +296,13 @@ function buildRescopeSuggestions(
 
   for (const definition of ruleset.intakeFields) {
     if (!candidateFields.has(definition.field)) continue;
-    for (const value of alternativeValues(definition.field, intake, ruleset)) {
-      const candidate = evaluateWith(intake, definition.field, value, ruleset, context);
-      if (VERDICT_RANK[candidate.window.verdict] <= VERDICT_RANK[base.window.verdict]) continue;
+    for (const candidateValue of alternativeValues(definition.field, intake, ruleset)) {
+      const candidateIntake = { ...intake, [definition.field]: candidateValue.value };
+      const candidate = evaluateConditional(candidateIntake, ruleset, {
+        ...context,
+        intake: candidateIntake,
+      });
+      if (VERDICT_RANK[candidate.verdict] <= VERDICT_RANK[base.verdict]) continue;
 
       const introduced = candidate.findings.filter((finding) =>
         finding.ruleIds.every((ruleId) => !baseRuleIds.has(ruleId)),
@@ -228,8 +321,8 @@ function buildRescopeSuggestions(
 
       const candidateIds = new Set(ruleIdsOf(candidate.findings));
       suggestions.push({
-        change: { field: definition.field, value },
-        reevaluatedVerdict: candidate.window.verdict,
+        change: { field: definition.field, value: candidateValue.display },
+        reevaluatedVerdict: candidate.verdict,
         droppedRuleIds: [...baseRuleIds].filter((ruleId) => !candidateIds.has(ruleId)),
       });
     }
@@ -247,30 +340,19 @@ export function computeVerdict(
   readonly verdictDetail: VerdictDetail;
 } {
   const resolved = resolveFindings(intake, ruleset, context);
-  const window = computeWindowVerdict(resolved.findings);
-  const base: Evaluated = { findings: resolved.findings, window };
-
-  const { missingFacts, branchesDiverge, allBranchable } = buildMissingFacts(
-    resolved.unknownFields,
-    intake,
-    ruleset,
-    context,
-    resolved.findings,
-  );
-
-  // Step 3: an unknown that moves the finding set or the timeline gives CONDITIONAL; an
-  // unknown the registry cannot enumerate is still material, so it cannot be waved through.
-  const hasMaterialUnknown = resolved.unknownFields.length > 0;
-  const verdict: Verdict =
-    hasMaterialUnknown && (branchesDiverge || !allBranchable) ? "CONDITIONAL" : window.verdict;
+  const evaluated = evaluateConditional(intake, ruleset, context);
+  const { window, verdict } = evaluated;
 
   const rescopeSuggestions =
     verdict === "INFEASIBLE" && window.blockingFinding !== null
-      ? buildRescopeSuggestions(window.blockingFinding, intake, ruleset, context, base)
+      ? buildRescopeSuggestions(window.blockingFinding, intake, ruleset, context, {
+          findings: evaluated.findings,
+          verdict,
+        })
       : [];
 
   return {
-    findings: resolved.findings,
+    findings: evaluated.findings,
     verdict,
     verdictDetail: {
       blockingFinding:
@@ -279,7 +361,8 @@ export function computeVerdict(
           : null,
       missedRuleIds: window.missedRuleIds,
       minSlackDays: window.minSlackDays,
-      missingFacts,
+      missingFacts: evaluated.missingFacts,
+      unresolvedTimelines: evaluated.unresolvedTimelines,
       rescopeSuggestions,
       trace: resolved.trace,
     },

@@ -24,32 +24,38 @@ export type Condition = {
 export type TriggerNode =
   Condition | { readonly all: readonly TriggerNode[] } | { readonly any: readonly TriggerNode[] };
 
+/** Every deadline can carry the published caveat that qualifies its number (P1-D). */
+type DeadlineQualification = { readonly qualification: string | null };
+
 export type Deadline =
-  | {
+  | ({
       readonly type: "published_minimum";
       readonly calendarDays: number;
       readonly display: string | null;
-    }
-  | {
+    } & DeadlineQualification)
+  | ({
       readonly type: "published_minimum_by_level";
       readonly levels: Readonly<
         Record<string, { readonly calendarDays: number; readonly multiBlockDays: number | null }>
       >;
       readonly unknownLevelBehavior: string | null;
-    }
-  | {
+    } & DeadlineQualification)
+  | ({
       readonly type: "composite";
       readonly hardFloorDays: number;
       readonly processingRangeDays: readonly [number, number];
       readonly display: string | null;
-    }
-  | {
+    } & DeadlineQualification)
+  | ({
       readonly type: "business_days_minimum";
       readonly businessDays: number;
       readonly display: string | null;
-    }
-  | { readonly type: "before_issuance"; readonly display: string | null }
-  | { readonly type: "research_required"; readonly display: string | null };
+    } & DeadlineQualification)
+  | ({ readonly type: "before_issuance"; readonly display: string | null } & DeadlineQualification)
+  | ({
+      readonly type: "research_required";
+      readonly display: string | null;
+    } & DeadlineQualification);
 
 export type VerificationStatus =
   "SOURCE_CONFIRMED" | "OFFICIAL_CONFLICT" | "RESEARCH_REQUIRED" | "COVERAGE_GAP" | "VERIFIED";
@@ -112,6 +118,8 @@ export type EngineRule = {
 
 export type EngineRuleset = {
   readonly rulesetVersion: string;
+  /** e.g. "US-NY-NYC". The api maps this to the local clock a plan's `today` is read from. */
+  readonly jurisdiction: string;
   readonly snapshotDate: string;
   readonly slackWarningDays: number;
   readonly calendarId: string;
@@ -161,6 +169,13 @@ export type Finding = {
   readonly noteText: string | null;
   /** Intake fields that stopped this finding's deadline from resolving (e.g. an unknown plaza level). */
   readonly deadlineUnknownFields: readonly string[];
+  /**
+   * Why this finding's published deadline could not be turned into a date, when the cause is a
+   * missing input rather than an unanswered question — today, only an unpublished holiday list.
+   * The requirement is real and dated by the agency; it is the timeline we cannot compute, so the
+   * plan stays CONDITIONAL rather than dropping the window from the arithmetic (P1-A).
+   */
+  readonly timelineUnresolvedReason: string | null;
   /** Both readings of an OFFICIAL_CONFLICT rule, verbatim; null otherwise. */
   readonly conflictText: string | null;
   readonly sources: readonly FindingSource[];
@@ -174,7 +189,16 @@ export type BranchOutcome = {
   readonly reason: string;
 };
 
-export type MissingFact = { readonly field: string; readonly branches: readonly BranchOutcome[] };
+export type MissingFact = {
+  readonly field: string;
+  readonly branches: readonly BranchOutcome[];
+  /**
+   * Set when the field cannot be enumerated into branches (a numeric answer has no declared
+   * values), naming the published thresholds that decide it. The fact is still listed: a client
+   * that only sees "conditional" with an empty branch table cannot tell what to ask for.
+   */
+  readonly thresholds: string | null;
+};
 
 export type RescopeSuggestion = {
   readonly change: { readonly field: string; readonly value: string };
@@ -184,6 +208,9 @@ export type RescopeSuggestion = {
 
 export type EvaluationTraceEntry = { readonly ruleId: string; readonly result: Tristate };
 
+/** A finding whose published window exists but could not be computed from the inputs supplied. */
+export type UnresolvedTimeline = { readonly ruleIds: readonly string[]; readonly reason: string };
+
 export type VerdictDetail = {
   readonly blockingFinding: {
     readonly ruleIds: readonly string[];
@@ -192,6 +219,7 @@ export type VerdictDetail = {
   readonly missedRuleIds: readonly string[];
   readonly minSlackDays: number | null;
   readonly missingFacts: readonly MissingFact[];
+  readonly unresolvedTimelines: readonly UnresolvedTimeline[];
   readonly rescopeSuggestions: readonly RescopeSuggestion[];
   readonly trace: readonly EvaluationTraceEntry[];
 };

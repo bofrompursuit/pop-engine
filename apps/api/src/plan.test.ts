@@ -8,7 +8,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseEngineRuleset, type EngineRuleset, type HolidayCalendar } from "@pop-engine/engine";
 import { createApp } from "./app";
-import { holidayCalendarWarning, pinnedCalendar } from "./calendar";
+import { holidayCalendarWarning, pinnedCalendar, todayInJurisdiction } from "./calendar";
 import { calendarDateFrom, createPlanService } from "./plan";
 import { rulesFilePath } from "./ruleset";
 
@@ -235,7 +235,28 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(holidayCalendarWarning({ id: "published@2026", holidays: [] })).toBeNull();
   });
 
-  it("degrades only the business-day finding when no holiday list is published", async () => {
+  it("derives today in the jurisdiction's own calendar, not UTC", () => {
+    // 2026-08-12T02:30:00Z is still 2026-08-11 in New York. Reading the date off UTC would age the
+    // plan a day early and could mark a window missed hours before it closes.
+    const lateEvening = new Date("2026-08-12T02:30:00Z");
+    expect(todayInJurisdiction("US-NY-NYC", lateEvening)).toBe("2026-08-11");
+    expect(todayInJurisdiction("US-NY-NYC", new Date("2026-08-12T14:00:00Z"))).toBe("2026-08-12");
+    expect(() => todayInJurisdiction("US-XX-NOWHERE")).toThrow(/no local time zone is mapped/);
+  });
+
+  it("rejects a malformed event id without touching the database", async () => {
+    const app = appWith();
+    for (const route of ["post", "get"] as const) {
+      const response = await request(app)[route]("/api/events/not-a-uuid/plan");
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("event id must be a uuid");
+      // No driver text: a 22P02 would otherwise arrive here as a 500 carrying Postgres detail.
+      expect(JSON.stringify(response.body)).not.toContain("22P02");
+      expect(response.body.detail).toBeUndefined();
+    }
+  });
+
+  it("keeps a plan conditional and names the finding whose window it cannot date", async () => {
     // Rooftop with alcohol and no venue licence: SLA-ONEDAY-001 is a 15-business-day deadline.
     const eventId = await insertEvent({
       location_type: "private_venue",
@@ -260,6 +281,13 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(withoutList.latestApplyDate).toBeNull();
     expect(withoutList.deadlineStatus).toBe("not_calculable");
     expect(withoutList.notes).toContain("confirm with agency");
+    // The window is published and real, so the plan says so rather than quietly dropping it.
+    expect(degraded.body.verdict).toBe("CONDITIONAL");
+    expect(
+      degraded.body.verdictDetail.unresolvedTimelines.map(
+        (entry: { ruleIds: string[] }) => entry.ruleIds,
+      ),
+    ).toContainEqual(["SLA-ONEDAY-001"]);
     // Everything that needs no business-day math still carries its real date.
     const assembly = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
       finding.ruleIds.includes("DOB-ASSEMBLY-001"),

@@ -42,6 +42,36 @@ export function pinnedCalendar(calendarId: string): HolidayCalendar {
   return { id: calendarId, holidays: PUBLISHED_HOLIDAY_CALENDARS[calendarId] ?? null };
 }
 
+/**
+ * The clock a plan's `today` is read from, per jurisdiction. A deadline is a calendar day in the
+ * city that publishes it, so deriving `today` from UTC would roll over between 8pm and midnight
+ * New York time and could mark a window missed hours before it closes. This is a deployment
+ * mapping, not a regulatory fact: the ruleset publishes the jurisdiction but no timezone.
+ */
+const JURISDICTION_TIME_ZONES: Readonly<Record<string, string>> = {
+  "US-NY-NYC": "America/New_York",
+};
+
+export class UnmappedJurisdictionError extends Error {
+  constructor(jurisdiction: string) {
+    super(`no local time zone is mapped for jurisdiction "${jurisdiction}"`);
+    this.name = "UnmappedJurisdictionError";
+  }
+}
+
+/** `today` in the jurisdiction's own calendar, as an ISO date the engine can take as a parameter. */
+export function todayInJurisdiction(jurisdiction: string, now: Date = new Date()): string {
+  const timeZone = JURISDICTION_TIME_ZONES[jurisdiction];
+  if (timeZone === undefined) throw new UnmappedJurisdictionError(jurisdiction);
+  // en-CA formats as YYYY-MM-DD, which is the shape every date in a plan uses.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
 /** Operational warning at boot: plans still generate, but business-day lines will not be dated. */
 export function holidayCalendarWarning(calendar: HolidayCalendar): string | null {
   return calendar.holidays === null ? new MissingHolidayCalendarError(calendar.id).message : null;

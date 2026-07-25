@@ -90,6 +90,7 @@ type FindingRendering = {
   deadline_display: string | null;
   slack_days: number | null;
   deadline_unknown_fields: readonly string[];
+  timeline_unresolved_reason: string | null;
 };
 
 const renderingOf = (finding: Finding): FindingRendering => ({
@@ -100,6 +101,7 @@ const renderingOf = (finding: Finding): FindingRendering => ({
   deadline_display: finding.deadlineDisplay,
   slack_days: finding.slackDays,
   deadline_unknown_fields: finding.deadlineUnknownFields,
+  timeline_unresolved_reason: finding.timelineUnresolvedReason,
 });
 
 const renderingKey = (ruleIds: readonly string[]): string => ruleIds.join(",");
@@ -322,6 +324,7 @@ function findingFromRow(row: PlanItemRow, rendering: FindingRendering): Finding 
     notes: rendering.notes,
     noteText: rendering.note_text,
     deadlineUnknownFields: rendering.deadline_unknown_fields,
+    timelineUnresolvedReason: rendering.timeline_unresolved_reason,
     conflictText: rendering.conflict_text,
     sources: row.sources,
     verificationStatus: row.verification_status,

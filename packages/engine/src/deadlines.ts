@@ -22,6 +22,12 @@ export type DatedDeadline = {
    * and a plan whose real 14–60-day window may already be missed would read FEASIBLE.
    */
   readonly unknownFields: readonly string[];
+  /**
+   * Set when a published deadline exists but its date cannot be computed from the inputs supplied
+   * — as opposed to `research_required`, where no agency published a lead time at all. The window
+   * is real, so it must keep weighing on the verdict as an unknown timeline (P1-A).
+   */
+  readonly timelineUnresolvedReason: string | null;
 };
 
 export type DeadlineContext = {
@@ -57,6 +63,7 @@ function dateBackFrom(
     slackDays,
     deadlineDisplay: null,
     unknownFields: [],
+    timelineUnresolvedReason: null,
   };
 }
 
@@ -64,28 +71,63 @@ function undatable(
   deadlineStatus: DeadlineStatus,
   deadlineDisplay: string | null,
   unknownFields: readonly string[] = [],
+  timelineUnresolvedReason: string | null = null,
 ): DatedDeadline {
-  return { latestApplyDate: null, deadlineStatus, slackDays: null, deadlineDisplay, unknownFields };
+  return {
+    latestApplyDate: null,
+    deadlineStatus,
+    slackDays: null,
+    deadlineDisplay,
+    unknownFields,
+    timelineUnresolvedReason,
+  };
 }
 
-/** True when the level field is in scope but unanswered — the case the rule publishes behavior for. */
-function isLevelUnknown(context: DeadlineContext): boolean {
-  if (!context.scope.isInScope(LEVEL_DEADLINE_BINDING.levelField)) return false;
-  const level = context.intake[LEVEL_DEADLINE_BINDING.levelField];
-  return level === undefined || level === null || level === UNKNOWN_ANSWER;
+/** True when `field` is in scope but carries no answer, i.e. the question was asked and not answered. */
+function isUnanswered(field: string, context: DeadlineContext): boolean {
+  if (!context.scope.isInScope(field)) return false;
+  const value = context.intake[field];
+  return value === undefined || value === null || value === UNKNOWN_ANSWER;
 }
+
+type LevelResolution =
+  | { readonly kind: "days"; readonly days: number }
+  | { readonly kind: "unknown"; readonly field: string; readonly display: string }
+  | { readonly kind: "unresolvable" };
 
 function resolveLevelDays(
   deadline: Extract<Deadline, { type: "published_minimum_by_level" }>,
-  intake: EventIntake,
-) {
-  const level = intake[LEVEL_DEADLINE_BINDING.levelField];
+  context: DeadlineContext,
+): LevelResolution {
+  const { levelField, multiBlockField } = LEVEL_DEADLINE_BINDING;
+  if (isUnanswered(levelField, context)) {
+    return { kind: "unknown", field: levelField, display: levelRangeDisplay(deadline) };
+  }
+
+  const level = context.intake[levelField];
   const definition = typeof level === "string" ? deadline.levels[level] : undefined;
-  if (definition === undefined) return null;
-  const isMultiBlock = intake[LEVEL_DEADLINE_BINDING.multiBlockField] === true;
-  return isMultiBlock && definition.multiBlockDays !== null
-    ? definition.multiBlockDays
-    : definition.calendarDays;
+  if (definition === undefined) return { kind: "unresolvable" };
+
+  const { calendarDays, multiBlockDays } = definition;
+  if (multiBlockDays === null) return { kind: "days", days: calendarDays };
+
+  // A level that publishes a distinct multi-block window cannot be dated from an unanswered flag:
+  // treating "not answered" as "single block" would quietly apply the shorter window and can
+  // present an already-missed multi-block deadline as on track (P1-B).
+  if (isUnanswered(multiBlockField, context)) {
+    return {
+      kind: "unknown",
+      field: multiBlockField,
+      display:
+        `${calendarDays}–${multiBlockDays} days depending on whether the event spans multiple ` +
+        `blocks; ${CONFIRM_WITH_AGENCY}`,
+    };
+  }
+
+  return {
+    kind: "days",
+    days: context.intake[multiBlockField] === true ? multiBlockDays : calendarDays,
+  };
 }
 
 /** The published day range across all levels, for the CONDITIONAL rendering when the level is unknown. */
@@ -114,19 +156,18 @@ export function computeDeadline(
       };
 
     case "published_minimum_by_level": {
-      const days = resolveLevelDays(deadline, context.intake);
       // SAPO-PLAZA-001 publishes its own unknown-level behavior: "CONDITIONAL listing 14–60
-      // range". Reporting the level as a material unknown is what makes the verdict conditional;
-      // the range comes from the rule's own level table, never from a guess.
-      if (days === null) {
-        return undatable(
-          "not_calculable",
-          levelRangeDisplay(deadline),
-          isLevelUnknown(context) ? [LEVEL_DEADLINE_BINDING.levelField] : [],
-        );
+      // range". Reporting the blocking field as a material unknown is what makes the verdict
+      // conditional; every number comes from the rule's own level table, never from a guess.
+      const resolution = resolveLevelDays(deadline, context);
+      if (resolution.kind === "unknown") {
+        return undatable("not_calculable", resolution.display, [resolution.field]);
+      }
+      if (resolution.kind === "unresolvable") {
+        return undatable("not_calculable", levelRangeDisplay(deadline));
       }
       return {
-        ...dateBackFrom(addCalendarDays(context.eventDate, -days), context),
+        ...dateBackFrom(addCalendarDays(context.eventDate, -resolution.days), context),
         deadlineDisplay: null,
       };
     }
@@ -153,12 +194,23 @@ export function computeDeadline(
 
     case "business_days_minimum": {
       // No published holiday list means this date cannot be computed. Weekday-only arithmetic
-      // would count a holiday as a business day and put the deadline later than it really is, so
-      // the finding takes the ruleset's own treatment for an uncomputable deadline instead: listed,
-      // rendered "confirm with agency", excluded from verdict arithmetic (engine_conventions).
-      // Only the findings that need business days degrade; the rest of the plan still computes.
+      // would count a holiday as a business day and put the deadline later than it really is.
+      //
+      // The agency HAS published this deadline, so the requirement and its window are real; only
+      // our ability to date it is missing. That is an unknown timeline, not an absent one, and
+      // ARCHITECTURE step 3 makes an unknown that changes the timeline CONDITIONAL. Dropping it
+      // from the arithmetic the way a research_required lead time is dropped would let a plan read
+      // FEASIBLE while the window is already closed (P1-A).
       const { holidays } = context.calendar;
-      if (holidays === null) return undatable("not_calculable", deadline.display);
+      if (holidays === null) {
+        return undatable(
+          "not_calculable",
+          deadline.display,
+          [],
+          `${deadline.businessDays} business days before the event, which needs the ` +
+            `"${context.calendar.id}" holiday list; no list is published for it`,
+        );
+      }
       return {
         ...dateBackFrom(
           subtractBusinessDays(context.eventDate, deadline.businessDays, {

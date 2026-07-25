@@ -38,11 +38,24 @@ function resolveDisposition(rule: EngineRule, result: Tristate): Disposition {
   return result === "unknown" && published === "required" ? UNKNOWN_TRIGGER_DISPOSITION : published;
 }
 
-/** Any deadline the engine could not compute gets the published "confirm with agency" treatment. */
+/**
+ * The rule's own notes, plus the published caveats that qualify what it says: the deadline's
+ * `qualification` (which instrument applies, calendar vs business days) and the verification
+ * block's, both of which are regulatory text and neither of which may be dropped just because the
+ * engine computed a date. Any deadline the engine could not compute also gets the published
+ * "confirm with agency" treatment.
+ */
 function ruleNotes(rule: EngineRule, deadlineStatus: DeadlineStatus): string[] {
   const needsAgencyConfirmation =
     deadlineStatus === "not_calculable" || rule.verificationStatus === "RESEARCH_REQUIRED";
-  return needsAgencyConfirmation ? [...rule.notes, CONFIRM_WITH_AGENCY] : [...rule.notes];
+  return [
+    ...rule.notes,
+    ...(rule.deadline?.qualification === undefined || rule.deadline.qualification === null
+      ? []
+      : [rule.deadline.qualification]),
+    ...(rule.verificationQualification === null ? [] : [rule.verificationQualification]),
+    ...(needsAgencyConfirmation ? [CONFIRM_WITH_AGENCY] : []),
+  ];
 }
 
 function ruleSources(rule: EngineRule): FindingSource[] {
@@ -78,6 +91,7 @@ function buildFinding(
     notes: ruleNotes(rule, dated.deadlineStatus),
     noteText: rule.noteText,
     deadlineUnknownFields: dated.unknownFields,
+    timelineUnresolvedReason: dated.timelineUnresolvedReason,
     // An OFFICIAL_CONFLICT rule renders both readings and every source; it never resolves silently.
     conflictText: rule.verificationStatus === "OFFICIAL_CONFLICT" ? rule.noteText : null,
     sources: ruleSources(rule),
@@ -94,6 +108,7 @@ function mergeFindings(first: Finding, second: Finding): Finding {
     sources: [...first.sources, ...second.sources],
     triggeredBy: [...first.triggeredBy, ...second.triggeredBy],
     deadlineUnknownFields: [...first.deadlineUnknownFields, ...second.deadlineUnknownFields],
+    timelineUnresolvedReason: first.timelineUnresolvedReason ?? second.timelineUnresolvedReason,
     noteText: first.noteText ?? second.noteText,
     conflictText: first.conflictText ?? second.conflictText,
   };

@@ -127,6 +127,9 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
   const deadline = asObject(value, label);
   const type = asString(deadline.type, `${label}.type`);
   const display = optionalString(deadline, "display");
+  // The published caveat on the number itself (which instrument applies, calendar vs business
+  // days). Dropping it presents a computed date as more definitive than its source is.
+  const qualification = optionalString(deadline, "qualification");
 
   switch (type) {
     case "published_minimum":
@@ -134,6 +137,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         type,
         calendarDays: asNumber(deadline.calendar_days, `${label}.calendar_days`),
         display,
+        qualification,
       };
     case "published_minimum_by_level": {
       const levels = asObject(deadline.levels, `${label}.levels`);
@@ -155,6 +159,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         type,
         levels: parsedLevels,
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
+        qualification,
       };
     }
     case "composite": {
@@ -168,6 +173,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
           asNumber(range[1], `${label}.processing_range_days[1]`),
         ],
         display,
+        qualification,
       };
     }
     case "business_days_minimum":
@@ -175,11 +181,12 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         type,
         businessDays: asNumber(deadline.business_days, `${label}.business_days`),
         display,
+        qualification,
       };
     case "before_issuance":
-      return { type, display };
+      return { type, display, qualification };
     case "research_required":
-      return { type, display };
+      return { type, display, qualification };
     default:
       return fail(`${label}.type has unsupported value "${type}"`);
   }
@@ -292,6 +299,7 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
 
   return {
     rulesetVersion: asString(ruleset.ruleset_version, "ruleset.ruleset_version"),
+    jurisdiction: asString(ruleset.jurisdiction, "ruleset.jurisdiction"),
     snapshotDate: asString(ruleset.snapshot_date, "ruleset.snapshot_date"),
     slackWarningDays: asNumber(slackWarning.value, "ruleset.config.slack_warning_days.value"),
     calendarId: asString(businessDayMath.calendar, "ruleset.config.business_day_math.calendar"),

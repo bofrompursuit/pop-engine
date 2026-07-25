@@ -1,5 +1,6 @@
-import express, { type Express } from "express";
+import express, { type Express, type Response } from "express";
 import { describeEngine } from "@pop-engine/engine";
+import { EvaluationError } from "@pop-engine/engine";
 import { EventNotFoundError, type PlanService } from "./plan";
 
 export type AppDependencies = {
@@ -48,9 +49,33 @@ export function createApp({ planService }: AppDependencies = {}): Express {
  * F-201/F-102 plan routes. A rule-evaluation failure returns an explicit error and never a
  * plan with no findings, so the api can never present a failure as "nothing required" (AC 5).
  */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A malformed id must not reach `WHERE id = $1`: Postgres raises 22P02 coercing it to uuid, which
+ * would surface as a 500 carrying driver error text. Client mistakes get a client error, and
+ * database internals stay on the server.
+ */
+function rejectMalformedId(id: string, res: Response): boolean {
+  if (UUID.test(id)) return false;
+  res.status(400).json({ error: "event id must be a uuid" });
+  return true;
+}
+
+/** Only the engine's own messages are safe to echo; anything else could carry driver detail. */
+function respondWithFailure(res: Response, error: unknown, summary: string): void {
+  if (error instanceof EvaluationError) {
+    res.status(500).json({ error: summary, detail: error.message });
+    return;
+  }
+  console.error(summary, error);
+  res.status(500).json({ error: summary });
+}
+
 function registerPlanRoutes(app: Express, planService: PlanService): void {
   app.post("/api/events/:id/plan", (req, res) => {
     const eventId = req.params.id;
+    if (rejectMalformedId(eventId, res)) return;
     planService
       .generate(eventId)
       .then((plan) => res.status(201).json(plan))
@@ -59,15 +84,13 @@ function registerPlanRoutes(app: Express, planService: PlanService): void {
           res.status(404).json({ error: error.message });
           return;
         }
-        res.status(500).json({
-          error: "plan generation failed",
-          detail: error instanceof Error ? error.message : String(error),
-        });
+        respondWithFailure(res, error, "plan generation failed");
       });
   });
 
   app.get("/api/events/:id/plan", (req, res) => {
     const eventId = req.params.id;
+    if (rejectMalformedId(eventId, res)) return;
     planService
       .latest(eventId)
       .then((plan) => {
@@ -82,7 +105,7 @@ function registerPlanRoutes(app: Express, planService: PlanService): void {
           res.status(404).json({ error: error.message });
           return;
         }
-        res.status(500).json({ error: "plan lookup failed" });
+        respondWithFailure(res, error, "plan lookup failed");
       });
   });
 }

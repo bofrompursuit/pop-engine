@@ -151,10 +151,12 @@ describe("Scenario A — Bushwick Street Activation (demo anchor)", () => {
   it("produces the three rescopes by full re-evaluation, not static text (AC 9)", () => {
     const suggestions = plan(intakeA).verdictDetail.rescopeSuggestions;
     expect(suggestions).toEqual([
-      // (c) private venue: SAPO permit + SAPO insurance drop
+      // (c) private venue: SAPO permit + SAPO insurance drop. Conditional rather than at-risk
+      // because moving indoors opens a question the street version never asked — whether the
+      // amplified sound carries to a public way (§10-108(b)(3)) — and that decides a permit.
       {
         change: { field: "location_type", value: "private_venue" },
-        reevaluatedVerdict: "FEASIBLE_AT_RISK",
+        reevaluatedVerdict: "CONDITIONAL",
         droppedRuleIds: ["SAPO-INSURANCE-001", "SAPO-STREET-LARGE-001"],
       },
       // (b) size=small: 14-day deadline clears; the DOHMH notification is the tight one
@@ -557,8 +559,12 @@ describe("Scenario F — Rooftop Launch Party (conditional branches)", () => {
     const licenseFact = result.verdictDetail.missingFacts.find(
       (fact) => fact.field === "venue_license_covers_event_area",
     );
+    // Each branch is itself evaluated in full: the "yes" branch stays conditional because sound
+    // audibility is still open inside it and decides whether a permit applies. The "no" branch is
+    // infeasible on every remaining path — the SLA window is missed whatever the sound answer is —
+    // so it reports the closed window rather than hiding it behind another "it depends".
     expect(licenseFact?.branches.map((branch) => [branch.value, branch.verdict])).toEqual([
-      ["yes", "FEASIBLE_AT_RISK"],
+      ["yes", "CONDITIONAL"],
       ["no", "INFEASIBLE"],
     ]);
     expect(result.verdictDetail.missingFacts.map((fact) => fact.field)).toContain(

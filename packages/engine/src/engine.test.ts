@@ -46,6 +46,7 @@ const parkIntake: EventIntake = {
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
+    jurisdiction: "US-NY-NYC",
     snapshot_date: "2026-07-22",
     config: {
       slack_warning_days: { value: 14 },
@@ -250,8 +251,10 @@ describe("typed deadlines", () => {
     expect(plan.verdict).toBe("CONDITIONAL");
   });
 
-  it("reports an unknown level as missed rather than on track when the window has closed", () => {
-    // Nine days out: even the shortest published level window (14 days) is already gone.
+  it("reports an unknown level as missed rather than on track when every window has closed", () => {
+    // Nine days out: even the shortest published level window (14 days) is already gone, so no
+    // answer to the level question reopens it. Calling that conditional would understate a closed
+    // window; the finding still renders undated with the published range.
     const plan = evaluate(
       { ...unknownLevelPlaza, event_date: "2026-07-31" },
       ruleset,
@@ -260,7 +263,7 @@ describe("typed deadlines", () => {
     );
     const levelFact = plan.verdictDetail.missingFacts.find((fact) => fact.field === "plaza_level");
     expect(levelFact?.branches.every((branch) => branch.verdict === "INFEASIBLE")).toBe(true);
-    expect(plan.verdict).toBe("CONDITIONAL");
+    expect(plan.verdict).toBe("INFEASIBLE");
     expect(plan.findings.find((f) => f.ruleIds.includes("SAPO-PLAZA-001"))?.deadlineStatus).toBe(
       "not_calculable",
     );
@@ -306,7 +309,7 @@ describe("business-day arithmetic against the pinned calendar", () => {
     expect(differenceInCalendarDays("2026-07-22", "2026-08-26")).toBe(35);
   });
 
-  it("declines a business-day deadline instead of guessing when no list is published", () => {
+  it("keeps an uncomputable published window conditional instead of dropping it", () => {
     // holidays: null is "no list published for this calendar id", not "a list with no holidays".
     // Weekday-only math would date SLA-ONEDAY-001 at 2026-07-21 and could call a missed window
     // on track, so the finding takes the published uncomputable-deadline treatment instead.
