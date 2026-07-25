@@ -233,6 +233,104 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       expect((await request(api).get(`/api/events/${event.id}`)).body.plan_stale).toBe(false);
     });
 
+    it("waits for a concurrent edit rather than answering from a row it read first", async () => {
+      // The interleave is real, not simulated: a second connection holds the row lock
+      // while it makes an edit, so the PATCH physically cannot read until that edit
+      // commits. Without the lock the PATCH reads first, decides nothing changed, and
+      // answers with revision 1 and a plan reported current — the row having already
+      // moved to revision 2 underneath it.
+      const event = await createStreetEvent();
+      await database.query(
+        `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, verdict,
+                                   verdict_detail, intake_snapshot)
+         VALUES ($1, $2, 1, 'nyc.v2.1', 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+        [randomUUID(), event.id],
+      );
+      const stored = await request(api).get(`/api/events/${event.id}`);
+      expect(stored.body.plan_stale).toBe(false);
+      const noOpIntake = Object.fromEntries(
+        Object.entries(stored.body.event).filter(
+          ([column]) =>
+            !["id", "status", "revision_counter", "created_at", "updated_at"].includes(column),
+        ),
+      );
+
+      const holder = await database.connect();
+      let settled = false;
+      let resaved: request.Response;
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT * FROM events WHERE id = $1 FOR UPDATE", [event.id]);
+
+        const inFlight = request(api)
+          .patch(`/api/events/${event.id}`)
+          .send(noOpIntake)
+          .then((response) => {
+            settled = true;
+            return response;
+          });
+
+        // The other connection commits a real edit while this request is blocked.
+        await holder.query(
+          "UPDATE events SET headcount = 175, revision_counter = revision_counter + 1 WHERE id = $1",
+          [event.id],
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(settled, "the PATCH answered before the concurrent edit committed").toBe(false);
+
+        await holder.query("COMMIT");
+        resaved = await inFlight;
+      } finally {
+        holder.release();
+      }
+
+      // The answer describes the row as it stands after the concurrent edit, never the
+      // one this request would have read had it not waited.
+      expect(resaved.status).toBe(200);
+      expect(resaved.body.event.revision_counter).toBeGreaterThan(1);
+      expect(resaved.body.plan_stale).toBe(true);
+      const afterwards = await request(api).get(`/api/events/${event.id}`);
+      expect(afterwards.body.event.revision_counter).toBe(resaved.body.event.revision_counter);
+      expect(afterwards.body.plan_stale).toBe(true);
+    });
+
+    it("answers only once its own write is durable", async () => {
+      // The response is built inside the transaction but sent after the commit, so a
+      // client that reads back the instant it is answered cannot see an older row than
+      // the one it was just handed.
+      const event = await createStreetEvent();
+      const edited = await request(api).patch(`/api/events/${event.id}`).send({ headcount: 90 });
+      const readBack = await request(api).get(`/api/events/${event.id}`);
+
+      expect(edited.body.event.revision_counter).toBe(2);
+      expect(readBack.body.event.revision_counter).toBe(2);
+      expect(readBack.body.event.headcount).toBe(90);
+    });
+
+    it("rolls the transaction back when the write fails, leaving the event untouched", async () => {
+      // The trigger is the int4 overflow tracked on issue #89: the engine accepts a
+      // whole non-negative number and the column rejects it, which is a 500 today. What
+      // matters here is that the failure does not leave a half-applied edit or a
+      // connection stuck in an aborted transaction.
+      const event = await createStreetEvent();
+      const failed = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ headcount: 3_000_000_000 });
+      expect(failed.status).toBe(500);
+
+      const afterwards = await request(api).get(`/api/events/${event.id}`);
+      expect(afterwards.status).toBe(200);
+      expect(afterwards.body.event.revision_counter).toBe(1);
+      expect(afterwards.body.event.headcount).toBe(75);
+
+      // The pool still works, so the connection went back clean rather than aborted.
+      const stillEditable = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ headcount: 76 });
+      expect(stillEditable.status).toBe(200);
+      expect(stillEditable.body.event.revision_counter).toBe(2);
+    });
+
     it("reads a re-ticked multi-select as unchanged but a different one as an edit", async () => {
       const event = await createStreetEvent();
       const reordered = await request(api)

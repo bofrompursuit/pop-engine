@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
-import { types, type Pool } from "pg";
+import { types, type Pool, type QueryResult, type QueryResultRow } from "pg";
 import {
   intakeColumnNames,
   intakeWarnings,
@@ -35,10 +35,16 @@ export type EventsDependencies = {
 
 type EventRow = Record<string, unknown> & { id: string; revision_counter: number };
 
+/** A pool or a single pooled connection. Reads that must agree with each other take the
+ * same connection, so they see one consistent moment of the database. */
+type Queryable = {
+  query<Row extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
+};
+
 const quoted = (columns: readonly string[]): string =>
   columns.map((column) => `"${column}"`).join(", ");
 
-async function readEvent(database: Pool, id: string): Promise<EventRow | null> {
+async function readEvent(database: Queryable, id: string): Promise<EventRow | null> {
   const { rows } = await database.query<EventRow>("SELECT * FROM events WHERE id = $1", [id]);
   return rows[0] ?? null;
 }
@@ -47,7 +53,7 @@ async function readEvent(database: Pool, id: string): Promise<EventRow | null> {
  * A plan is stale once the event has been edited past the revision the plan evaluated
  * (AD-13). No plan yet is not stale.
  */
-async function isPlanStale(database: Pool, event: EventRow): Promise<boolean> {
+async function isPlanStale(database: Queryable, event: EventRow): Promise<boolean> {
   const { rows } = await database.query<{ event_revision: number }>(
     "SELECT event_revision FROM permit_plans WHERE event_id = $1 ORDER BY generated_at DESC LIMIT 1",
     [event.id],
@@ -56,17 +62,60 @@ async function isPlanStale(database: Pool, event: EventRow): Promise<boolean> {
   return latest !== undefined && latest.event_revision < event.revision_counter;
 }
 
-async function respondWithEvent(
-  { database, intakeContract }: EventsDependencies,
-  res: Response,
+/** A response held until the work behind it is durable, rather than sent mid-transaction. */
+type EventResponse = { status: number; body: unknown };
+
+async function eventResponse(
+  database: Queryable,
+  intakeContract: IntakeContract,
   event: EventRow,
   status: number,
-): Promise<void> {
-  res.status(status).json({
-    event,
-    warnings: intakeWarnings(intakeContract, event as IntakeAnswers),
-    plan_stale: await isPlanStale(database, event),
-  });
+): Promise<EventResponse> {
+  return {
+    status,
+    body: {
+      event,
+      warnings: intakeWarnings(intakeContract, event as IntakeAnswers),
+      plan_stale: await isPlanStale(database, event),
+    },
+  };
+}
+
+const notFound: EventResponse = { status: 404, body: { error: "event not found" } };
+
+/**
+ * Run an edit against an event with its row locked for the whole decision.
+ *
+ * Reading the row, deciding whether the edit changes anything, writing, and reading the
+ * plan's revision all have to describe one moment. Without the lock a concurrent PATCH
+ * can commit between the read and the response, and this request answers with a row
+ * that no longer exists as described — an event rolled back to an older revision, or a
+ * plan reported current against a revision the event has already passed.
+ *
+ * The response is built inside the transaction but returned for sending after the
+ * commit: a client that reads back the moment it is answered must not be able to see a
+ * state older than the one it was just told about.
+ */
+async function withLockedEvent(
+  database: Pool,
+  id: string,
+  edit: (client: Queryable, stored: EventRow | null) => Promise<EventResponse>,
+): Promise<EventResponse> {
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<EventRow>("SELECT * FROM events WHERE id = $1 FOR UPDATE", [
+      id,
+    ]);
+    const response = await edit(client, rows[0] ?? null);
+    await client.query("COMMIT");
+    return response;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function readSubmission(req: Request, res: Response): Record<string, unknown> | null {
@@ -106,9 +155,9 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
 
   // Every edit bumps the revision counter server-side, which is what marks an existing
   // plan stale (spec #8) — plans pin the revision they evaluated rather than being patched.
-  const update = async (id: string, values: IntakeRecord): Promise<EventRow> => {
+  const update = async (client: Queryable, id: string, values: IntakeRecord): Promise<EventRow> => {
     const assignments = columns.map((column, index) => `"${column}" = $${index + 2}`).join(", ");
-    const { rows } = await database.query<EventRow>(
+    const { rows } = await client.query<EventRow>(
       `UPDATE events
           SET ${assignments},
               revision_counter = revision_counter + 1,
@@ -131,7 +180,8 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
         res.status(400).json({ errors, warnings });
         return;
       }
-      await respondWithEvent(dependencies, res, await insert(values), 201);
+      const created = await eventResponse(database, intakeContract, await insert(values), 201);
+      res.status(created.status).json(created.body);
     }),
   );
 
@@ -140,11 +190,9 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
     handle(async (req, res) => {
       const id = req.params.id ?? "";
       const event = UUID.test(id) ? await readEvent(database, id) : null;
-      if (event === null) {
-        res.status(404).json({ error: "event not found" });
-        return;
-      }
-      await respondWithEvent(dependencies, res, event, 200);
+      const response =
+        event === null ? notFound : await eventResponse(database, intakeContract, event, 200);
+      res.status(response.status).json(response.body);
     }),
   );
 
@@ -155,30 +203,35 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
       if (submission === null) return;
 
       const id = req.params.id ?? "";
-      const stored = UUID.test(id) ? await readEvent(database, id) : null;
-      if (stored === null) {
-        res.status(404).json({ error: "event not found" });
+      if (!UUID.test(id)) {
+        res.status(notFound.status).json(notFound.body);
         return;
       }
 
-      // The whole intake is re-validated after the edit is applied, so an edit cannot
-      // leave the row in a state the intake would have refused to create. Answers the
-      // edit hides are cleared by the merge, so a rescope (street event → park) saves
-      // without the client having to null out every SAPO answer by hand.
-      const edited = mergeIntakeEdit(intakeContract, pickIntake(stored, columns), submission);
-      const { values, errors, warnings } = validateIntake(intakeContract, edited, today());
-      if (values === null) {
-        res.status(400).json({ errors, warnings });
-        return;
-      }
-      // A save that changes no answer is not an edit (AD-13), so it leaves the revision
-      // counter alone. Bumping it would report a plan as stale against an intake it
-      // still matches exactly, forcing a regeneration that can only produce the same
-      // plan. Checked here rather than in the client so it holds for every caller.
-      const event = isIntakeUnchanged(intakeContract, stored, values)
-        ? stored
-        : await update(stored.id, values);
-      await respondWithEvent(dependencies, res, event, 200);
+      // Every read this response is built from is taken under the row lock, so the
+      // event, the decision about whether anything changed, and the plan's revision all
+      // describe the same moment. A concurrent edit either lands entirely before this
+      // one or waits for it.
+      const response = await withLockedEvent(database, id, async (client, stored) => {
+        if (stored === null) return notFound;
+
+        // The whole intake is re-validated after the edit is applied, so an edit cannot
+        // leave the row in a state the intake would have refused to create. Answers the
+        // edit hides are cleared by the merge, so a rescope (street event → park) saves
+        // without the client having to null out every SAPO answer by hand.
+        const edited = mergeIntakeEdit(intakeContract, pickIntake(stored, columns), submission);
+        const { values, errors, warnings } = validateIntake(intakeContract, edited, today());
+        if (values === null) return { status: 400, body: { errors, warnings } };
+        // A save that changes no answer is not an edit (AD-13), so it leaves the revision
+        // counter alone. Bumping it would report a plan as stale against an intake it
+        // still matches exactly, forcing a regeneration that can only produce the same
+        // plan. Checked here rather than in the client so it holds for every caller.
+        const event = isIntakeUnchanged(intakeContract, stored, values)
+          ? stored
+          : await update(client, stored.id, values);
+        return eventResponse(client, intakeContract, event, 200);
+      });
+      res.status(response.status).json(response.body);
     }),
   );
 
