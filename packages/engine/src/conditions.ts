@@ -3,7 +3,6 @@
 // registry never scopes in is not material at all (F-201 spec, "Uncollected/inapplicable
 // branch fields evaluate per the registry's asked-when scoping").
 
-import { BOUNDARY_CONDITIONAL_RULES } from "./proposals";
 import { EvaluationError } from "./types";
 import type {
   AskedWhenClause,
@@ -255,23 +254,12 @@ function asStringArray(value: Exclude<IntakeValue, null>): readonly string[] | n
   return Array.isArray(value) ? (value as readonly string[]) : null;
 }
 
-/** `true` when the answer sits exactly on a published threshold this rule flags as ambiguous (proposals §4). */
-function isAtDeclaredBoundary(ruleId: string, condition: Condition, answer: number): boolean {
-  return BOUNDARY_CONDITIONAL_RULES.some(
-    (boundary) =>
-      boundary.ruleId === ruleId &&
-      boundary.field === condition.field &&
-      condition.op === "gt" &&
-      boundary.threshold === answer &&
-      answer === condition.value,
-  );
+/** True when the answer sits exactly on a threshold the rule publishes as unresolved there. */
+function isAtDeclaredBoundary(condition: Condition, answer: number): boolean {
+  return condition.boundary === "conditional" && answer === condition.value;
 }
 
-function compareAnswer(
-  condition: Condition,
-  value: Exclude<IntakeValue, null>,
-  ruleId: string,
-): Tristate {
+function compareAnswer(condition: Condition, value: Exclude<IntakeValue, null>): Tristate {
   const asTristate = (matched: boolean): Tristate => (matched ? "true" : "false");
   const list = asStringArray(value);
 
@@ -286,7 +274,7 @@ function compareAnswer(
     }
     case "gt": {
       const answer = requireNumber(value, condition);
-      if (isAtDeclaredBoundary(ruleId, condition, answer)) return "unknown";
+      if (isAtDeclaredBoundary(condition, answer)) return "unknown";
       return asTristate(answer > requireNumber(condition.value, condition));
     }
     case "gte":
@@ -316,7 +304,6 @@ function evaluateCondition(
   condition: Condition,
   intake: EventIntake,
   scope: ScopeResolver,
-  ruleId: string,
 ): TriggerEvaluation {
   const answer = resolveAnswer(condition.field, intake, scope);
   const contribution: TriggeredBy = {
@@ -339,7 +326,7 @@ function evaluateCondition(
     return { result: "unknown", unknownFields: [condition.field], triggeredBy: [contribution] };
   }
 
-  const result = compareAnswer(condition, answer.value, ruleId);
+  const result = compareAnswer(condition, answer.value);
   return {
     result,
     unknownFields: result === "unknown" ? [condition.field] : [],
@@ -352,13 +339,12 @@ export function evaluateTrigger(
   node: TriggerNode,
   intake: EventIntake,
   scope: ScopeResolver,
-  ruleId: string,
 ): TriggerEvaluation {
-  if ("field" in node) return evaluateCondition(node, intake, scope, ruleId);
+  if ("field" in node) return evaluateCondition(node, intake, scope);
 
   const isAll = "all" in node;
   const children = (isAll ? node.all : node.any).map((child) =>
-    evaluateTrigger(child, intake, scope, ruleId),
+    evaluateTrigger(child, intake, scope),
   );
   const decisive: Tristate = isAll ? "false" : "true";
   const otherwise: Tristate = isAll ? "true" : "false";

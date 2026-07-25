@@ -44,9 +44,5 @@ export {
 export { CONFIRM_WITH_AGENCY } from "./deadlines";
 export { computeWindowVerdict } from "./verdict";
 export { UNKNOWN_ANSWER } from "./conditions";
-export {
-  BOUNDARY_CONDITIONAL_RULES,
-  DEFAULT_DISPOSITION_BY_RULE_KIND,
-  UNKNOWN_TRIGGER_DISPOSITION,
-} from "./proposals";
+export { DEFAULT_DISPOSITION_BY_RULE_KIND, UNKNOWN_TRIGGER_DISPOSITION } from "./proposals";
 export * from "./types";

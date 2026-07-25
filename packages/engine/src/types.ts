@@ -19,7 +19,17 @@ export type Condition = {
   readonly field: string;
   readonly op: ConditionOperator;
   readonly value: unknown;
+  /**
+   * Declared when an answer exactly on this threshold is unresolved rather than below it.
+   * DOB-TENT-001 publishes it for "more than 400 sq ft", whose own note says exactly 400 renders
+   * CONDITIONAL. Per condition, because it is a fact about that threshold: FDNY-GENERATOR-001's
+   * 2.5 gallons and DOB-STAGE-001's 2 feet exclude their exact values and say so by declaring
+   * nothing.
+   */
+  readonly boundary: ConditionBoundary | null;
 };
+
+export type ConditionBoundary = "conditional";
 
 export type TriggerNode =
   Condition | { readonly all: readonly TriggerNode[] } | { readonly any: readonly TriggerNode[] };
@@ -146,6 +156,20 @@ export type AskedWhenClause =
   | { readonly kind: "truthy"; readonly field: string }
   | { readonly kind: "member"; readonly field: string; readonly member: string };
 
+/**
+ * The intake fields a by-level deadline keys on.
+ *
+ * Held on the rule rather than on the deadline, because it is how the engine resolves the
+ * deadline and not part of what the deadline publishes. A finding snapshots `rule.deadline`
+ * verbatim, and a snapshot is only replayable if its shape is the shape the artifact published:
+ * nyc.v2.1–v2.3 declared no binding, so a legacy plan's stored deadline has no such keys and must
+ * not grow them when it is re-evaluated (AD-7).
+ */
+export type LevelBinding = {
+  readonly levelField: string;
+  readonly multiBlockField: string;
+};
+
 export type EngineRule = {
   readonly id: string;
   readonly kind: RuleKind;
@@ -154,6 +178,8 @@ export type EngineRule = {
   readonly agency: string | null;
   readonly publishedDisposition: Disposition | null;
   readonly deadline: Deadline | null;
+  /** Non-null exactly when `deadline` is a by-level deadline. */
+  readonly levelBinding: LevelBinding | null;
   readonly feeDisplay: string | null;
   readonly portalName: string | null;
   readonly portalUrl: string | null;
