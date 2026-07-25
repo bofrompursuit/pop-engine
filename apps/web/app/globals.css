@@ -253,3 +253,34 @@ body {
 .line__citation-links a {
   margin-left: 0.5rem;
 }
+
+.plan__stale {
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-line);
+  border-radius: 0.5rem;
+}
+
+.plan__stale p {
+  margin: 0 0 0.6rem;
+}
+
+.plan__stale button {
+  padding: 0.55rem 1rem;
+  font: inherit;
+  min-height: 2.75rem;
+  border: 1px solid var(--ink);
+  border-radius: 0.375rem;
+  background: white;
+}
+
+.plan__stale button[disabled] {
+  opacity: 0.6;
+}
+
+.plan__unconfirmed {
+  margin: 0 0 1.25rem;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}

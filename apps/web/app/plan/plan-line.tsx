@@ -164,6 +164,14 @@ export function PlanLine({ finding }: { finding: Finding }) {
         </p>
       ))}
 
+      {/* SPEC CONFLICT, parked on issue #89 — behaviour deliberately left as it is.
+          F-206 AC 2 requires every plan line to show a citation, and its edge-case note assumes a
+          missing source is impossible "given rules-file validation". The rules validator (#84)
+          deliberately permits a null source when `verification.status` is COVERAGE_GAP, and both
+          ADV-ALCOHOL-PUBLIC-001 and ADV-SAPO-OTHER-CLASS-001 trigger with none. Two approved
+          contracts therefore disagree, so a source-less line renders its advisory text and its
+          COVERAGE_GAP status with no citation area. Inventing a citation is not an option and
+          neither is asserting one exists; the resolution is the product owner's. */}
       {finding.sources.length > 0 && (
         <ul className="line__citations">
           {finding.sources.map((source) => (

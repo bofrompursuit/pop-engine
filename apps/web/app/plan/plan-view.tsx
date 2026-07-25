@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { regeneratePlan } from "../intake/events-api";
+import { loadEvent, regeneratePlan } from "../intake/events-api";
 import { loadPlan, loadRulesMeta, type PlanResponse, type RulesMetaResponse } from "./plan-api";
 import { PlanLine } from "./plan-line";
 import { SnapshotBanner } from "./snapshot-banner";
@@ -17,6 +17,8 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
   const [failure, setFailure] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  /** The event's revision now, or null when it could not be read. */
+  const [currentRevision, setCurrentRevision] = useState<number | null>(null);
 
   useEffect(() => {
     let abandoned = false;
@@ -27,6 +29,7 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     setPlan(null);
     setMeta(null);
     setFailure(null);
+    setCurrentRevision(null);
     setLoading(true);
 
     void loadPlan(apiBaseUrl, eventId).then((result) => {
@@ -34,6 +37,14 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
       if (result.ok) setPlan(result.plan);
       else setFailure(result.message);
       setLoading(false);
+    });
+
+    // A plan pins the revision it evaluated (AD-13), and the plan endpoint serves the latest plan
+    // whether or not the event has moved on since. The event's own revision is what says so, and
+    // it is the same comparison the checklist API refuses on: current > pinned means stale.
+    void loadEvent(apiBaseUrl, eventId).then((result) => {
+      if (abandoned) return;
+      if (result.ok) setCurrentRevision(result.loaded.event.revision_counter);
     });
 
     // The banner states the plan's own pinned version without this, so the plan is never held up
@@ -48,7 +59,10 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     };
   }, [apiBaseUrl, eventId]);
 
-  /** First run for an event: no plan exists yet, so generate one and show it. */
+  /**
+   * Generate a plan for the event as it stands now: the first one when none exists, and the
+   * replacement when an edit has left the stored plan behind.
+   */
   const generate = async () => {
     setGenerating(true);
     setFailure(null);
@@ -58,9 +72,13 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
       setGenerating(false);
       return;
     }
-    const result = await loadPlan(apiBaseUrl, eventId);
+    const [result, event] = await Promise.all([
+      loadPlan(apiBaseUrl, eventId),
+      loadEvent(apiBaseUrl, eventId),
+    ]);
     if (result.ok) setPlan(result.plan);
     else setFailure(result.message);
+    if (event.ok) setCurrentRevision(event.loaded.event.revision_counter);
     setGenerating(false);
   };
 
@@ -91,12 +109,38 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     );
   }
 
+  const isStale = currentRevision !== null && currentRevision > plan.eventRevision;
+
   return (
     <main className="plan">
       <h1>Your permit plan</h1>
       {/* AC 4: the version this plan was generated from, read off the plan itself, so a plan
           viewed after a rules update still names the ruleset that produced it. */}
       <SnapshotBanner rulesetVersion={plan.rulesetVersion} meta={meta} />
+
+      {/* The plan endpoint serves the latest plan whether or not the event has moved on since it
+          was generated. Presenting deadlines computed from an older headcount, date or location
+          as current is the failure F-101's revision counter exists to prevent, so the plan is
+          shown with what it was computed against and an action to replace it. */}
+      {isStale && (
+        <div className="plan__stale" role="alert">
+          <p>
+            This plan was generated for revision {plan.eventRevision}; the event has since been
+            edited and is now at revision {currentRevision}. The dates and verdict below were
+            computed from the older answers.
+          </p>
+          <button type="button" onClick={() => void generate()} disabled={generating}>
+            {generating ? "Regenerating plan…" : "Regenerate the plan"}
+          </button>
+        </div>
+      )}
+      {/* Without the event we cannot say whether the plan still matches it, and silence would
+          read as confirmation that it does. */}
+      {currentRevision === null && (
+        <p className="plan__unconfirmed" role="status">
+          The event could not be read, so whether this plan is still current is unconfirmed.
+        </p>
+      )}
 
       <p className="plan__verdict">
         <strong>{verdictCopy(plan.verdict, plan.verdictDetail)}</strong> · generated{" "}

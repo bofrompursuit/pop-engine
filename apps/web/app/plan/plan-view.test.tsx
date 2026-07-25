@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { CONFIRM_WITH_AGENCY, type Finding } from "@pop-engine/engine";
 import PlanPage from "../events/[id]/plan/page";
 import { PlanView } from "./plan-view";
-import { SnapshotBanner, formatSnapshotDate } from "./snapshot-banner";
+import { SnapshotBanner, compareToPinned, formatSnapshotDate } from "./snapshot-banner";
 import { verdictCopy } from "./verdict-copy";
 
 // Component tests for F-206. Regulatory prose in the assertions is read out of the published
@@ -771,5 +771,141 @@ describe("a rule whose whole deadline is its type", () => {
     const line = within(await screen.findByRole("article"));
     expect(line.getByText(/apply by 2026-07-15/)).toBeDefined();
     expect(line.queryByText("published minimum")).toBeNull();
+  });
+});
+
+describe("ordering the live ruleset against the pinned one", () => {
+  it("only tells the organizer to regenerate when the live ruleset is actually newer", () => {
+    expect(compareToPinned("nyc.v2.3", "nyc.v2.1")).toBe("newer");
+    expect(compareToPinned("nyc.v3.0", "nyc.v2.9")).toBe("newer");
+    // Regenerating onto an older ruleset would rebuild the plan from superseded rules.
+    expect(compareToPinned("nyc.v2.2", "nyc.v2.3")).toBe("older");
+    expect(compareToPinned("nyc.v2.9", "nyc.v3.0")).toBe("older");
+    expect(compareToPinned("nyc.v2.3", "nyc.v2.3")).toBe("same");
+  });
+
+  it("orders the minor part as a number, not as text", () => {
+    // A string comparison puts v2.10 below v2.9 and would call a newer ruleset older.
+    expect(compareToPinned("nyc.v2.10", "nyc.v2.9")).toBe("newer");
+    expect(compareToPinned("nyc.v2.9", "nyc.v2.10")).toBe("older");
+  });
+
+  it("refuses to claim a direction it cannot derive", () => {
+    // `nyc.vMAJOR.MINOR` is the only shape BASELINE declares; anything else is unorderable.
+    expect(compareToPinned("nyc-2.3", "nyc.v2.1")).toBe("different");
+    expect(compareToPinned("nyc.v2.3", "draft")).toBe("different");
+    // Two jurisdictions have no ordering between them at all.
+    expect(compareToPinned("bos.v1.0", "nyc.v2.3")).toBe("different");
+  });
+
+  it("says the service is on an older ruleset after a rollback, without advising regeneration", async () => {
+    // The api is rolled back to v2.2 while a plan pinned to v2.3 is read.
+    stubApi(plan({ rulesetVersion: "nyc.v2.3" }), {
+      ruleset_version: "nyc.v2.2",
+      snapshot_date: "2026-07-24",
+    });
+    renderPlan();
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(banner.textContent).toContain("Rules snapshot nyc.v2.3");
+    expect(banner.textContent).toContain("the service is running an older ruleset (nyc.v2.2)");
+    expect(banner.textContent).not.toContain("newer");
+    expect(banner.textContent).not.toContain("regenerate");
+  });
+
+  it("uses neutral wording for a version it cannot order", async () => {
+    stubApi(plan({ rulesetVersion: "nyc.v2.3" }), {
+      ruleset_version: "nyc-hotfix",
+      snapshot_date: "2026-07-25",
+    });
+    renderPlan();
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(banner.textContent).toContain("the service is running a different ruleset (nyc-hotfix)");
+    expect(banner.textContent).not.toContain("newer");
+    expect(banner.textContent).not.toContain("older");
+  });
+});
+
+describe("a plan the event has moved past", () => {
+  /** The event endpoint's answer, which is where the current revision comes from. */
+  const stubWithEvent = (planBody: unknown, revisionCounter: number | null, planStatus = 200) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+      if (url.endsWith("/plan")) {
+        if (init?.method === "POST") return jsonResponse(201, planBody);
+        return jsonResponse(planStatus, planBody);
+      }
+      return revisionCounter === null
+        ? jsonResponse(500, { error: "event lookup failed" })
+        : jsonResponse(200, {
+            event: { id: "event-1", revision_counter: revisionCounter },
+            warnings: [],
+            plan_stale: false,
+          });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  it("says so when the event has been edited since the plan was generated", async () => {
+    // Same comparison the checklist API refuses on: the event's revision is past the plan's.
+    stubWithEvent(plan({ eventRevision: 1 }), 3);
+    renderPlan();
+
+    const warning = await screen.findByRole("alert");
+    expect(warning.textContent).toContain("generated for revision 1");
+    expect(warning.textContent).toContain("now at revision 3");
+    expect(within(warning).getByRole("button", { name: "Regenerate the plan" })).toBeDefined();
+  });
+
+  it("does not warn when the plan matches the event's current revision", async () => {
+    stubWithEvent(plan({ eventRevision: 2 }), 2);
+    renderPlan();
+
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/unconfirmed/)).toBeNull();
+  });
+
+  it("replaces a stale plan with one generated for the event as it stands", async () => {
+    // The event sits at revision 3 while the stored plan still pins 1. Generating pins the
+    // revision the event is actually on, which is what clears the warning.
+    const eventRevision = 3;
+    let planRevision = 1;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            planRevision = eventRevision;
+            return jsonResponse(201, plan({ eventRevision: planRevision }));
+          }
+          return jsonResponse(200, plan({ eventRevision: planRevision }));
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: eventRevision },
+          warnings: [],
+          plan_stale: false,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Regenerate the plan" }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByText(/revision 3/)).toBeDefined();
+  });
+
+  it("does not claim currency it could not confirm", async () => {
+    // The event could not be read, so silence would read as confirmation that the plan matches.
+    stubWithEvent(plan({ eventRevision: 1 }), null);
+    renderPlan();
+
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+    expect(screen.getByText(/whether this plan is still current is unconfirmed/)).toBeDefined();
   });
 });
