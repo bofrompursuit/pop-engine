@@ -1,7 +1,0 @@
-<button
-  type="button"
-  className="p-3 text-xs font-mono border border-slate-200 rounded-lg text-slate-700 hover:border-slate-900 hover:bg-slate-50 transition-all text-left flex items-center justify-between"
->
-  <span>Tent canopy</span>
-  <span className="text-[10px] text-slate-400">SELECT</span>
-</button>
