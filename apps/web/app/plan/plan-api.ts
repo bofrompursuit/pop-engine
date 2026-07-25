@@ -3,7 +3,7 @@
 // Web and api are separate origins behind Cloudflare Access (BASELINE.md provider baseline), so
 // every call sends credentials and the api answers with `Access-Control-Allow-Credentials`.
 
-import type { Finding, Verdict } from "@pop-engine/engine";
+import type { Finding, Verdict, VerdictDetail } from "@pop-engine/engine";
 import { CREDENTIALED } from "../intake/events-api";
 
 /** A stored plan as `GET /api/events/:id/plan` serves it (F-201's `StoredPlan`). */
@@ -14,6 +14,8 @@ export type PlanResponse = {
   /** The version that produced this plan, pinned at generation — never the live file's. */
   readonly rulesetVersion: string;
   readonly verdict: Verdict;
+  /** Fills the slots the approved verdict copy leaves open (slack days, unanswered fields). */
+  readonly verdictDetail: VerdictDetail;
   readonly today: string;
   readonly generatedAt: string;
   readonly findings: readonly Finding[];

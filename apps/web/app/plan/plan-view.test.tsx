@@ -4,10 +4,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { CONFIRM_WITH_AGENCY, type Finding } from "@pop-engine/engine";
 import PlanPage from "../events/[id]/plan/page";
 import { PlanView } from "./plan-view";
 import { SnapshotBanner, formatSnapshotDate } from "./snapshot-banner";
+import { verdictCopy } from "./verdict-copy";
 
 // Component tests for F-206. Regulatory prose in the assertions is read out of the published
 // ruleset rather than retyped here, so a rule edit moves the test the same way it moves the
@@ -61,12 +63,23 @@ const finding = (overrides: Partial<Finding> = {}): Finding => ({
   ...overrides,
 });
 
+const emptyVerdictDetail = {
+  blockingFinding: null,
+  missedRuleIds: [],
+  minSlackDays: null,
+  missingFacts: [],
+  unresolvedTimelines: [],
+  rescopeSuggestions: [],
+  trace: [],
+};
+
 const plan = (overrides: Record<string, unknown> = {}) => ({
   id: "plan-1",
   eventId: "event-1",
   eventRevision: 1,
   rulesetVersion: publishedRuleset.ruleset_version,
   verdict: "CONDITIONAL",
+  verdictDetail: emptyVerdictDetail,
   today: "2026-07-25",
   generatedAt: "2026-07-25T12:00:00.000Z",
   findings: [finding()],
@@ -336,7 +349,10 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
         kind: "note",
         disposition: "no_new_requirement",
         noteText,
-        notes: ["Community board recommendation required", "Sequencing caveat: Parks decides first"],
+        notes: [
+          "Community board recommendation required",
+          "Sequencing caveat: Parks decides first",
+        ],
       }),
     );
 
@@ -444,5 +460,316 @@ describe("the plan view's own states", () => {
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(2));
     expect(screen.getByText("Parks FAQ")).toBeDefined();
     expect(screen.getByText("Admin Code §10-108")).toBeDefined();
+  });
+});
+
+describe("dated lines that publish no deadline prose", () => {
+  const lineFor = async (only: Finding) => {
+    stubApi(plan({ findings: [only] }));
+    renderPlan();
+    return within(await screen.findByRole("article"));
+  };
+
+  it("shows the demo anchor's apply-by date and missed status with no display text", async () => {
+    // SAPO-STREET-LARGE-001 publishes no `deadline.display`, and it is Scenario A's blocking
+    // finding. Gating the block on that prose hid the two facts the line exists to state.
+    const large = publishedRule("SAPO-STREET-LARGE-001");
+    expect(large.output.deadline).toBeDefined();
+    expect((large.output.deadline as unknown as { display?: string }).display).toBeUndefined();
+
+    const line = await lineFor(
+      finding({
+        ruleIds: ["SAPO-STREET-LARGE-001"],
+        name: String(large.output.permit_name),
+        deadlineDisplay: null,
+        latestApplyDate: "2026-07-12",
+        deadlineStatus: "published_deadline_missed",
+      }),
+    );
+
+    expect(line.getByText(/apply by 2026-07-12/)).toBeDefined();
+    expect(line.getByText(/published deadline missed/)).toBeDefined();
+  });
+
+  it("renders the dependency window a gated line cannot be filed before", async () => {
+    const line = await lineFor(
+      finding({
+        ruleIds: ["NYPD-SOUND-PARKS-DEP-001"],
+        deadlineDisplay: null,
+        latestApplyDate: "2026-09-11",
+        applyAfterDate: "2026-08-26",
+        deadlineStatus: "on_track",
+      }),
+    );
+
+    expect(line.getByText(/apply by 2026-09-11/)).toBeDefined();
+    expect(line.getByText(/not before 2026-08-26/)).toBeDefined();
+  });
+
+  it("still renders the published prose when a rule does carry it", async () => {
+    const line = await lineFor(
+      finding({
+        deadlineDisplay: "file at least 5 days before use",
+        latestApplyDate: "2026-09-11",
+        deadlineStatus: "on_track",
+      }),
+    );
+
+    expect(line.getByText(/file at least 5 days before use/)).toBeDefined();
+    expect(line.getByText(/apply by 2026-09-11/)).toBeDefined();
+  });
+
+  it("says nothing about timing on a line that has no deadline at all", async () => {
+    const line = await lineFor(
+      finding({ deadlineDisplay: null, latestApplyDate: null, deadlineStatus: "not_applicable" }),
+    );
+
+    expect(line.queryByText(/apply by/)).toBeNull();
+    expect(line.queryByText(/not applicable/)).toBeNull();
+  });
+});
+
+describe("the verdict's approved copy", () => {
+  const verdictText = async (verdict: string, detail: Record<string, unknown> = {}) => {
+    stubApi(plan({ verdict, verdictDetail: { ...emptyVerdictDetail, ...detail } }));
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+    return document.querySelector(".plan__verdict")?.textContent ?? "";
+  };
+
+  it("states a missed filing window as the approved copy, never as impossibility", async () => {
+    const text = await verdictText("INFEASIBLE");
+
+    expect(text).toContain("Published deadline missed as scoped");
+    // The bare enum token would read as a claim about legality rather than a filing window.
+    expect(text.toLowerCase()).not.toContain("infeasible");
+    expect(text.toLowerCase()).not.toContain("impossible");
+  });
+
+  it("renders each of the other three verdicts in its approved copy", async () => {
+    expect(await verdictText("FEASIBLE")).toContain("On track");
+    cleanup();
+    expect(await verdictText("FEASIBLE_AT_RISK", { minSlackDays: 10 })).toContain(
+      "At risk — apply within 10 days",
+    );
+    cleanup();
+    expect(
+      await verdictText("CONDITIONAL", {
+        missingFacts: [{ field: "street_event_size", branches: [], thresholds: null }],
+      }),
+    ).toContain("Depends on: street event size");
+  });
+
+  it("leaves a slot empty rather than inventing a number or a fact", async () => {
+    expect(await verdictText("FEASIBLE_AT_RISK")).toContain("At risk");
+    expect(await verdictText("FEASIBLE_AT_RISK")).not.toMatch(/within \d/);
+    cleanup();
+    expect(await verdictText("CONDITIONAL")).toContain("Depends on");
+  });
+});
+
+describe("navigating from one event's plan to another", () => {
+  it("never shows the previous event's plan under a new event id", async () => {
+    const first = plan({ eventId: "event-1", rulesetVersion: "nyc.v2.1" });
+    stubApi(first);
+    const view = render(<PlanView apiBaseUrl="https://api.example.com" eventId="event-1" />);
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Rules snapshot" }).textContent).toContain(
+        "nyc.v2.1",
+      ),
+    );
+
+    // The second event's plan request never settles: the first event's plan must not be sitting
+    // on screen underneath it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolvePromise) => {
+            if (url.endsWith("/rules/meta")) resolvePromise(jsonResponse(200, liveMeta));
+          }),
+      ),
+    );
+    view.rerender(<PlanView apiBaseUrl="https://api.example.com" eventId="event-2" />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe("Loading your permit plan…"),
+    );
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByText(/nyc\.v2\.1/)).toBeNull();
+  });
+
+  it("does not leave the old plan on screen when the new event's request fails", async () => {
+    stubApi(plan({ eventId: "event-1" }));
+    const view = render(<PlanView apiBaseUrl="https://api.example.com" eventId="event-1" />);
+    await waitFor(() => expect(screen.getAllByRole("article").length).toBeGreaterThan(0));
+
+    stubApi({}, liveMeta, 404);
+    view.rerender(<PlanView apiBaseUrl="https://api.example.com" eventId="event-2" />);
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "No plan has been generated for this event yet.",
+    );
+    expect(screen.queryAllByRole("article")).toEqual([]);
+  });
+});
+
+describe("the first plan for an event", () => {
+  it("offers to generate one instead of dead-ending on the 404", async () => {
+    stubApi({}, liveMeta, 404);
+    renderPlan();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "No plan has been generated for this event yet.",
+    );
+    expect(screen.getByRole("button", { name: "Generate the plan" })).toBeDefined();
+  });
+
+  it("generates the plan and shows it, banner and citations included", async () => {
+    let generated = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (init?.method === "POST") {
+          generated = true;
+          return jsonResponse(201, { ...plan(), eventRevision: 1 });
+        }
+        return generated ? jsonResponse(200, plan()) : jsonResponse(404, {});
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Rules snapshot" })).toBeDefined(),
+    );
+    expect(screen.getByText("Parks FAQ")).toBeDefined();
+  });
+
+  it("says why when generation itself fails, and lets the organizer retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (init?.method === "POST") return jsonResponse(500, { error: "plan generation failed" });
+        return jsonResponse(404, {});
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("plan generation failed");
+    expect(screen.getByRole("button", { name: "Generate the plan" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+  });
+});
+
+describe("the metadata request", () => {
+  it("does not hold the plan behind a rules-meta call that never settles", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolvePromise) => {
+            // The meta call hangs; the plan call answers normally.
+            if (!url.endsWith("/rules/meta")) resolvePromise(jsonResponse(200, plan()));
+          }),
+      ),
+    );
+    renderPlan();
+
+    // The plan renders with its own pinned version; the banner simply says nothing about a
+    // newer ruleset until the metadata arrives.
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+    expect(banner.textContent).toContain(`Rules snapshot ${publishedRuleset.ruleset_version}`);
+    expect(banner.textContent).not.toContain("published");
+    expect(screen.getAllByRole("article").length).toBeGreaterThan(0);
+  });
+});
+
+describe("verdictCopy on its own", () => {
+  it("returns the approved copy with no plan detail to draw slots from", () => {
+    // F-102's verdict card will call this without a plan in hand.
+    expect(verdictCopy("INFEASIBLE")).toBe("Published deadline missed as scoped");
+    expect(verdictCopy("FEASIBLE")).toBe("On track");
+    expect(verdictCopy("CONDITIONAL")).toBe("Depends on");
+    expect(verdictCopy("FEASIBLE_AT_RISK")).toBe("At risk");
+  });
+});
+
+describe("a generated plan that cannot then be read back", () => {
+  it("reports the read failure rather than claiming the plan is there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (init?.method === "POST") return jsonResponse(201, plan());
+        return jsonResponse(500, { error: "plan lookup failed" });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("plan lookup failed");
+  });
+});
+
+describe("a rule whose whole deadline is its type", () => {
+  it("states 'before issuance' for a line that publishes no prose and no date", async () => {
+    // SAPO-INSURANCE-001 publishes {type: "before_issuance"} and nothing else. Dropping it
+    // leaves the line silent about when the insurance actually has to exist.
+    const insurance = publishedRule("SAPO-INSURANCE-001");
+    expect(insurance.output.deadline).toEqual({ type: "before_issuance" });
+
+    stubApi(
+      plan({
+        findings: [
+          finding({
+            ruleIds: ["SAPO-INSURANCE-001"],
+            deadline: { type: "before_issuance", display: null, qualification: null },
+            deadlineDisplay: null,
+            latestApplyDate: null,
+            deadlineStatus: "not_applicable",
+          }),
+        ],
+      }),
+    );
+    renderPlan();
+
+    const line = within(await screen.findByRole("article"));
+    expect(line.getByText("before issuance")).toBeDefined();
+  });
+
+  it("does not repeat the type when the line already states a date or prose", async () => {
+    stubApi(
+      plan({
+        findings: [
+          finding({
+            deadline: {
+              type: "published_minimum",
+              calendarDays: 45,
+              display: null,
+              boundary: "inclusive",
+              qualification: null,
+            },
+            deadlineDisplay: null,
+            latestApplyDate: "2026-07-15",
+            deadlineStatus: "published_deadline_missed",
+          }),
+        ],
+      }),
+    );
+    renderPlan();
+
+    const line = within(await screen.findByRole("article"));
+    expect(line.getByText(/apply by 2026-07-15/)).toBeDefined();
+    expect(line.queryByText("published minimum")).toBeNull();
   });
 });

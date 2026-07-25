@@ -8,6 +8,33 @@ import { CONFIRM_WITH_AGENCY, type Finding, type FindingSource } from "@pop-engi
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
 /**
+ * Whether this line has anything to say about timing. `deadlineStatus` is always set, so
+ * `not_applicable` with no dates, no prose and no published deadline means there is nothing to
+ * render.
+ */
+const hasDeadlineData = (finding: Finding): boolean =>
+  finding.deadlineDisplay !== null ||
+  finding.latestApplyDate !== null ||
+  finding.applyAfterDate !== null ||
+  finding.deadlineStatus !== "not_applicable" ||
+  finding.deadline !== null;
+
+/**
+ * The published deadline's own type, for a rule that states a kind of deadline but no prose and
+ * no computable date. SAPO-INSURANCE-001 publishes `{type: "before_issuance"}` and nothing else:
+ * "before issuance" is the whole timing requirement, and dropping it leaves the line silent about
+ * when the insurance has to exist.
+ */
+const deadlineTypeLabel = (finding: Finding): string | null =>
+  finding.deadlineDisplay === null &&
+  finding.latestApplyDate === null &&
+  finding.applyAfterDate === null &&
+  finding.deadlineStatus === "not_applicable" &&
+  finding.deadline !== null
+    ? humanize(finding.deadline.type)
+    : null;
+
+/**
  * The status is the plan item's stored `verification_status` (canonical, NOT NULL). The nullable
  * `verified_status` column in migration 001 is a deprecated duplicate and is never read.
  */
@@ -76,16 +103,33 @@ export function PlanLine({ finding }: { finding: Finding }) {
         <p className="line__note">{finding.noteText}</p>
       )}
 
-      {finding.deadlineDisplay !== null && (
+      {/* The published prose is optional and ten dated rules omit it, including
+          SAPO-STREET-LARGE-001 — the demo anchor's blocking finding. Gating the block on the
+          prose hid the computed apply-by date and the missed status, which are the two facts
+          that line exists to state. Any deadline data at all renders the block. */}
+      {hasDeadlineData(finding) && (
         <p className="line__deadline">
-          <span className="line__deadline-display">{finding.deadlineDisplay}</span>
-          {finding.latestApplyDate !== null && (
-            <span className="line__deadline-date"> · apply by {finding.latestApplyDate}</span>
+          {finding.deadlineDisplay !== null && (
+            <span className="line__deadline-display">{finding.deadlineDisplay}</span>
           )}
-          <span className="line__deadline-status">
-            {" · "}
-            {humanize(finding.deadlineStatus)}
-          </span>
+          {deadlineTypeLabel(finding) !== null && (
+            <span className="line__deadline-type">{deadlineTypeLabel(finding)}</span>
+          )}
+          {finding.latestApplyDate !== null && (
+            <span className="line__deadline-date">
+              {finding.deadlineDisplay !== null && " · "}apply by {finding.latestApplyDate}
+            </span>
+          )}
+          {/* A dependency-gated line cannot be filed before its upstream decision lands. */}
+          {finding.applyAfterDate !== null && (
+            <span className="line__deadline-after"> · not before {finding.applyAfterDate}</span>
+          )}
+          {finding.deadlineStatus !== "not_applicable" && (
+            <span className="line__deadline-status">
+              {" · "}
+              {humanize(finding.deadlineStatus)}
+            </span>
+          )}
         </p>
       )}
       {finding.timelineUnresolvedReason !== null && (
