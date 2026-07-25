@@ -126,18 +126,24 @@ async function insertPlan(
   eventRevision: number,
   intake: EventIntake,
   plan: PermitPlan,
+  snapshotDate: string,
 ): Promise<{ id: string; generatedAt: string }> {
   const planId = randomUUID();
   const { rows } = await client.query<{ generated_at: Date }>(
     `INSERT INTO permit_plans
-       (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+       (id, event_id, event_revision, ruleset_version, snapshot_date, verdict, verdict_detail,
+        intake_snapshot)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
      RETURNING generated_at`,
     [
       planId,
       eventId,
       eventRevision,
       plan.rulesetVersion,
+      // Written with the version, not after it. A plan generated between this migration and the
+      // banner reading the column would otherwise store NULL permanently, and nothing later can
+      // recover which snapshot date it was evaluated against.
+      snapshotDate,
       VERDICT_COLUMN_VALUE[plan.verdict],
       JSON.stringify({
         ...plan.verdictDetail,
@@ -218,7 +224,14 @@ export function createPlanService(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { id, generatedAt } = await insertPlan(client, eventId, eventRevision, intake, plan);
+        const { id, generatedAt } = await insertPlan(
+          client,
+          eventId,
+          eventRevision,
+          intake,
+          plan,
+          ruleset.snapshotDate,
+        );
         await client.query("COMMIT");
         return { id, eventId, eventRevision, generatedAt, ...plan };
       } catch (error) {

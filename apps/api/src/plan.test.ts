@@ -117,6 +117,22 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     ]);
   });
 
+  it("pins the ruleset version and its snapshot date together on the plan", async () => {
+    const eventId = await insertEvent();
+    await request(appWith()).post(`/api/events/${eventId}/plan`);
+
+    const { rows } = await pool.query<{ ruleset_version: string; snapshot_date: string | null }>(
+      `SELECT ruleset_version, to_char(snapshot_date, 'YYYY-MM-DD') AS snapshot_date
+         FROM permit_plans WHERE event_id = $1`,
+      [eventId],
+    );
+
+    // The pair, not just the version: F-206 AC 4 renders both from the plan row, so a snapshot
+    // date left NULL here is unrecoverable once the live file moves on.
+    expect(rows[0]?.ruleset_version).toBe(ruleset.rulesetVersion);
+    expect(rows[0]?.snapshot_date).toBe(ruleset.snapshotDate);
+  });
+
   it("persists plan items with the columns the schema requires and leaves verified_status unwritten", async () => {
     const eventId = await insertEvent();
     await request(appWith()).post(`/api/events/${eventId}/plan`);
