@@ -318,6 +318,26 @@ export type PermitPlan = {
   readonly verdictDetail: VerdictDetail;
 };
 
+/**
+ * The status an organizer tracks a plan line at (F-202). It is app state rather than rule output,
+ * so the engine neither reads nor writes it — but it is a shared contract, and a contract with two
+ * definitions is a contract that eventually disagrees with itself. It lives here so the api and
+ * the web client compile against one vocabulary (AGENTS.md "Shared contracts"), the same reason
+ * #90 collapsed the two `asked_when` parsers.
+ *
+ * Mirrors the `checklist_items.status` CHECK constraint; `checklist.test.ts` asserts they are
+ * equal against the live schema.
+ */
+export const CHECKLIST_STATUSES = [
+  "not_started",
+  "in_progress",
+  "submitted",
+  "approved",
+  "rejected",
+] as const;
+
+export type ChecklistStatus = (typeof CHECKLIST_STATUSES)[number];
+
 /** Rule evaluation never degrades to "no requirement": failures throw this instead (AC 5). */
 export class EvaluationError extends Error {
   constructor(message: string) {
