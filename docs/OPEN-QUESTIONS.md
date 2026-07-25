@@ -9,7 +9,7 @@
 |---|---|---|---|
 | B-1 | ~~Verification-owner sign-off of nyc.v2.1's SOURCE_CONFIRMED facts~~ | Dev 4 | **RESOLVED 2026-07-22:** baseline ratified; per-fact promotion to VERIFIED continues during the build via the verification issue (evidence pre-collected in `VERIFICATION-SOURCES.md`). |
 | B-2 | ~~Team ratification of the corrected baseline~~ | All 4 | **RESOLVED 2026-07-22:** ruleset v2.1 + fixtures v3 + re-anchored demo approved. |
-| B-3 | `events` schema sign-off | All 4 | Intake columns mirror the ruleset's `intake_fields` registry (ARCHITECTURE schema section). Day-1 Phase 0 gate. F-301 promotion columns (`description`, `public_page_published` in migration 005 / SPEC-CONFLICT #100 / PR #104) also need the same all-lane ack before the schema is treated as ratified — do not invent sign-off. |
+| B-3 | `events` schema sign-off | All 4 | Intake columns mirror the ruleset's `intake_fields` registry (ARCHITECTURE schema section). Day-1 Phase 0 gate. **AUTHORIZED IN PART 2026-07-25:** the product owner authorized three columns without an all-lane ack — F-301 promotion `description` and `public_page_published` (migration 005 / SPEC-CONFLICT #100 / PR #104), and `battery_present` (migration 006 / PR #105). The schema is not treated as ratified until that ack exists, and this row stays open for anything beyond those three — do not invent sign-off. |
 
 ## 2. Regulatory research items (owner: Dev 4; primary sources only)
 

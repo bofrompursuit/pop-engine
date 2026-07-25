@@ -8,7 +8,7 @@
 | Product requirements | `docs/PRD.md` | APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change | — |
 | Feature registry + phasing | `docs/ROADMAP.md` | APPROVED (2026-07-22) | — |
 | Delivery lanes, gates, demo | `docs/DESIGN.md` | APPROVED (2026-07-22) | — |
-| Technical architecture (Phase 0–1.5) | `docs/ARCHITECTURE.md` | APPROVED (2026-07-22) | events-schema migration still needs all-4-devs sign-off (Phase 0 / OPEN-QUESTIONS B-3); F-301 promotion columns in migration 005 (#100 / #104) await that same ack |
+| Technical architecture (Phase 0–1.5) | `docs/ARCHITECTURE.md` | APPROVED (2026-07-22) | events-schema migration still needs all-4-devs sign-off (Phase 0 / OPEN-QUESTIONS B-3); the product owner authorized three columns on 2026-07-25 without it — F-301 promotion `description` and `public_page_published` in migration 005 (#100 / #104), and `battery_present` in migration 006 (#105) — and the gate is unchanged for anything beyond those three |
 | Architecture target (Phase 2+) | `docs/ARCHITECTURE-FUTURE.md` | PROPOSED | team read + approval; not an instruction to build |
 | Governance | `docs/DOCUMENTATION-GOVERNANCE.md` | APPROVED (adopted 2026-07-22; authority-by-concern + conflict protocol in force) | — |
 | Agent/contributor rules | `/AGENTS.md` + `/CONTRIBUTING.md` | APPROVED (2026-07-22) | — |
