@@ -52,10 +52,10 @@ function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRulese
       slack_warning_days: { value: 14 },
       business_day_math: { calendar: "test-calendar@2026" },
     },
+    // Only fields the rules below consume: the loader refuses a declared field nothing reads.
     intake_fields: [
       { field: "event_date", type: "date" },
       { field: "headcount", type: "integer" },
-      { field: "structure_types", type: "multi_enum", values: ["tent_canopy", "none"] },
     ],
     rules,
     advisories: [],
@@ -744,6 +744,113 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
     ).toThrow(/levels must not be empty/);
   });
 
+  it("refuses a declared field no rule, deadline, or scoping condition reads", () => {
+    // The reverse of the check boot already had. A trigger naming an undeclared field was refused;
+    // a declared field naming no trigger was invisible, which is how seven of them went unnoticed.
+    expect(() =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+          { field: "favourite_colour", type: "enum", values: ["blue"] },
+        ],
+        rules: [
+          {
+            id: "RULE-X",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      }),
+    ).toThrow(/"favourite_colour" is declared but no rule trigger, deadline, or scoping condition/);
+  });
+
+  it("counts a level field as consumed only when a by-level deadline keys on it", () => {
+    // The bug the derivation fixes. Naming the field as consumed unconditionally let a ruleset
+    // declare it while publishing no by-level deadline and still pass the orphan check.
+    const withLevelField =
+      (deadline: Record<string, unknown> | undefined, extra: unknown[] = []) =>
+      () =>
+        parseEngineRuleset({
+          ruleset_version: "test.v1",
+          jurisdiction: "US-NY-NYC",
+          snapshot_date: "2026-07-22",
+          config: {
+            slack_warning_days: { value: 14 },
+            business_day_math: { calendar: "test-calendar@2026" },
+          },
+          intake_fields: [
+            { field: "event_date", type: "date" },
+            { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
+            { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+            {
+              field: "spans_blocks",
+              type: "boolean",
+              asked_when: "venue_kind = plaza",
+            },
+            ...extra,
+          ],
+          rules: [
+            {
+              id: "RULE-LEVEL",
+              kind: "permit",
+              trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
+              output: { permit_name: "x", agency: "DOB", ...(deadline ? { deadline } : {}) },
+              verification: { status: "SOURCE_CONFIRMED" },
+              source: { citation: "c", urls: ["https://example.test"] },
+            },
+          ],
+          advisories: [],
+        });
+
+    const byLevel = {
+      type: "published_minimum_by_level",
+      level_field: "tier",
+      multi_block_field: "spans_blocks",
+      levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
+    };
+
+    // No by-level deadline: nothing keys on `tier`, and the flag has nothing to qualify.
+    expect(withLevelField(undefined)).toThrow(/"tier" is declared but no rule trigger, deadline/);
+
+    // A by-level deadline consumes exactly the two fields its binding names.
+    expect(withLevelField(byLevel)).not.toThrow();
+
+    // And only those. A level-shaped field the binding does not name is still an orphan, which is
+    // what stops the guard from waving through any enum that happens to cover the level keys.
+    expect(
+      withLevelField({ ...byLevel, level_field: "grade" }, [
+        { field: "grade", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+      ]),
+    ).toThrow(/"tier" is declared but no rule trigger, deadline/);
+  });
+
+  it("counts deadline resolution and scoping as consuming a field", () => {
+    // plaza_level and plaza_multiple_blocks appear in no trigger but resolve SAPO-PLAZA-001's
+    // deadline; generator_present appears in no trigger but gates the quantity questions that
+    // rules do read. None of them belongs on the unconsumed list, and the published ruleset
+    // loading at all is the assertion.
+    expect(ruleset.intakeFields.map((field) => field.field)).toEqual(
+      expect.arrayContaining([
+        "plaza_level",
+        "plaza_multiple_blocks",
+        "generator_present",
+        "event_date",
+      ]),
+    );
+  });
+
   it("accepts the published ruleset unchanged", () => {
     expect(ruleset.rulesetVersion).toBe("nyc.v2.4");
     expect(ruleset.slackWarningDays).toBe(14);
@@ -768,12 +875,29 @@ describe("asked_when scoping", () => {
         ...extraFields,
         { field: "venue_note", type: "boolean", asked_when: askedWhen },
       ],
+      // The scoped field is what the rule reads; the others are consumed by scoping it.
       rules: [
         {
           id: "RULE-SCOPE",
           kind: "permit",
           trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
           output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+        {
+          // Consumes the fields the expressions under test scope against, so the registry stays
+          // constant while the expression varies. The loader refuses a field nothing reads.
+          id: "RULE-CONSUMER",
+          kind: "note",
+          trigger: {
+            any: [
+              { field: "headcount", op: "gte", value: 1_000_000 },
+              { field: "food_present", op: "bool", value: true },
+              { field: "sapo_event_type", op: "eq", value: "street_event" },
+            ],
+          },
+          output: { note_text: "reads the scoping fields" },
           verification: { status: "SOURCE_CONFIRMED" },
           source: { citation: "c", urls: ["https://example.test"] },
         },
@@ -879,7 +1003,13 @@ describe("asked_when scoping", () => {
 // old constant never held, and the boundary by a threshold that declares none.
 describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)", () => {
   const testCalendar: PublishedHolidayCalendar = { id: "test-calendar@2026", holidays: [] };
-  const plazaRuleset = (deadline: Record<string, unknown>, fields: unknown[] = []) =>
+  // The default flag lives in the parameter default rather than the base list, so a case that
+  // binds the deadline to a different boolean does not also leave `spans_two_sites` declared and
+  // unread — which the orphan guard now refuses, correctly.
+  const plazaRuleset = (
+    deadline: Record<string, unknown>,
+    fields: unknown[] = [{ field: "spans_two_sites", type: "boolean" }],
+  ) =>
     parseEngineRuleset({
       ruleset_version: "test.v1",
       jurisdiction: "US-NY-NYC",
@@ -891,7 +1021,6 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
       intake_fields: [
         { field: "event_date", type: "date" },
         { field: "tier", type: "enum", values: ["gold", "silver"] },
-        { field: "spans_two_sites", type: "boolean" },
         ...fields,
       ],
       rules: [

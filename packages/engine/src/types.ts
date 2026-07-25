@@ -13,6 +13,9 @@ export type EventIntake = Readonly<Record<string, IntakeValue>>;
 
 export type Tristate = "true" | "false" | "unknown";
 
+/** The intake field every backward deadline is computed from. */
+export const EVENT_DATE_FIELD = "event_date";
+
 export type ConditionOperator = "eq" | "in" | "gt" | "gte" | "bool" | "contains" | "contains_any";
 
 export type Condition = {

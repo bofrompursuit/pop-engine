@@ -4,7 +4,7 @@
 // never a quiet "no requirement" (AC 5).
 
 import { parseAskedWhen } from "./conditions";
-import { EvaluationError } from "./types";
+import { EVENT_DATE_FIELD, EvaluationError } from "./types";
 import type {
   LevelBinding,
   Condition,
@@ -580,12 +580,14 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
   );
 
   const declaredFields = new Set(intakeFields.map((field) => field.field));
-  for (const rule of [...rules, ...advisories]) {
+  const published = [...rules, ...advisories];
+  for (const rule of published) {
     for (const field of triggerFields(rule.trigger)) {
       if (!declaredFields.has(field))
         fail(`rule ${rule.id} references undeclared field "${field}"`);
     }
   }
+  rejectUnconsumedFields(intakeFields, published);
 
   return {
     rulesetVersion: asString(ruleset.ruleset_version, "ruleset.ruleset_version"),
@@ -596,6 +598,86 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
     intakeFields,
     rules: [...rules, ...advisories],
   };
+}
+
+/**
+ * Intake fields the ruleset declares but nothing consumes: questions an organizer is asked whose
+ * answer changes no output.
+ *
+ * Boot already refused a trigger naming an undeclared field. The reverse went unchecked, which is
+ * how seven declared-but-unconsumed fields stayed invisible until someone counted by hand. A field
+ * counts as consumed when a rule trigger reads it, when a deadline resolves against it, or when it
+ * scopes another question whose answer is itself consumed.
+ *
+ * Everything else needs a reason here. Each entry is a field the published ruleset declares and no
+ * rule acts on, recorded rather than deleted: removing a published intake field is a rules-owner
+ * change, and one of these is an open product question. A NEW unconsumed field fails the load.
+ */
+export const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
+  borough: "Display and future jurisdiction routing (F-207). No NYC rule varies by borough today.",
+  food_affinity_private_exception_claimed:
+    "Collected for the Health Code Art. 88 private-function exemption, which DOHMH-EXEMPTION-001 " +
+    "renders as an advisory on event_open_to_public alone. Open on issue #89.",
+  venue_has_assembly_approval:
+    "DOB-ASSEMBLY-001 describes branching on it in prose, but its trigger reads location_type and " +
+    "headcount only, so answering it changes nothing. Open on issue #89, blocks F-102 AC 6.",
+};
+
+/**
+ * The intake fields the published deadlines read.
+ *
+ * Reads the binding rather than inferring one. Since nyc.v2.4 a by-level deadline names the fields
+ * it keys on, and for the superseded versions that did not the loader supplies them from its closed
+ * compatibility record; either way `parseRule` has already resolved and validated the pair before
+ * this guard runs. Inferring it a second time here would be a second answer that can drift from the
+ * one the evaluator uses, which is how a loader comes to accept an artifact the evaluator cannot
+ * run.
+ */
+function deadlineConsumedFields(published: readonly EngineRule[]): Set<string> {
+  // Every backward date is counted from the event date, whatever the deadline type.
+  const consumed = new Set<string>([EVENT_DATE_FIELD]);
+
+  for (const rule of published) {
+    if (rule.levelBinding === null) continue;
+    consumed.add(rule.levelBinding.levelField);
+    consumed.add(rule.levelBinding.multiBlockField);
+  }
+
+  return consumed;
+}
+
+function rejectUnconsumedFields(
+  intakeFields: readonly IntakeFieldDefinition[],
+  published: readonly EngineRule[],
+): void {
+  const consumed = new Set<string>([
+    ...published.flatMap((rule) => triggerFields(rule.trigger)),
+    ...deadlineConsumedFields(published),
+    ...intakeFields.flatMap((field) =>
+      (field.askedWhenClauses ?? []).map((clause) => clause.field),
+    ),
+  ]);
+
+  for (const { field } of intakeFields) {
+    if (consumed.has(field)) continue;
+    if (UNCONSUMED_INTAKE_FIELDS[field] !== undefined) continue;
+    fail(
+      `intake field "${field}" is declared but no rule trigger, deadline, or scoping condition ` +
+        `reads it, so answering it changes nothing. Give a rule that consumes it, or record why ` +
+        `it is collected in UNCONSUMED_INTAKE_FIELDS.`,
+    );
+  }
+
+  // A stale exemption is its own drift: once a rule consumes the field, the entry must go, or the
+  // list slowly becomes a place where real findings hide.
+  for (const field of Object.keys(UNCONSUMED_INTAKE_FIELDS)) {
+    if (consumed.has(field)) {
+      fail(
+        `intake field "${field}" is now consumed by the ruleset; remove its ` +
+          `UNCONSUMED_INTAKE_FIELDS entry`,
+      );
+    }
+  }
 }
 
 /** Every intake field a trigger tree reads. */

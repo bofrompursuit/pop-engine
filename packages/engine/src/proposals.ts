@@ -8,7 +8,10 @@
 // either a vocabulary mapping or a quotation of published rule text.
 //
 // Recorded on issue #4 (comment "Two undecided contracts F-201 will hit") for §1 and §2.
-// §3–§5 were found while deriving the six scenarios and are new.
+// §3, §6 and §7 were found while deriving the six scenarios and are new. §4 and §5 are gone:
+// nyc.v2.4 publishes both as rule data — the by-level deadline names the fields it keys on, and
+// the tent condition declares that its exact threshold is unresolved — so neither is an
+// engine-side assertion any more. Five contracts remain: §1, §2, §3, §6, §7.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Disposition, RuleKind } from "./types";
