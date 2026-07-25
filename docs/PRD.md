@@ -3,7 +3,7 @@
 **Build name:** PopEngine
 **Owner:** Naquan McKune, Jason Zeng, Adedoyin Ahoton, Bo Moldenhauer
 **Date:** July 21, 2026
-**Status:** APPROVED (reconciled to nyc.v2.3, 2026-07-22; see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
+**Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.4 on 2026-07-25 with no regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
 **Scope of this document:** the full product vision. The iron-clad MVP (permit planning) carries detailed, demo-observable requirements; everything else is planned scope, phased in `ROADMAP.md`. Completing the full vision by the capstone demo is explicitly not a commitment.
 **Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v3) · `rules/nyc-rules.v2.4.json` (published ruleset).
 **Permit facts:** every permit fact traces to `rules/nyc-rules.v2.4.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.

@@ -4,7 +4,7 @@
 
 ## Decisions of 2026-07-22 (baseline correction)
 
-5. **Ruleset baseline is the corrected subset `nyc.v2.4`** (33 rules + 4 advisories, evidence-linked to `VERIFICATION-SOURCES.md`), after two fetch-confirmed verification passes contradicted several v1 facts. The 59-rule draft stays in `rules/proposals/` as the post-capstone target. Scenario fixtures v3 derive from the ruleset.
+5. **Ruleset baseline is the corrected subset `nyc.v2.1`** (33 rules + 4 advisories, evidence-linked to `VERIFICATION-SOURCES.md`), after two fetch-confirmed verification passes contradicted several v1 facts; the pointer is now `nyc.v2.4`, retargeted 2026-07-25 with no regulatory change. The 59-rule draft stays in `rules/proposals/` as the post-capstone target. Scenario fixtures v3 derive from the ruleset.
 6. **The demo anchor is re-anchored:** a Large street event 35 days out misses its verified 45-day deadline (the universal 60-day SAPO lead was contradicted by primary sources).
 7. **Verdict model:** the four-state verdict stays as the top-level summary, computed from per-finding deadline statuses (ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEADLINE_MISSED / NOT_CALCULABLE / NOT_APPLICABLE). INFEASIBLE copy = "published deadline missed as scoped." The 14-day slack threshold is labeled as internal policy.
 8. **Real business-day math** against a pinned holiday calendar replaces the calendar approximation (fixture dates are pinned, so determinism holds).

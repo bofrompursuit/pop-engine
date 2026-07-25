@@ -5,7 +5,7 @@
 
 | Concern | Artifact | Status | Needs |
 |---|---|---|---|
-| Product requirements | `docs/PRD.md` | APPROVED (reconciled to nyc.v2.3, 2026-07-22) | — |
+| Product requirements | `docs/PRD.md` | APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.4 on 2026-07-25 with no regulatory change | — |
 | Feature registry + phasing | `docs/ROADMAP.md` | APPROVED (2026-07-22) | — |
 | Delivery lanes, gates, demo | `docs/DESIGN.md` | APPROVED (2026-07-22) | — |
 | Technical architecture (Phase 0–1.5) | `docs/ARCHITECTURE.md` | APPROVED (2026-07-22) | events-schema migration still needs all-4-devs sign-off before coding (Phase 0) |
