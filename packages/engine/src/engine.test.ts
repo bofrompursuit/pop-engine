@@ -254,6 +254,31 @@ describe("typed deadlines", () => {
     expect(plan.verdict).not.toBe("INFEASIBLE");
   });
 
+  it("publishes no negative countdown when the sequence closes the window", () => {
+    // The exact case making the floor day feasible exposed: parkIntake has amplified sound, so
+    // once Parks is no longer missed the NYPD pursuit is gated on a decision expected 2026-08-12
+    // while its own deadline is 2026-08-07. That window closed before it opened, which is not a
+    // countdown — and because the sequence is unconfirmed it is not a miss either, since filing
+    // directly is still possible. Reporting -5 would put "apply within -5 days" into deadline copy
+    // and F-203's alerts.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-12" }, ruleset, TODAY, calendar);
+    const sound = plan.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+
+    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    expect(sound?.latestApplyDate).toBe("2026-08-07");
+    expect(sound?.slackDays).toBeNull();
+    expect(sound?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(sound?.notes.join(" ")).toContain("leaves no window to file in");
+    expect(sound?.notes.join(" ")).not.toContain("-5");
+
+    // Nothing negative reaches the plan-level figure that copy and alerts read.
+    expect(plan.verdictDetail.minSlackDays).toBe(0);
+    expect(
+      plan.findings.every((finding) => finding.slackDays === null || finding.slackDays >= 0),
+      "no finding publishes a negative countdown",
+    ).toBe(true);
+  });
+
   it("treats the day inside the Parks floor as missed", () => {
     // 2026-08-11 is 20 days out: inside the floor, which the rule says is not accepted. Pinning
     // both sides keeps the cliff located rather than only pinning where it is not.
@@ -389,6 +414,55 @@ describe("published bound inclusivity", () => {
     expect(dayBefore?.slackDays).toBe(0);
   });
 
+  it("honors a boundary on a composite floor rather than only accepting one", () => {
+    // Accepting the field without acting on it would be the same contradiction in the other
+    // direction, so this checks the date moves: an exclusive floor makes the floor day itself too
+    // late, exactly as it does for the other dated variants.
+    const floorDate = (boundary?: string) => {
+      const ruleset = parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+        ],
+        rules: [
+          {
+            id: "RULE-FLOOR",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+            output: {
+              permit_name: "x",
+              agency: "DOB",
+              deadline: {
+                type: "composite",
+                hard_floor_days: 21,
+                processing_range_days: [21, 30],
+                ...(boundary === undefined ? {} : { boundary }),
+              },
+            },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
+      return evaluate({ event_date: "2026-12-04", headcount: 5 } as EventIntake, ruleset, TODAY, {
+        id: ruleset.calendarId,
+        holidays: [],
+      }).findings[0]?.latestApplyDate;
+    };
+
+    expect(floorDate()).toBe("2026-11-13"); // absent means inclusive: the floor day is valid
+    expect(floorDate("inclusive")).toBe("2026-11-13");
+    expect(floorDate("exclusive")).toBe("2026-11-12"); // day 21 too late, so day 22 is the last
+  });
+
   it("leaves inclusive bounds alone, so 'at least N days' still includes day N", () => {
     // NYPD-SOUND-001 publishes "file at least 5 days before use" and declares no boundary, so the
     // default keeps day 5 valid. A blanket exclusive reading would wrongly close it.
@@ -423,6 +497,8 @@ describe("published bound inclusivity", () => {
     expect(withDeadline({ type: "research_required", boundary: "exclusive" })).toThrow(
       /boundary does not apply to a "research_required" deadline/,
     );
+    // composite is no longer excluded: its floor day is valid, which is what inclusive means, so
+    // it takes a boundary like every other dated variant.
     expect(
       withDeadline({
         type: "composite",
@@ -430,7 +506,7 @@ describe("published bound inclusivity", () => {
         processing_range_days: [21, 30],
         boundary: "inclusive",
       }),
-    ).toThrow(/boundary does not apply to a "composite" deadline/);
+    ).not.toThrow();
   });
 });
 

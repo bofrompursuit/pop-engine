@@ -216,7 +216,11 @@ export function computeDeadline(
       // A runway shorter than the published processing range is still at risk even when the floor
       // clears: "processing may not complete before event" (interpretation I-5).
       const dated = dateBackFrom(
-        addCalendarDays(context.eventDate, -deadline.hardFloorDays),
+        lastValidFilingDate(
+          addCalendarDays(context.eventDate, -deadline.hardFloorDays),
+          deadline.boundary,
+          (date, units) => addCalendarDays(date, -units),
+        ),
         context,
       );
       const runwayDays = differenceInCalendarDays(context.today, context.eventDate);

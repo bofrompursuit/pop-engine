@@ -129,6 +129,7 @@ const BOUNDED_DEADLINE_TYPES = new Set([
   "published_minimum",
   "published_minimum_by_level",
   "business_days_minimum",
+  "composite",
 ]);
 
 /**
@@ -204,6 +205,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         ],
         display,
         qualification,
+        boundary,
       };
     }
     case "business_days_minimum":

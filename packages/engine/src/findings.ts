@@ -173,13 +173,22 @@ function applyDependencySequencing(
     // confirmed by located primary text. Reporting PUBLISHED_DEADLINE_MISSED off an unconfirmed
     // sequence would invent a blocker the sources do not support, so the worst it can do is warn.
     const isSqueezed = gatedWindowDays !== null && gatedWindowDays < context.slackWarningDays;
+
+    // A window that closed before it opened is not a countdown. The upstream decision is expected
+    // after this finding's own deadline, so there is no number of days to apply within — and
+    // because the sequence is unconfirmed the finding is not missed either, since filing directly
+    // is still possible today. Reporting the negative would put "apply within -5 days" into the
+    // deadline copy and F-203's alerts; reporting null says what is true, that no gated countdown
+    // exists, and leaves the conflict to the note below. The finding keeps its own published date.
+    const sequenceClosedWindow = gatedWindowDays !== null && gatedWindowDays < 0;
+
     sequenced.set(binding.gatedRuleId, {
       ...gated,
       applyAfterDate,
       // Slack for a gated finding is the window it can actually be filed in, not the distance
       // from today to its own deadline (F-102 AC 5: latest_apply − apply_after). Keeping the
       // ungated figure overstates the buffer that deadline copy and F-203's alerts read.
-      slackDays: gatedWindowDays ?? gated.slackDays,
+      slackDays: sequenceClosedWindow ? null : (gatedWindowDays ?? gated.slackDays),
       deadlineStatus:
         isSqueezed && gated.deadlineStatus === "on_track"
           ? "deadline_approaching"
@@ -191,8 +200,13 @@ function applyDependencySequencing(
           `decision window opens` +
           (gatedWindowDays === null
             ? ""
-            : `, leaving ${gatedWindowDays} days to file. Strict issued-before-filed sequencing ` +
-              `is not confirmed by located primary text — confirm the order with the agency`),
+            : sequenceClosedWindow
+              ? `, which is after this permit's own ${gated.latestApplyDate ?? ""} deadline, so ` +
+                `the sequence leaves no window to file in. Strict issued-before-filed sequencing ` +
+                `is not confirmed by located primary text — filing directly may still be open, ` +
+                `so confirm the order with the agency`
+              : `, leaving ${gatedWindowDays} days to file. Strict issued-before-filed sequencing ` +
+                `is not confirmed by located primary text — confirm the order with the agency`),
       ],
     });
   }

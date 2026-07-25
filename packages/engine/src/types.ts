@@ -41,10 +41,12 @@ type DeadlineBound = {
  * days out is at risk or already missed, so it is published data rather than something the engine
  * infers from the qualification prose.
  *
- * `composite` deliberately has no boundary. Its hard floor is a cliff with its own semantics — day
- * N is already missed — so labelling it `inclusive`, whose contract is that day N is valid, would
- * publish a claim the engine itself contradicts. Whether that cliff reading is right for
- * PARKS-EVENT-001 is an open artifact question (issue #89), untouched here.
+ * Every dated variant carries one, `composite` included. It was excluded on the grounds that its
+ * hard floor meant something different — day N already missed — but that reading came from an
+ * F-102 sentence the published rule contradicted, and correcting it removed the difference: on the
+ * floor, latest_apply_date equals today, which is the last valid day, exactly what an inclusive
+ * bound means. With no difference left to describe there is no special case to keep, and a future
+ * composite publishing "earlier than" can say so like any other rule.
  */
 export type DeadlineBoundary = "inclusive" | "exclusive";
 
@@ -70,7 +72,7 @@ export type Deadline =
       readonly hardFloorDays: number;
       readonly processingRangeDays: readonly [number, number];
       readonly display: string | null;
-    } & DeadlineBound)
+    } & BoundedDeadline)
   | ({
       readonly type: "business_days_minimum";
       readonly businessDays: number;
