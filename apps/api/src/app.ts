@@ -1,5 +1,6 @@
 import express, { type Express, type Response } from "express";
 import { describeEngine, EvaluationError } from "@pop-engine/engine";
+import { createCheckinsRouter } from "./checkins";
 import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 
@@ -41,6 +42,9 @@ export function createApp(dependencies: AppDependencies): Express {
   });
 
   app.use("/api", createEventsRouter(dependencies));
+  // F-401: only needs the pool already on AppDependencies — no index.ts wiring, so the
+  // open F-206/F-202 PRs that touch app.ts/index.ts stay easy to rebase against.
+  app.use("/api", createCheckinsRouter({ database: dependencies.database }));
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
 
   return app;
