@@ -76,13 +76,6 @@ export type Deadline =
         Record<string, { readonly calendarDays: number; readonly multiBlockDays: number | null }>
       >;
       readonly unknownLevelBehavior: string | null;
-      /**
-       * The intake fields this deadline keys on, declared by the rule that publishes the levels.
-       * Before nyc.v2.4 the engine had to be told these names out of band, so a ruleset could not
-       * say which field a level deadline reads.
-       */
-      readonly levelField: string;
-      readonly multiBlockField: string;
     } & BoundedDeadline)
   | ({
       readonly type: "composite";
@@ -163,6 +156,20 @@ export type AskedWhenClause =
   | { readonly kind: "truthy"; readonly field: string }
   | { readonly kind: "member"; readonly field: string; readonly member: string };
 
+/**
+ * The intake fields a by-level deadline keys on.
+ *
+ * Held on the rule rather than on the deadline, because it is how the engine resolves the
+ * deadline and not part of what the deadline publishes. A finding snapshots `rule.deadline`
+ * verbatim, and a snapshot is only replayable if its shape is the shape the artifact published:
+ * nyc.v2.1–v2.3 declared no binding, so a legacy plan's stored deadline has no such keys and must
+ * not grow them when it is re-evaluated (AD-7).
+ */
+export type LevelBinding = {
+  readonly levelField: string;
+  readonly multiBlockField: string;
+};
+
 export type EngineRule = {
   readonly id: string;
   readonly kind: RuleKind;
@@ -171,6 +178,8 @@ export type EngineRule = {
   readonly agency: string | null;
   readonly publishedDisposition: Disposition | null;
   readonly deadline: Deadline | null;
+  /** Non-null exactly when `deadline` is a by-level deadline. */
+  readonly levelBinding: LevelBinding | null;
   readonly feeDisplay: string | null;
   readonly portalName: string | null;
   readonly portalUrl: string | null;

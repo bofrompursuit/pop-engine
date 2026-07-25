@@ -14,43 +14,211 @@
     "COVERAGE_GAP": "combination not modeled by this ruleset version; advisory asserts nothing"
   },
   "config": {
-    "slack_warning_days": { "value": 14, "note": "PopEngine internal planning buffer — NOT an official threshold; UI must label it as internal policy." },
-    "business_day_math": { "mode": "actual_calendar", "calendar": "us-ny-business-days@2026.1", "note": "Real business-day computation against a pinned holiday calendar. The holiday list itself remains RESEARCH_REQUIRED (Dev 4); fixtures pin dates in windows with no contested holidays so it does not affect the capstone. Renamed off the '.draft' suffix at ruleset approval (2026-07-22); the identifier is now pinned even though the holiday source is still being verified. Supersedes v1's calendar approximation (OPEN-QUESTIONS I-2, team approval 2026-07-22)." },
-    "assembly_thresholds": { "indoor_or_rooftop": 75, "outdoor": 200, "status": "SOURCE_CONFIRMED", "evidence": "VS §6 R13 + Round2 #7" }
+    "slack_warning_days": {
+      "value": 14,
+      "note": "PopEngine internal planning buffer — NOT an official threshold; UI must label it as internal policy."
+    },
+    "business_day_math": {
+      "mode": "actual_calendar",
+      "calendar": "us-ny-business-days@2026.1",
+      "note": "Real business-day computation against a pinned holiday calendar. The holiday list itself remains RESEARCH_REQUIRED (Dev 4); fixtures pin dates in windows with no contested holidays so it does not affect the capstone. Renamed off the '.draft' suffix at ruleset approval (2026-07-22); the identifier is now pinned even though the holiday source is still being verified. Supersedes v1's calendar approximation (OPEN-QUESTIONS I-2, team approval 2026-07-22)."
+    },
+    "assembly_thresholds": {
+      "indoor_or_rooftop": 75,
+      "outdoor": 200,
+      "status": "SOURCE_CONFIRMED",
+      "evidence": "VS §6 R13 + Round2 #7"
+    }
   },
   "intake_fields": [
-    { "field": "borough", "type": "enum", "values": ["manhattan", "brooklyn", "queens", "bronx", "staten_island"], "collected": true },
-    { "field": "location_type", "type": "enum", "values": ["street", "sidewalk", "plaza", "park", "private_venue"], "collected": true },
-    { "field": "obstructs_public_way", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "location_type in street/sidewalk/plaza", "note": "50 RCNY §1-01: SAPO trigger is interference with regular use, not mere presence." },
-    { "field": "sapo_event_type", "type": "enum", "values": ["street_event", "block_party", "plaza_event", "other_sapo_class", "unknown"], "collected": true, "asked_when": "obstructs_public_way != no" },
-    { "field": "street_event_size", "type": "enum", "values": ["small", "medium", "large", "extra_large", "unknown"], "collected": true, "asked_when": "sapo_event_type = street_event", "note": "SAPO size CRITERIA are not published on fetched pages (only per-size deadlines/fees); user selects per SAPO guidance; unknown → CONDITIONAL." },
-    { "field": "plaza_level", "type": "enum", "values": ["a", "b", "c", "d", "unknown"], "collected": true, "asked_when": "sapo_event_type = plaza_event" },
-    { "field": "plaza_multiple_blocks", "type": "boolean", "collected": true, "asked_when": "sapo_event_type = plaza_event" },
-    { "field": "has_amusement_ride", "type": "boolean", "collected": true, "asked_when": "sapo_event_type = block_party" },
+    {
+      "field": "borough",
+      "type": "enum",
+      "values": ["manhattan", "brooklyn", "queens", "bronx", "staten_island"],
+      "collected": true
+    },
+    {
+      "field": "location_type",
+      "type": "enum",
+      "values": ["street", "sidewalk", "plaza", "park", "private_venue"],
+      "collected": true
+    },
+    {
+      "field": "obstructs_public_way",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "location_type in street/sidewalk/plaza",
+      "note": "50 RCNY §1-01: SAPO trigger is interference with regular use, not mere presence."
+    },
+    {
+      "field": "sapo_event_type",
+      "type": "enum",
+      "values": ["street_event", "block_party", "plaza_event", "other_sapo_class", "unknown"],
+      "collected": true,
+      "asked_when": "obstructs_public_way != no"
+    },
+    {
+      "field": "street_event_size",
+      "type": "enum",
+      "values": ["small", "medium", "large", "extra_large", "unknown"],
+      "collected": true,
+      "asked_when": "sapo_event_type = street_event",
+      "note": "SAPO size CRITERIA are not published on fetched pages (only per-size deadlines/fees); user selects per SAPO guidance; unknown → CONDITIONAL."
+    },
+    {
+      "field": "plaza_level",
+      "type": "enum",
+      "values": ["a", "b", "c", "d", "unknown"],
+      "collected": true,
+      "asked_when": "sapo_event_type = plaza_event"
+    },
+    {
+      "field": "plaza_multiple_blocks",
+      "type": "boolean",
+      "collected": true,
+      "asked_when": "sapo_event_type = plaza_event"
+    },
+    {
+      "field": "has_amusement_ride",
+      "type": "boolean",
+      "collected": true,
+      "asked_when": "sapo_event_type = block_party"
+    },
     { "field": "headcount", "type": "integer", "collected": true },
     { "field": "event_date", "type": "date", "collected": true },
-    { "field": "event_open_to_public", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true },
-    { "field": "food_present", "type": "boolean", "collected": true, "note": "Any food sold, sampled, or given away (DOHMH scope is format-independent)." },
-    { "field": "food_vendor_count", "type": "integer", "collected": true, "asked_when": "food_present" },
-    { "field": "food_affinity_private_exception_claimed", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "food_present AND event_open_to_public != yes" },
-    { "field": "selling_anything", "type": "boolean", "collected": true, "note": "Food, merchandise, tickets — any revenue-generating sale (drives Parks TUA + block-party eligibility)." },
+    {
+      "field": "event_open_to_public",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true
+    },
+    {
+      "field": "food_present",
+      "type": "boolean",
+      "collected": true,
+      "note": "Any food sold, sampled, or given away (DOHMH scope is format-independent)."
+    },
+    {
+      "field": "food_vendor_count",
+      "type": "integer",
+      "collected": true,
+      "asked_when": "food_present"
+    },
+    {
+      "field": "food_affinity_private_exception_claimed",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "food_present AND event_open_to_public != yes"
+    },
+    {
+      "field": "selling_anything",
+      "type": "boolean",
+      "collected": true,
+      "note": "Food, merchandise, tickets — any revenue-generating sale (drives Parks TUA + block-party eligibility)."
+    },
     { "field": "amplified_sound", "type": "boolean", "collected": true },
-    { "field": "sound_audible_from_public_way", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "amplified_sound AND location_type = private_venue", "note": "Admin Code §10-108(b)(3): sound projected outside/through openings, audible on a public street/park/place, is in permit scope." },
-    { "field": "structure_types", "type": "multi_enum", "values": ["tent_canopy", "stage_platform_scaffold", "prop_truss", "bleachers_inflatable", "none"], "collected": true },
-    { "field": "tent_area_sqft", "type": "integer", "collected": true, "asked_when": "tent_canopy", "nullable": true },
-    { "field": "tent_days_in_place", "type": "integer", "collected": true, "asked_when": "tent_canopy", "nullable": true },
-    { "field": "stage_height_ft", "type": "number", "collected": true, "asked_when": "stage_platform_scaffold", "nullable": true },
-    { "field": "stage_area_sqft", "type": "integer", "collected": true, "asked_when": "stage_platform_scaffold", "nullable": true },
-    { "field": "structure_over_10ft_tall", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "structure_types != none" },
-    { "field": "open_flame_or_cooking", "type": "multi_enum", "values": ["charcoal_wood", "propane_lpg", "sterno_candles_heaters", "none"], "collected": true },
+    {
+      "field": "sound_audible_from_public_way",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "amplified_sound AND location_type = private_venue",
+      "note": "Admin Code §10-108(b)(3): sound projected outside/through openings, audible on a public street/park/place, is in permit scope."
+    },
+    {
+      "field": "structure_types",
+      "type": "multi_enum",
+      "values": [
+        "tent_canopy",
+        "stage_platform_scaffold",
+        "prop_truss",
+        "bleachers_inflatable",
+        "none"
+      ],
+      "collected": true
+    },
+    {
+      "field": "tent_area_sqft",
+      "type": "integer",
+      "collected": true,
+      "asked_when": "tent_canopy",
+      "nullable": true
+    },
+    {
+      "field": "tent_days_in_place",
+      "type": "integer",
+      "collected": true,
+      "asked_when": "tent_canopy",
+      "nullable": true
+    },
+    {
+      "field": "stage_height_ft",
+      "type": "number",
+      "collected": true,
+      "asked_when": "stage_platform_scaffold",
+      "nullable": true
+    },
+    {
+      "field": "stage_area_sqft",
+      "type": "integer",
+      "collected": true,
+      "asked_when": "stage_platform_scaffold",
+      "nullable": true
+    },
+    {
+      "field": "structure_over_10ft_tall",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "structure_types != none"
+    },
+    {
+      "field": "open_flame_or_cooking",
+      "type": "multi_enum",
+      "values": ["charcoal_wood", "propane_lpg", "sterno_candles_heaters", "none"],
+      "collected": true
+    },
     { "field": "generator_present", "type": "boolean", "collected": true },
-    { "field": "generator_gasoline_gallons", "type": "number", "collected": true, "asked_when": "generator_present", "nullable": true },
-    { "field": "generator_diesel_gallons", "type": "number", "collected": true, "asked_when": "generator_present", "nullable": true },
-    { "field": "generator_kw", "type": "number", "collected": true, "asked_when": "generator_present", "nullable": true },
+    {
+      "field": "generator_gasoline_gallons",
+      "type": "number",
+      "collected": true,
+      "asked_when": "generator_present",
+      "nullable": true
+    },
+    {
+      "field": "generator_diesel_gallons",
+      "type": "number",
+      "collected": true,
+      "asked_when": "generator_present",
+      "nullable": true
+    },
+    {
+      "field": "generator_kw",
+      "type": "number",
+      "collected": true,
+      "asked_when": "generator_present",
+      "nullable": true
+    },
     { "field": "battery_system_kwh", "type": "number", "collected": true, "nullable": true },
     { "field": "alcohol", "type": "boolean", "collected": true },
-    { "field": "venue_license_covers_event_area", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "alcohol AND location_type = private_venue", "note": "Branch fact: does an existing on-premises license cover the exact event area (e.g. the rooftop)?" },
-    { "field": "venue_has_assembly_approval", "type": "enum", "values": ["yes", "no", "unknown"], "collected": true, "asked_when": "location_type = private_venue AND headcount gte 75" }
+    {
+      "field": "venue_license_covers_event_area",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "alcohol AND location_type = private_venue",
+      "note": "Branch fact: does an existing on-premises license cover the exact event area (e.g. the rooftop)?"
+    },
+    {
+      "field": "venue_has_assembly_approval",
+      "type": "enum",
+      "values": ["yes", "no", "unknown"],
+      "collected": true,
+      "asked_when": "location_type = private_venue AND headcount gte 75"
+    }
   ],
   "engine_conventions": [
     "Tri-state evaluation; material unknown propagates to CONDITIONAL, never silently false.",
@@ -63,266 +231,1030 @@
   ],
   "rules": [
     {
-      "id": "SAPO-SCOPE-001", "kind": "classification",
-      "trigger": { "all": [ { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza"] }, { "field": "obstructs_public_way", "op": "eq", "value": "no" } ] },
-      "output": { "disposition": "NO_NEW_REQUIREMENT_IDENTIFIED", "note_text": "SAPO permits attach to activity that interferes with or obstructs the regular use of the street, curb lane, sidewalk, or plaza (50 RCNY §1-01). An activity with no obstruction may not require a street activity permit — confirm scope with SAPO for borderline setups." },
-      "source": { "citation": "50 RCNY §1-01, §1-03(a) (2026 SAPO rules PDF); CECM FAQ", "urls": ["https://www.nyc.gov/assets/cecm/downloads/pdf/newyorkcity-sapo-rules-2026.pdf"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #2" }, "exercised_by_scenarios": []
+      "id": "SAPO-SCOPE-001",
+      "kind": "classification",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza"] },
+          { "field": "obstructs_public_way", "op": "eq", "value": "no" }
+        ]
+      },
+      "output": {
+        "disposition": "NO_NEW_REQUIREMENT_IDENTIFIED",
+        "note_text": "SAPO permits attach to activity that interferes with or obstructs the regular use of the street, curb lane, sidewalk, or plaza (50 RCNY §1-01). An activity with no obstruction may not require a street activity permit — confirm scope with SAPO for borderline setups."
+      },
+      "source": {
+        "citation": "50 RCNY §1-01, §1-03(a) (2026 SAPO rules PDF); CECM FAQ",
+        "urls": ["https://www.nyc.gov/assets/cecm/downloads/pdf/newyorkcity-sapo-rules-2026.pdf"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #2" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "SAPO-STREET-SMALL-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "street_event" }, { "field": "street_event_size", "op": "eq", "value": "small" } ] },
-      "output": { "permit_name": "Street Event Permit (Small)", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum", "calendar_days": 14 }, "fee": { "display": "$3,100 per location per day + $25 nonrefundable processing fee" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" } },
-      "source": { "citation": "CECM street-events + permit-deadlines + fees pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page", "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1; portal path VS Round1 §9" }, "exercised_by_scenarios": ["A-rescope"]
+      "id": "SAPO-STREET-SMALL-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "street_event" },
+          { "field": "street_event_size", "op": "eq", "value": "small" }
+        ]
+      },
+      "output": {
+        "permit_name": "Street Event Permit (Small)",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": { "type": "published_minimum", "calendar_days": 14 },
+        "fee": { "display": "$3,100 per location per day + $25 nonrefundable processing fee" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }
+      },
+      "source": {
+        "citation": "CECM street-events + permit-deadlines + fees pages",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page",
+          "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"
+        ]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "evidence": "VS Round2 #1; portal path VS Round1 §9"
+      },
+      "exercised_by_scenarios": ["A-rescope"]
     },
     {
-      "id": "SAPO-STREET-MEDIUM-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "street_event" }, { "field": "street_event_size", "op": "eq", "value": "medium" } ] },
-      "output": { "permit_name": "Street Event Permit (Medium)", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum", "calendar_days": 30 }, "fee": { "display": "$11,000 per location per day + $25 nonrefundable processing fee" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" } },
-      "source": { "citation": "CECM street-events + permit-deadlines + fees pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page", "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" }, "exercised_by_scenarios": ["A-rescope"]
+      "id": "SAPO-STREET-MEDIUM-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "street_event" },
+          { "field": "street_event_size", "op": "eq", "value": "medium" }
+        ]
+      },
+      "output": {
+        "permit_name": "Street Event Permit (Medium)",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": { "type": "published_minimum", "calendar_days": 30 },
+        "fee": { "display": "$11,000 per location per day + $25 nonrefundable processing fee" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }
+      },
+      "source": {
+        "citation": "CECM street-events + permit-deadlines + fees pages",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page",
+          "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" },
+      "exercised_by_scenarios": ["A-rescope"]
     },
     {
-      "id": "SAPO-STREET-LARGE-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "street_event" }, { "field": "street_event_size", "op": "eq", "value": "large" } ] },
-      "output": { "permit_name": "Street Event Permit (Large)", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum", "calendar_days": 45 }, "fee": { "display": "$25,000 per location per day + $25 nonrefundable processing fee" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" } },
-      "source": { "citation": "CECM street-events + permit-deadlines + fees pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page", "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" }, "exercised_by_scenarios": ["A"]
+      "id": "SAPO-STREET-LARGE-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "street_event" },
+          { "field": "street_event_size", "op": "eq", "value": "large" }
+        ]
+      },
+      "output": {
+        "permit_name": "Street Event Permit (Large)",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": { "type": "published_minimum", "calendar_days": 45 },
+        "fee": { "display": "$25,000 per location per day + $25 nonrefundable processing fee" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }
+      },
+      "source": {
+        "citation": "CECM street-events + permit-deadlines + fees pages",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page",
+          "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" },
+      "exercised_by_scenarios": ["A"]
     },
     {
-      "id": "SAPO-STREET-XL-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "street_event" }, { "field": "street_event_size", "op": "eq", "value": "extra_large" } ] },
-      "output": { "permit_name": "Street Event Permit (Extra Large)", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum", "calendar_days": 60, "qualification": "'up to 60 days'; exact deadline depends on plaza levels if plazas are used" }, "fee": { "display": "up to $66,000 per location per day + $25 processing fee" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" } },
-      "source": { "citation": "CECM street-events + permit-deadlines pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" }, "exercised_by_scenarios": []
+      "id": "SAPO-STREET-XL-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "street_event" },
+          { "field": "street_event_size", "op": "eq", "value": "extra_large" }
+        ]
+      },
+      "output": {
+        "permit_name": "Street Event Permit (Extra Large)",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": {
+          "type": "published_minimum",
+          "calendar_days": 60,
+          "qualification": "'up to 60 days'; exact deadline depends on plaza levels if plazas are used"
+        },
+        "fee": { "display": "up to $66,000 per location per day + $25 processing fee" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }
+      },
+      "source": {
+        "citation": "CECM street-events + permit-deadlines pages",
+        "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #1" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "SAPO-BLOCK-PARTY-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" } ] },
-      "output": { "permit_name": "Block Party Permit", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum", "calendar_days": 60 }, "fee": { "display": "$25 processing fee only" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }, "notes": ["Community-board recommendation precedes SAPO administration (SAPO rules §1-04(h))."] },
-      "source": { "citation": "CECM block-parties page + FAQ + permit-deadlines page", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" }, "exercised_by_scenarios": ["D"]
+      "id": "SAPO-BLOCK-PARTY-001",
+      "kind": "permit",
+      "trigger": { "all": [{ "field": "sapo_event_type", "op": "eq", "value": "block_party" }] },
+      "output": {
+        "permit_name": "Block Party Permit",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": { "type": "published_minimum", "calendar_days": 60 },
+        "fee": { "display": "$25 processing fee only" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" },
+        "notes": [
+          "Community-board recommendation precedes SAPO administration (SAPO rules §1-04(h))."
+        ]
+      },
+      "source": {
+        "citation": "CECM block-parties page + FAQ + permit-deadlines page",
+        "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" },
+      "exercised_by_scenarios": ["D"]
     },
     {
-      "id": "SAPO-BLOCK-PARTY-ELIG-001", "kind": "eligibility",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" }, { "any": [ { "field": "selling_anything", "op": "bool", "value": true }, { "field": "alcohol", "op": "bool", "value": true } ] } ] },
-      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "requirement_name": "Block party eligibility conflict", "agency": "SAPO (Mayor's Office CECM)", "note_text": "A block party is a community-sponsored public event with no sales of goods or services; alcohol, vendors, commercial branding, and sponsorships are not permitted. This event's inputs conflict with block-party eligibility — rescope or apply under a different SAPO class." },
-      "source": { "citation": "CECM block-parties page; FAQ alcohol prohibition", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" }, "exercised_by_scenarios": []
+      "id": "SAPO-BLOCK-PARTY-ELIG-001",
+      "kind": "eligibility",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "block_party" },
+          {
+            "any": [
+              { "field": "selling_anything", "op": "bool", "value": true },
+              { "field": "alcohol", "op": "bool", "value": true }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "disposition": "PROHIBITED_OR_INELIGIBLE",
+        "requirement_name": "Block party eligibility conflict",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "note_text": "A block party is a community-sponsored public event with no sales of goods or services; alcohol, vendors, commercial branding, and sponsorships are not permitted. This event's inputs conflict with block-party eligibility — rescope or apply under a different SAPO class."
+      },
+      "source": {
+        "citation": "CECM block-parties page; FAQ alcohol prohibition",
+        "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "SAPO-BLOCK-PARTY-SPONSOR-001", "kind": "eligibility",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Block association sponsorship + neighbor permission", "agency": "SAPO (Mayor's Office CECM)", "note_text": "Applicants must be a member of a block association and have permission from their neighbors. Confirm before applying." },
-      "source": { "citation": "CECM block-parties page", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" }, "exercised_by_scenarios": ["D"]
+      "id": "SAPO-BLOCK-PARTY-SPONSOR-001",
+      "kind": "eligibility",
+      "trigger": { "all": [{ "field": "sapo_event_type", "op": "eq", "value": "block_party" }] },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "requirement_name": "Block association sponsorship + neighbor permission",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "note_text": "Applicants must be a member of a block association and have permission from their neighbors. Confirm before applying."
+      },
+      "source": {
+        "citation": "CECM block-parties page",
+        "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/block-parties.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #6" },
+      "exercised_by_scenarios": ["D"]
     },
     {
-      "id": "SAPO-PLAZA-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "plaza_event" } ] },
-      "output": { "permit_name": "Plaza Event Permit", "agency": "SAPO (Mayor's Office CECM)", "deadline": { "type": "published_minimum_by_level", "levels": { "a": { "calendar_days": 45, "multi_block_days": 60 }, "b": { "calendar_days": 30, "multi_block_days": 45 }, "c": { "calendar_days": 30 }, "d": { "calendar_days": 14 } }, "unknown_level_behavior": "CONDITIONAL listing 14–60 range" }, "fee": { "display": "$1,000–$31,000 by level/size + $25 processing fee" }, "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" } },
-      "source": { "citation": "CECM permit-deadlines + plaza-fees pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page", "https://www.nyc.gov/site/cecm/permitting/plaza-fees.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #3" }, "exercised_by_scenarios": ["E"]
+      "id": "SAPO-PLAZA-001",
+      "kind": "permit",
+      "trigger": { "all": [{ "field": "sapo_event_type", "op": "eq", "value": "plaza_event" }] },
+      "output": {
+        "permit_name": "Plaza Event Permit",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "deadline": {
+          "type": "published_minimum_by_level",
+          "levels": {
+            "a": { "calendar_days": 45, "multi_block_days": 60 },
+            "b": { "calendar_days": 30, "multi_block_days": 45 },
+            "c": { "calendar_days": 30 },
+            "d": { "calendar_days": 14 }
+          },
+          "unknown_level_behavior": "CONDITIONAL listing 14–60 range"
+        },
+        "fee": { "display": "$1,000–$31,000 by level/size + $25 processing fee" },
+        "portal": { "name": "E-Apply", "url": "https://nyceventpermits.nyc.gov/cems/Login" }
+      },
+      "source": {
+        "citation": "CECM permit-deadlines + plaza-fees pages",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page",
+          "https://www.nyc.gov/site/cecm/permitting/plaza-fees.page"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #3" },
+      "exercised_by_scenarios": ["E"]
     },
     {
-      "id": "SAPO-INSURANCE-001", "kind": "insurance",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "in", "value": ["street_event", "plaza_event", "other_sapo_class"] } ] },
-      "output": { "requirement_name": "Liability insurance, $1M per occurrence, City of New York as additional insured", "agency": "Requirement attached to SAPO permits (50 RCNY §1-08(b))", "deadline": { "type": "before_issuance" }, "fee": { "display": "premium varies" }, "notes": ["Exceptions in the rule text: block parties and press conferences/rallies/stationary demonstrations; hardship waiver at SAPO's discretion.", "Exact certificate-holder wording per class: confirm (VS Round2 unresolved list)."] },
-      "source": { "citation": "50 RCNY §1-08(b) (current) + CECM per-type pages", "urls": ["https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §4 (Round 1)" }, "exercised_by_scenarios": ["A", "E"]
+      "id": "SAPO-INSURANCE-001",
+      "kind": "insurance",
+      "trigger": {
+        "all": [
+          {
+            "field": "sapo_event_type",
+            "op": "in",
+            "value": ["street_event", "plaza_event", "other_sapo_class"]
+          }
+        ]
+      },
+      "output": {
+        "requirement_name": "Liability insurance, $1M per occurrence, City of New York as additional insured",
+        "agency": "Requirement attached to SAPO permits (50 RCNY §1-08(b))",
+        "deadline": { "type": "before_issuance" },
+        "fee": { "display": "premium varies" },
+        "notes": [
+          "Exceptions in the rule text: block parties and press conferences/rallies/stationary demonstrations; hardship waiver at SAPO's discretion.",
+          "Exact certificate-holder wording per class: confirm (VS Round2 unresolved list)."
+        ]
+      },
+      "source": {
+        "citation": "50 RCNY §1-08(b) (current) + CECM per-type pages",
+        "urls": ["https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §4 (Round 1)" },
+      "exercised_by_scenarios": ["A", "E"]
     },
     {
-      "id": "SAPO-INSURANCE-BLOCK-PARTY-RIDE-001", "kind": "insurance",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "block_party" }, { "field": "has_amusement_ride", "op": "bool", "value": true } ] },
-      "output": { "requirement_name": "Insurance required (block party WITH ride)", "agency": "SAPO (Mayor's Office CECM)", "note_text": "Block parties are exempt from the baseline $1M requirement, but 'block parties wishing to have rides must also provide insurance' (CECM FAQ); rides/inflatables also need a DOB inspection certificate." },
-      "source": { "citation": "CECM FAQ + block-parties page", "urls": ["https://www.nyc.gov/site/cecm/support/frequently-asked-questions.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §4 (Round 1)" }, "exercised_by_scenarios": []
+      "id": "SAPO-INSURANCE-BLOCK-PARTY-RIDE-001",
+      "kind": "insurance",
+      "trigger": {
+        "all": [
+          { "field": "sapo_event_type", "op": "eq", "value": "block_party" },
+          { "field": "has_amusement_ride", "op": "bool", "value": true }
+        ]
+      },
+      "output": {
+        "requirement_name": "Insurance required (block party WITH ride)",
+        "agency": "SAPO (Mayor's Office CECM)",
+        "note_text": "Block parties are exempt from the baseline $1M requirement, but 'block parties wishing to have rides must also provide insurance' (CECM FAQ); rides/inflatables also need a DOB inspection certificate."
+      },
+      "source": {
+        "citation": "CECM FAQ + block-parties page",
+        "urls": ["https://www.nyc.gov/site/cecm/support/frequently-asked-questions.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §4 (Round 1)" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "NYPD-SOUND-001", "kind": "permit",
-      "trigger": { "any": [ { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza", "park"] } ] }, { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "sound_audible_from_public_way", "op": "eq", "value": "yes" } ] } ] },
-      "output": { "permit_name": "Sound Device Permit", "agency": "NYPD", "deadline": { "type": "published_minimum", "calendar_days": 5, "display": "file at least 5 days before use" }, "fee": { "display": "$45 first day per device + $5 per additional day (max 4 additional) — certified check/money order" }, "portal": { "name": "Local NYPD precinct (in person)", "url": null, "instructions": "File at the precinct where the device will be used; application form PD 656-041A." }, "notes": ["Scope reaches sound projected outside a building or through openings, audible on a public street/park/place (Admin Code §10-108(b)(3)). Fully-indoor non-projecting sound is out of scope; the noise code still applies (§24-244, §24-231)."] },
-      "source": { "citation": "NYPD permits page + Admin Code §10-108", "urls": ["https://www.nyc.gov/site/nypd/services/law-enforcement/permits-licenses-permits.page", "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-6027"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §9-10 (Round 1)" }, "exercised_by_scenarios": ["A", "C", "D", "E", "F"]
+      "id": "NYPD-SOUND-001",
+      "kind": "permit",
+      "trigger": {
+        "any": [
+          {
+            "all": [
+              { "field": "amplified_sound", "op": "bool", "value": true },
+              {
+                "field": "location_type",
+                "op": "in",
+                "value": ["street", "sidewalk", "plaza", "park"]
+              }
+            ]
+          },
+          {
+            "all": [
+              { "field": "amplified_sound", "op": "bool", "value": true },
+              { "field": "location_type", "op": "eq", "value": "private_venue" },
+              { "field": "sound_audible_from_public_way", "op": "eq", "value": "yes" }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "permit_name": "Sound Device Permit",
+        "agency": "NYPD",
+        "deadline": {
+          "type": "published_minimum",
+          "calendar_days": 5,
+          "display": "file at least 5 days before use"
+        },
+        "fee": {
+          "display": "$45 first day per device + $5 per additional day (max 4 additional) — certified check/money order"
+        },
+        "portal": {
+          "name": "Local NYPD precinct (in person)",
+          "url": null,
+          "instructions": "File at the precinct where the device will be used; application form PD 656-041A."
+        },
+        "notes": [
+          "Scope reaches sound projected outside a building or through openings, audible on a public street/park/place (Admin Code §10-108(b)(3)). Fully-indoor non-projecting sound is out of scope; the noise code still applies (§24-244, §24-231)."
+        ]
+      },
+      "source": {
+        "citation": "NYPD permits page + Admin Code §10-108",
+        "urls": [
+          "https://www.nyc.gov/site/nypd/services/law-enforcement/permits-licenses-permits.page",
+          "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-6027"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §9-10 (Round 1)" },
+      "exercised_by_scenarios": ["A", "C", "D", "E", "F"]
     },
     {
-      "id": "NYPD-SOUND-PARKS-DEP-001", "kind": "dependency",
-      "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "park" } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Parks amplified-sound permission precedes NYPD pursuit", "agency": "NYC Parks", "note_text": "NYC Parks controls amplified-sound permission through its event review; obtain it before pursuing the NYPD sound permit. A strict issued-before-filed sequence is not confirmed by located primary text — confirm exact sequencing with the Parks permit office or precinct." },
-      "source": { "citation": "nycgovparks.org special event guidance", "urls": ["https://www.nycgovparks.org/permits/special-events/guide"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "sequencing detail RESEARCH_REQUIRED", "evidence": "VS Round2 unresolved list" }, "exercised_by_scenarios": ["C"]
+      "id": "NYPD-SOUND-PARKS-DEP-001",
+      "kind": "dependency",
+      "trigger": {
+        "all": [
+          { "field": "amplified_sound", "op": "bool", "value": true },
+          { "field": "location_type", "op": "eq", "value": "park" }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "requirement_name": "Parks amplified-sound permission precedes NYPD pursuit",
+        "agency": "NYC Parks",
+        "note_text": "NYC Parks controls amplified-sound permission through its event review; obtain it before pursuing the NYPD sound permit. A strict issued-before-filed sequence is not confirmed by located primary text — confirm exact sequencing with the Parks permit office or precinct."
+      },
+      "source": {
+        "citation": "nycgovparks.org special event guidance",
+        "urls": ["https://www.nycgovparks.org/permits/special-events/guide"]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "sequencing detail RESEARCH_REQUIRED",
+        "evidence": "VS Round2 unresolved list"
+      },
+      "exercised_by_scenarios": ["C"]
     },
     {
-      "id": "PARKS-EVENT-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "headcount", "op": "gt", "value": 20 } ] },
-      "output": { "permit_name": "Special Event Permit", "agency": "NYC Parks", "deadline": { "type": "composite", "hard_floor_days": 21, "processing_range_days": [21, 30], "display": "apply at least 21 days ahead (applications inside 21 days are not accepted); processing 21–30 days" }, "fee": { "display": "$25 nonrefundable" }, "portal": { "name": "NYC Parks event permits", "url": "https://nyceventpermits.nyc.gov/parks" }, "notes": ["Runway shorter than the processing range renders FEASIBLE-AT-RISK ('processing may not complete before event') — encoding interpretation I-5, unchanged."] },
-      "source": { "citation": "Parks FAQ + portal + NYC311", "urls": ["https://www.nycgovparks.org/permits/special-events/faq", "https://nyceventpermits.nyc.gov/parks"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §11 (Round 1) + Round2 #8" }, "exercised_by_scenarios": ["C"]
+      "id": "PARKS-EVENT-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "park" },
+          { "field": "headcount", "op": "gt", "value": 20 }
+        ]
+      },
+      "output": {
+        "permit_name": "Special Event Permit",
+        "agency": "NYC Parks",
+        "deadline": {
+          "type": "composite",
+          "hard_floor_days": 21,
+          "processing_range_days": [21, 30],
+          "display": "apply at least 21 days ahead (applications inside 21 days are not accepted); processing 21–30 days"
+        },
+        "fee": { "display": "$25 nonrefundable" },
+        "portal": {
+          "name": "NYC Parks event permits",
+          "url": "https://nyceventpermits.nyc.gov/parks"
+        },
+        "notes": [
+          "Runway shorter than the processing range renders FEASIBLE-AT-RISK ('processing may not complete before event') — encoding interpretation I-5, unchanged."
+        ]
+      },
+      "source": {
+        "citation": "Parks FAQ + portal + NYC311",
+        "urls": [
+          "https://www.nycgovparks.org/permits/special-events/faq",
+          "https://nyceventpermits.nyc.gov/parks"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §11 (Round 1) + Round2 #8" },
+      "exercised_by_scenarios": ["C"]
     },
     {
-      "id": "PARKS-EVENT-EXACTLY-20-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "headcount", "op": "eq", "value": 20 } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "Special Event Permit (threshold conflict at exactly 20)", "agency": "NYC Parks", "note_text": "OFFICIAL CONFLICT: the Parks FAQ requires a permit for 'twenty or more people'; the application portal and NYC311 say 'more than 20'. At exactly 20 attendees, confirm with Parks — or plan for the permit to be safe." },
-      "source": { "citation": "Parks FAQ vs. portal vs. NYC311 KA-02071", "urls": ["https://www.nycgovparks.org/permits/special-events/faq", "https://nyceventpermits.nyc.gov/parks", "https://portal.311.nyc.gov/article/?kanumber=KA-02071"] },
-      "verification": { "status": "OFFICIAL_CONFLICT", "evidence": "VS Round2 #8" }, "exercised_by_scenarios": []
+      "id": "PARKS-EVENT-EXACTLY-20-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "park" },
+          { "field": "headcount", "op": "eq", "value": 20 }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "Special Event Permit (threshold conflict at exactly 20)",
+        "agency": "NYC Parks",
+        "note_text": "OFFICIAL CONFLICT: the Parks FAQ requires a permit for 'twenty or more people'; the application portal and NYC311 say 'more than 20'. At exactly 20 attendees, confirm with Parks — or plan for the permit to be safe."
+      },
+      "source": {
+        "citation": "Parks FAQ vs. portal vs. NYC311 KA-02071",
+        "urls": [
+          "https://www.nycgovparks.org/permits/special-events/faq",
+          "https://nyceventpermits.nyc.gov/parks",
+          "https://portal.311.nyc.gov/article/?kanumber=KA-02071"
+        ]
+      },
+      "verification": { "status": "OFFICIAL_CONFLICT", "evidence": "VS Round2 #8" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "PARKS-INSURANCE-NOTE-001", "kind": "note",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "headcount", "op": "gt", "value": 20 } ] },
-      "output": { "note_text": "Insurance determined by borough office at review — not automatically required for parks events." },
-      "source": { "citation": "nycgovparks.org FAQ", "urls": ["https://www.nycgovparks.org/permits/special-events/faq"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "v1 R11 [VERIFIED] + VS §11" }, "exercised_by_scenarios": ["C"]
+      "id": "PARKS-INSURANCE-NOTE-001",
+      "kind": "note",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "park" },
+          { "field": "headcount", "op": "gt", "value": 20 }
+        ]
+      },
+      "output": {
+        "note_text": "Insurance determined by borough office at review — not automatically required for parks events."
+      },
+      "source": {
+        "citation": "nycgovparks.org FAQ",
+        "urls": ["https://www.nycgovparks.org/permits/special-events/faq"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "v1 R11 [VERIFIED] + VS §11" },
+      "exercised_by_scenarios": ["C"]
     },
     {
-      "id": "PARKS-TUA-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "selling_anything", "op": "bool", "value": true } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "Temporary Use Authorization (TUA)", "agency": "NYC Parks Revenue Division", "deadline": { "type": "published_minimum", "calendar_days": 14, "display": "submit vendor info at least two weeks prior" }, "fee": { "display": "$50–$150 per vendor (2026)" }, "note_text": "OFFICIAL CONFLICT on the trigger: three Parks pages state any sale on parkland requires a TUA ('In order to sell anything on parkland, you'll need a Temporary Use Authorization'); the FAQ ties it to events over 500 attendance ('may need'). Encoded leaning any-sale; confirm with the Revenue Division, (212) 360-1397." },
-      "source": { "citation": "nycgovparks.org vendors + guide + large-events pages vs. FAQ", "urls": ["https://www.nycgovparks.org/permits/special-events/vendors", "https://www.nycgovparks.org/permits/special-events/guide", "https://www.nycgovparks.org/permits/special-events/large-events", "https://www.nycgovparks.org/permits/special-events/faq"] },
-      "verification": { "status": "OFFICIAL_CONFLICT", "evidence": "VS §8 (Round 1) + Round2 #12" }, "exercised_by_scenarios": []
+      "id": "PARKS-TUA-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "park" },
+          { "field": "selling_anything", "op": "bool", "value": true }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "Temporary Use Authorization (TUA)",
+        "agency": "NYC Parks Revenue Division",
+        "deadline": {
+          "type": "published_minimum",
+          "calendar_days": 14,
+          "display": "submit vendor info at least two weeks prior"
+        },
+        "fee": { "display": "$50–$150 per vendor (2026)" },
+        "note_text": "OFFICIAL CONFLICT on the trigger: three Parks pages state any sale on parkland requires a TUA ('In order to sell anything on parkland, you'll need a Temporary Use Authorization'); the FAQ ties it to events over 500 attendance ('may need'). Encoded leaning any-sale; confirm with the Revenue Division, (212) 360-1397."
+      },
+      "source": {
+        "citation": "nycgovparks.org vendors + guide + large-events pages vs. FAQ",
+        "urls": [
+          "https://www.nycgovparks.org/permits/special-events/vendors",
+          "https://www.nycgovparks.org/permits/special-events/guide",
+          "https://www.nycgovparks.org/permits/special-events/large-events",
+          "https://www.nycgovparks.org/permits/special-events/faq"
+        ]
+      },
+      "verification": { "status": "OFFICIAL_CONFLICT", "evidence": "VS §8 (Round 1) + Round2 #12" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "DOHMH-VENDOR-PERMIT-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "food_present", "op": "bool", "value": true }, { "field": "event_open_to_public", "op": "eq", "value": "yes" } ] },
-      "output": { "permit_name": "Acceptable DOHMH permit per participating food vendor (TFSE / FSE / MFV)", "agency": "DOHMH", "deadline": { "type": "research_required", "display": "vendor permit lead time — confirm with DOHMH" }, "fee": { "display": "TFSE: $70 annual" }, "notes": ["Applies whether food is sold, sampled, or given away; on private property, a public street, or in a park (DOHMH temporary-events page; Health Code Art. 88).", "There is no separate 'sampling permit' class in located sources — free sampling is food service requiring an acceptable vendor permit."] },
-      "source": { "citation": "DOHMH temporary-events page + Health Code Article 88", "urls": ["https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page", "https://www.nyc.gov/assets/doh/downloads/pdf/about/healthcode/health-code-article88.pdf"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §3 (Round 1)" }, "exercised_by_scenarios": ["A", "B", "E"]
+      "id": "DOHMH-VENDOR-PERMIT-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "food_present", "op": "bool", "value": true },
+          { "field": "event_open_to_public", "op": "eq", "value": "yes" }
+        ]
+      },
+      "output": {
+        "permit_name": "Acceptable DOHMH permit per participating food vendor (TFSE / FSE / MFV)",
+        "agency": "DOHMH",
+        "deadline": {
+          "type": "research_required",
+          "display": "vendor permit lead time — confirm with DOHMH"
+        },
+        "fee": { "display": "TFSE: $70 annual" },
+        "notes": [
+          "Applies whether food is sold, sampled, or given away; on private property, a public street, or in a park (DOHMH temporary-events page; Health Code Art. 88).",
+          "There is no separate 'sampling permit' class in located sources — free sampling is food service requiring an acceptable vendor permit."
+        ]
+      },
+      "source": {
+        "citation": "DOHMH temporary-events page + Health Code Article 88",
+        "urls": [
+          "https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page",
+          "https://www.nyc.gov/assets/doh/downloads/pdf/about/healthcode/health-code-article88.pdf"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §3 (Round 1)" },
+      "exercised_by_scenarios": ["A", "B", "E"]
     },
     {
-      "id": "DOHMH-ORGANIZER-NOTIFY-001", "kind": "notification",
-      "trigger": { "all": [ { "field": "food_present", "op": "bool", "value": true }, { "field": "event_open_to_public", "op": "eq", "value": "yes" }, { "field": "food_vendor_count", "op": "gte", "value": 1 } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "requirement_name": "Organizer notification to DOHMH", "agency": "DOHMH", "deadline": { "type": "published_minimum", "calendar_days": 30, "display": "at least 30 days before the event" }, "fee": null, "notes": ["Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.", "On privately owned property: also provide a signed contract with the property owner."] },
-      "source": { "citation": "DOHMH Event Sponsor Guidelines PDF + DOHMH temporary-events page", "urls": ["https://www.nyc.gov/assets/doh/downloads/pdf/rii/temp-vendors.pdf", "https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #9" }, "exercised_by_scenarios": ["A", "E"]
+      "id": "DOHMH-ORGANIZER-NOTIFY-001",
+      "kind": "notification",
+      "trigger": {
+        "all": [
+          { "field": "food_present", "op": "bool", "value": true },
+          { "field": "event_open_to_public", "op": "eq", "value": "yes" },
+          { "field": "food_vendor_count", "op": "gte", "value": 1 }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "requirement_name": "Organizer notification to DOHMH",
+        "agency": "DOHMH",
+        "deadline": {
+          "type": "published_minimum",
+          "calendar_days": 30,
+          "display": "at least 30 days before the event"
+        },
+        "fee": null,
+        "notes": [
+          "Submit the participating-vendor list with each TFSE permit number, expiration date, and food type.",
+          "On privately owned property: also provide a signed contract with the property owner."
+        ]
+      },
+      "source": {
+        "citation": "DOHMH Event Sponsor Guidelines PDF + DOHMH temporary-events page",
+        "urls": [
+          "https://www.nyc.gov/assets/doh/downloads/pdf/rii/temp-vendors.pdf",
+          "https://www.nyc.gov/site/doh/business/food-operators/temporary-food-service-establishments.page"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #9" },
+      "exercised_by_scenarios": ["A", "E"]
     },
     {
-      "id": "DOHMH-EXEMPTION-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "food_present", "op": "bool", "value": true }, { "field": "event_open_to_public", "op": "in", "value": ["no", "unknown"] } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "advisory_text": "Health Code Art. 88 exempts genuinely private affinity-group functions and certain govt/nonprofit education events where the public is not invited. If this event is open to the public in practice, vendor permits and the 30-day organizer notification apply. Confirm which side of the exemption this event falls on." },
-      "source": { "citation": "Health Code §88.03(f)(2)-(4) + DOHMH page", "urls": ["https://www.nyc.gov/assets/doh/downloads/pdf/about/healthcode/health-code-article88.pdf"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §3 (Round 1)" }, "exercised_by_scenarios": ["B"]
+      "id": "DOHMH-EXEMPTION-001",
+      "kind": "advisory",
+      "trigger": {
+        "all": [
+          { "field": "food_present", "op": "bool", "value": true },
+          { "field": "event_open_to_public", "op": "in", "value": ["no", "unknown"] }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "advisory_text": "Health Code Art. 88 exempts genuinely private affinity-group functions and certain govt/nonprofit education events where the public is not invited. If this event is open to the public in practice, vendor permits and the 30-day organizer notification apply. Confirm which side of the exemption this event falls on."
+      },
+      "source": {
+        "citation": "Health Code §88.03(f)(2)-(4) + DOHMH page",
+        "urls": [
+          "https://www.nyc.gov/assets/doh/downloads/pdf/about/healthcode/health-code-article88.pdf"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §3 (Round 1)" },
+      "exercised_by_scenarios": ["B"]
     },
     {
-      "id": "FDNY-FUEL-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "open_flame_or_cooking", "op": "contains_any", "value": ["charcoal_wood", "propane_lpg"] } ] },
-      "output": { "permit_name": "FDNY Fuel Permit (cooking/equipment fuel: charcoal, wood, propane, kerosene)", "agency": "FDNY", "deadline": { "type": "research_required", "display": "lead time — confirm with FDNY" }, "fee": { "display": "varies — confirm" }, "portal": { "name": "FDNY Business", "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx" }, "notes": ["LPG at street fairs requires certificate-of-fitness supervision (FC 6101.5.6).", "Charcoal grilling is a FUEL permit matter, not an Open Flame Permit (CECM FDNY page distinguishes the categories)."] },
-      "source": { "citation": "CECM FDNY page + 2022 Fire Code ch. 61/FC 105.6", "urls": ["https://www.nyc.gov/site/cecm/support/new-york-city-fire-department.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "lead time RESEARCH_REQUIRED", "evidence": "VS §2 (Round 1)" }, "exercised_by_scenarios": ["D"]
+      "id": "FDNY-FUEL-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          {
+            "field": "open_flame_or_cooking",
+            "op": "contains_any",
+            "value": ["charcoal_wood", "propane_lpg"]
+          }
+        ]
+      },
+      "output": {
+        "permit_name": "FDNY Fuel Permit (cooking/equipment fuel: charcoal, wood, propane, kerosene)",
+        "agency": "FDNY",
+        "deadline": { "type": "research_required", "display": "lead time — confirm with FDNY" },
+        "fee": { "display": "varies — confirm" },
+        "portal": {
+          "name": "FDNY Business",
+          "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx"
+        },
+        "notes": [
+          "LPG at street fairs requires certificate-of-fitness supervision (FC 6101.5.6).",
+          "Charcoal grilling is a FUEL permit matter, not an Open Flame Permit (CECM FDNY page distinguishes the categories)."
+        ]
+      },
+      "source": {
+        "citation": "CECM FDNY page + 2022 Fire Code ch. 61/FC 105.6",
+        "urls": ["https://www.nyc.gov/site/cecm/support/new-york-city-fire-department.page"]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "lead time RESEARCH_REQUIRED",
+        "evidence": "VS §2 (Round 1)"
+      },
+      "exercised_by_scenarios": ["D"]
     },
     {
-      "id": "FDNY-OPENFLAME-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "open_flame_or_cooking", "op": "contains_any", "value": ["sterno_candles_heaters"] } ] },
-      "output": { "permit_name": "FDNY Open Flame Permit (candles, sternos, café heaters)", "agency": "FDNY", "deadline": { "type": "research_required", "display": "lead time — confirm with FDNY" }, "fee": { "display": "$210 per set-up or vendor" }, "portal": { "name": "FDNY Business", "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx" } },
-      "source": { "citation": "FDNY Open Flame Permit page + CECM FDNY page", "urls": ["https://www.nyc.gov/site/fdny/business/all-certifications/per-openflames.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "lead time RESEARCH_REQUIRED", "evidence": "VS §2 (Round 1)" }, "exercised_by_scenarios": []
+      "id": "FDNY-OPENFLAME-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          {
+            "field": "open_flame_or_cooking",
+            "op": "contains_any",
+            "value": ["sterno_candles_heaters"]
+          }
+        ]
+      },
+      "output": {
+        "permit_name": "FDNY Open Flame Permit (candles, sternos, café heaters)",
+        "agency": "FDNY",
+        "deadline": { "type": "research_required", "display": "lead time — confirm with FDNY" },
+        "fee": { "display": "$210 per set-up or vendor" },
+        "portal": {
+          "name": "FDNY Business",
+          "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx"
+        }
+      },
+      "source": {
+        "citation": "FDNY Open Flame Permit page + CECM FDNY page",
+        "urls": ["https://www.nyc.gov/site/fdny/business/all-certifications/per-openflames.page"]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "lead time RESEARCH_REQUIRED",
+        "evidence": "VS §2 (Round 1)"
+      },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "PARKS-PROPANE-001", "kind": "prohibition",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "park" }, { "field": "open_flame_or_cooking", "op": "contains_any", "value": ["propane_lpg"] } ] },
-      "output": { "disposition": "PROHIBITED_OR_INELIGIBLE", "agency": "NYC Parks", "note_text": "Propane grills are prohibited in NYC parks. Barbecuing is limited to designated areas in certain parks and beaches; cooking outside designated areas is not allowed." },
-      "source": { "citation": "NYC311 barbecuing article KA-02228", "urls": ["https://portal.311.nyc.gov/article/?kanumber=KA-02228"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §2 (Round 1); 'designated areas' wording per RF-7" }, "exercised_by_scenarios": []
+      "id": "PARKS-PROPANE-001",
+      "kind": "prohibition",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "park" },
+          { "field": "open_flame_or_cooking", "op": "contains_any", "value": ["propane_lpg"] }
+        ]
+      },
+      "output": {
+        "disposition": "PROHIBITED_OR_INELIGIBLE",
+        "agency": "NYC Parks",
+        "note_text": "Propane grills are prohibited in NYC parks. Barbecuing is limited to designated areas in certain parks and beaches; cooking outside designated areas is not allowed."
+      },
+      "source": {
+        "citation": "NYC311 barbecuing article KA-02228",
+        "urls": ["https://portal.311.nyc.gov/article/?kanumber=KA-02228"]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "evidence": "VS §2 (Round 1); 'designated areas' wording per RF-7"
+      },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "FDNY-GENERATOR-001", "kind": "permit",
-      "trigger": { "any": [ { "field": "generator_gasoline_gallons", "op": "gt", "value": 2.5 }, { "field": "generator_diesel_gallons", "op": "gt", "value": 10 }, { "field": "battery_system_kwh", "op": "gt", "value": 20 } ] },
-      "output": { "permit_name": "FDNY Generator/Battery Permit", "agency": "FDNY", "deadline": { "type": "research_required", "display": "lead time — confirm with FDNY (v1's universal 45–60 days removed: not located in primary text)" }, "fee": { "display": "fee applies — confirm amount" }, "portal": { "name": "FDNY Business", "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx" }, "notes": ["Thresholds: aggregate fuel storage exceeding 2.5 gal gasoline and/or 10 gal diesel; outdoor battery systems exceeding 20 kWh aggregate rated capacity. Site inspection may apply."] },
-      "source": { "citation": "CECM FDNY page + Parks special event guide", "urls": ["https://www.nyc.gov/site/cecm/support/new-york-city-fire-department.page", "https://www.nycgovparks.org/permits/special-events/guide"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "lead time + fee RESEARCH_REQUIRED", "evidence": "VS Round2 #10" }, "exercised_by_scenarios": ["E"]
+      "id": "FDNY-GENERATOR-001",
+      "kind": "permit",
+      "trigger": {
+        "any": [
+          { "field": "generator_gasoline_gallons", "op": "gt", "value": 2.5 },
+          { "field": "generator_diesel_gallons", "op": "gt", "value": 10 },
+          { "field": "battery_system_kwh", "op": "gt", "value": 20 }
+        ]
+      },
+      "output": {
+        "permit_name": "FDNY Generator/Battery Permit",
+        "agency": "FDNY",
+        "deadline": {
+          "type": "research_required",
+          "display": "lead time — confirm with FDNY (v1's universal 45–60 days removed: not located in primary text)"
+        },
+        "fee": { "display": "fee applies — confirm amount" },
+        "portal": {
+          "name": "FDNY Business",
+          "url": "https://fires.fdnycloud.org/CitizenAccess/Default.aspx"
+        },
+        "notes": [
+          "Thresholds: aggregate fuel storage exceeding 2.5 gal gasoline and/or 10 gal diesel; outdoor battery systems exceeding 20 kWh aggregate rated capacity. Site inspection may apply."
+        ]
+      },
+      "source": {
+        "citation": "CECM FDNY page + Parks special event guide",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/support/new-york-city-fire-department.page",
+          "https://www.nycgovparks.org/permits/special-events/guide"
+        ]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "lead time + fee RESEARCH_REQUIRED",
+        "evidence": "VS Round2 #10"
+      },
+      "exercised_by_scenarios": ["E"]
     },
     {
-      "id": "DEP-GENERATOR-REG-001", "kind": "registration",
-      "trigger": { "all": [ { "field": "generator_kw", "op": "gte", "value": 40 } ] },
-      "output": { "requirement_name": "DEP generator registration (40 kW or greater)", "agency": "NYC DEP", "deadline": { "type": "research_required", "display": "register before use — timing: confirm with DEP" }, "fee": null },
-      "source": { "citation": "CECM DEP page + Parks guide", "urls": ["https://www.nyc.gov/site/cecm/support/department-of-environmental-protection.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #10" }, "exercised_by_scenarios": ["E"]
+      "id": "DEP-GENERATOR-REG-001",
+      "kind": "registration",
+      "trigger": { "all": [{ "field": "generator_kw", "op": "gte", "value": 40 }] },
+      "output": {
+        "requirement_name": "DEP generator registration (40 kW or greater)",
+        "agency": "NYC DEP",
+        "deadline": {
+          "type": "research_required",
+          "display": "register before use — timing: confirm with DEP"
+        },
+        "fee": null
+      },
+      "source": {
+        "citation": "CECM DEP page + Parks guide",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/support/department-of-environmental-protection.page"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #10" },
+      "exercised_by_scenarios": ["E"]
     },
     {
-      "id": "DOB-TENT-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "structure_types", "op": "contains", "value": "tent_canopy" }, { "any": [ { "field": "tent_area_sqft", "op": "gt", "value": 400 }, { "field": "tent_days_in_place", "op": "gte", "value": 30 } ] } ] },
-      "output": { "permit_name": "DOB permit — tent/canopy over 400 gross sq ft or in place 30+ days", "agency": "DOB", "deadline": { "type": "business_days_minimum", "business_days": 15, "qualification": "Temporary Use Permit path: Registered Design Professional files no later than 15 business days prior; confirm whether the Alteration Type 2/3 vs TUP instrument applies to this setup" }, "fee": { "display": "TUP: $100 initial 30 days, $130 per additional period — confirm instrument" }, "notes": ["Exactly 400 sq ft (e.g. 20x20) sits ON the published 'more than 400' boundary → engine renders CONDITIONAL, not REQUIRED, with 'confirm footprint calculation with DOB'.", "v1's '10x10' threshold removed: it matches NY STATE parks rules, not NYC."] },
-      "source": { "citation": "CECM DOB support page + DOB TUP page + DOB TPA code notes", "urls": ["https://www.nyc.gov/site/cecm/support/department-of-buildings.page", "https://www.nyc.gov/site/buildings/industry/tup.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "instrument mapping to confirm", "evidence": "VS §1 (Round 1) + Round2 #7" }, "exercised_by_scenarios": ["E"]
+      "id": "DOB-TENT-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "structure_types", "op": "contains", "value": "tent_canopy" },
+          {
+            "any": [
+              { "field": "tent_area_sqft", "op": "gt", "value": 400 },
+              { "field": "tent_days_in_place", "op": "gte", "value": 30 }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "permit_name": "DOB permit — tent/canopy over 400 gross sq ft or in place 30+ days",
+        "agency": "DOB",
+        "deadline": {
+          "type": "business_days_minimum",
+          "business_days": 15,
+          "qualification": "Temporary Use Permit path: Registered Design Professional files no later than 15 business days prior; confirm whether the Alteration Type 2/3 vs TUP instrument applies to this setup"
+        },
+        "fee": {
+          "display": "TUP: $100 initial 30 days, $130 per additional period — confirm instrument"
+        },
+        "notes": [
+          "Exactly 400 sq ft (e.g. 20x20) sits ON the published 'more than 400' boundary → engine renders CONDITIONAL, not REQUIRED, with 'confirm footprint calculation with DOB'.",
+          "v1's '10x10' threshold removed: it matches NY STATE parks rules, not NYC."
+        ]
+      },
+      "source": {
+        "citation": "CECM DOB support page + DOB TUP page + DOB TPA code notes",
+        "urls": [
+          "https://www.nyc.gov/site/cecm/support/department-of-buildings.page",
+          "https://www.nyc.gov/site/buildings/industry/tup.page"
+        ]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "instrument mapping to confirm",
+        "evidence": "VS §1 (Round 1) + Round2 #7"
+      },
+      "exercised_by_scenarios": ["E"]
     },
     {
-      "id": "DOB-STAGE-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "structure_types", "op": "contains", "value": "stage_platform_scaffold" }, { "field": "stage_height_ft", "op": "gt", "value": 2 }, { "field": "stage_area_sqft", "op": "gte", "value": 120 } ] },
-      "output": { "permit_name": "DOB Alteration Type 2/3 permit — stage/press platform/scaffolding over 2 ft high covering 120+ sq ft", "agency": "DOB", "deadline": { "type": "research_required", "display": "confirm filing timeline with DOB" }, "fee": { "display": "varies" } },
-      "source": { "citation": "CECM DOB support page", "urls": ["https://www.nyc.gov/site/cecm/support/department-of-buildings.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" }, "exercised_by_scenarios": []
+      "id": "DOB-STAGE-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "structure_types", "op": "contains", "value": "stage_platform_scaffold" },
+          { "field": "stage_height_ft", "op": "gt", "value": 2 },
+          { "field": "stage_area_sqft", "op": "gte", "value": 120 }
+        ]
+      },
+      "output": {
+        "permit_name": "DOB Alteration Type 2/3 permit — stage/press platform/scaffolding over 2 ft high covering 120+ sq ft",
+        "agency": "DOB",
+        "deadline": { "type": "research_required", "display": "confirm filing timeline with DOB" },
+        "fee": { "display": "varies" }
+      },
+      "source": {
+        "citation": "CECM DOB support page",
+        "urls": ["https://www.nyc.gov/site/cecm/support/department-of-buildings.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "DOB-PROP-TRUSS-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "structure_types", "op": "contains", "value": "prop_truss" } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "DOB permit — prop or truss higher than 10 ft", "agency": "DOB", "note_text": "Confirm the prop/truss height; over 10 feet requires a DOB permit." },
-      "source": { "citation": "CECM DOB support page", "urls": ["https://www.nyc.gov/site/cecm/support/department-of-buildings.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" }, "exercised_by_scenarios": []
+      "id": "DOB-PROP-TRUSS-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [{ "field": "structure_types", "op": "contains", "value": "prop_truss" }]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "DOB permit — prop or truss higher than 10 ft",
+        "agency": "DOB",
+        "note_text": "Confirm the prop/truss height; over 10 feet requires a DOB permit."
+      },
+      "source": {
+        "citation": "CECM DOB support page",
+        "urls": ["https://www.nyc.gov/site/cecm/support/department-of-buildings.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "DOB-TALL-STRUCTURE-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "structure_types", "op": "in", "value": ["tent_canopy", "stage_platform_scaffold", "bleachers_inflatable"] }, { "field": "structure_over_10ft_tall", "op": "eq", "value": "yes" } ], "note": "multi_enum 'in' means any selected type matches" },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "DOB permit — structure over 10 feet tall", "agency": "DOB", "note_text": "CECM permit-type pages: 'Structures such as tents, canopies, stage platforms, bleachers, or inflatables over 10 feet tall require a permit from the Department of Buildings.' Deduplicates with the area/duration-based DOB rules." , "dedupe_key": "dob-structure" },
-      "source": { "citation": "CECM street-events / plaza-events pages", "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" }, "exercised_by_scenarios": []
+      "id": "DOB-TALL-STRUCTURE-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          {
+            "field": "structure_types",
+            "op": "in",
+            "value": ["tent_canopy", "stage_platform_scaffold", "bleachers_inflatable"]
+          },
+          { "field": "structure_over_10ft_tall", "op": "eq", "value": "yes" }
+        ],
+        "note": "multi_enum 'in' means any selected type matches"
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "DOB permit — structure over 10 feet tall",
+        "agency": "DOB",
+        "note_text": "CECM permit-type pages: 'Structures such as tents, canopies, stage platforms, bleachers, or inflatables over 10 feet tall require a permit from the Department of Buildings.' Deduplicates with the area/duration-based DOB rules.",
+        "dedupe_key": "dob-structure"
+      },
+      "source": {
+        "citation": "CECM street-events / plaza-events pages",
+        "urls": ["https://www.nyc.gov/site/cecm/permitting/permit-types/street-events.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS Round2 #7" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "DOB-ASSEMBLY-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "headcount", "op": "gte", "value": 75 } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "Place of Assembly (PACO) / Temporary Place of Assembly (TPA)", "agency": "DOB (+ FDNY Public Assembly Permit)", "deadline": { "type": "published_minimum", "calendar_days": 10, "boundary": "exclusive", "qualification": "DOB code notes: TPA application 'must be submitted earlier than 10 days before the event' (min fee $250, +$100/day late). External critique says '10 business days' — pin exact wording before UI copy." }, "fee": { "display": "TPA min $250; FDNY assembly permit from $415 (75–149 occupancy)" }, "notes": ["Thresholds: 75+ indoors OR ON ROOF TERRACES; 200+ outdoors.", "Branch on venue_has_assembly_approval: yes → confirm coverage note; no/unknown → TPA path evaluated."] },
-      "source": { "citation": "DOB PACO page + DOB TPA code notes + FDNY assembly permit page", "urls": ["https://www.nyc.gov/site/buildings/dob/project-categories-paco.page", "https://www.nyc.gov/assets/buildings/pdf/code_notes_temp_place-of-assembly.pdf"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "lead wording variance", "evidence": "VS §6 (Round 1)" }, "exercised_by_scenarios": ["F"]
+      "id": "DOB-ASSEMBLY-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "location_type", "op": "eq", "value": "private_venue" },
+          { "field": "headcount", "op": "gte", "value": 75 }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "Place of Assembly (PACO) / Temporary Place of Assembly (TPA)",
+        "agency": "DOB (+ FDNY Public Assembly Permit)",
+        "deadline": {
+          "type": "published_minimum",
+          "calendar_days": 10,
+          "boundary": "exclusive",
+          "qualification": "DOB code notes: TPA application 'must be submitted earlier than 10 days before the event' (min fee $250, +$100/day late). External critique says '10 business days' — pin exact wording before UI copy."
+        },
+        "fee": { "display": "TPA min $250; FDNY assembly permit from $415 (75–149 occupancy)" },
+        "notes": [
+          "Thresholds: 75+ indoors OR ON ROOF TERRACES; 200+ outdoors.",
+          "Branch on venue_has_assembly_approval: yes → confirm coverage note; no/unknown → TPA path evaluated."
+        ]
+      },
+      "source": {
+        "citation": "DOB PACO page + DOB TPA code notes + FDNY assembly permit page",
+        "urls": [
+          "https://www.nyc.gov/site/buildings/dob/project-categories-paco.page",
+          "https://www.nyc.gov/assets/buildings/pdf/code_notes_temp_place-of-assembly.pdf"
+        ]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "lead wording variance",
+        "evidence": "VS §6 (Round 1)"
+      },
+      "exercised_by_scenarios": ["F"]
     },
     {
-      "id": "SLA-VENUE-LICENSE-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "venue_license_covers_event_area", "op": "eq", "value": "yes" } ] },
-      "output": { "disposition": "NO_NEW_REQUIREMENT_IDENTIFIED", "advisory_text": "Venue's existing on-premises license governs. Confirm the license covers the exact event area (e.g. the rooftop) — alcohol must stay within the licensed area." },
-      "source": { "citation": "SLA licensing structure (inference flagged; confirm against venue license documents)", "urls": ["https://sla.ny.gov/permits-available-online"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "qualification": "licensed-area scope is an inference to confirm", "evidence": "VS §5 (Round 1)" }, "exercised_by_scenarios": ["F"]
+      "id": "SLA-VENUE-LICENSE-001",
+      "kind": "advisory",
+      "trigger": {
+        "all": [
+          { "field": "alcohol", "op": "bool", "value": true },
+          { "field": "location_type", "op": "eq", "value": "private_venue" },
+          { "field": "venue_license_covers_event_area", "op": "eq", "value": "yes" }
+        ]
+      },
+      "output": {
+        "disposition": "NO_NEW_REQUIREMENT_IDENTIFIED",
+        "advisory_text": "Venue's existing on-premises license governs. Confirm the license covers the exact event area (e.g. the rooftop) — alcohol must stay within the licensed area."
+      },
+      "source": {
+        "citation": "SLA licensing structure (inference flagged; confirm against venue license documents)",
+        "urls": ["https://sla.ny.gov/permits-available-online"]
+      },
+      "verification": {
+        "status": "SOURCE_CONFIRMED",
+        "qualification": "licensed-area scope is an inference to confirm",
+        "evidence": "VS §5 (Round 1)"
+      },
+      "exercised_by_scenarios": ["F"]
     },
     {
-      "id": "SLA-ONEDAY-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "venue_license_covers_event_area", "op": "eq", "value": "no" } ] },
-      "output": { "permit_name": "SLA One-Day Alcohol Event Permit", "agency": "NY State Liquor Authority", "deadline": { "type": "business_days_minimum", "business_days": 15, "display": "application received minimum 15 business days prior (actual business-day math)" }, "fee": { "display": "$36 per point of sale, per day" }, "notes": ["Covers sale/service of beer, wine, cider, and liquor for 24 hours.", "Alternative path: a currently licensed caterer under a Catering Permit — see SLA-CATERING-001."] },
-      "source": { "citation": "sla.ny.gov permits page", "urls": ["https://sla.ny.gov/permits-available-online"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §5 (Round 1)" }, "exercised_by_scenarios": ["F"]
+      "id": "SLA-ONEDAY-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "alcohol", "op": "bool", "value": true },
+          { "field": "location_type", "op": "eq", "value": "private_venue" },
+          { "field": "venue_license_covers_event_area", "op": "eq", "value": "no" }
+        ]
+      },
+      "output": {
+        "permit_name": "SLA One-Day Alcohol Event Permit",
+        "agency": "NY State Liquor Authority",
+        "deadline": {
+          "type": "business_days_minimum",
+          "business_days": 15,
+          "display": "application received minimum 15 business days prior (actual business-day math)"
+        },
+        "fee": { "display": "$36 per point of sale, per day" },
+        "notes": [
+          "Covers sale/service of beer, wine, cider, and liquor for 24 hours.",
+          "Alternative path: a currently licensed caterer under a Catering Permit — see SLA-CATERING-001."
+        ]
+      },
+      "source": {
+        "citation": "sla.ny.gov permits page",
+        "urls": ["https://sla.ny.gov/permits-available-online"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §5 (Round 1)" },
+      "exercised_by_scenarios": ["F"]
     },
     {
-      "id": "SLA-CATERING-001", "kind": "permit",
-      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "venue_license_covers_event_area", "op": "in", "value": ["no", "unknown"] } ] },
-      "output": { "disposition": "MAY_BE_REQUIRED", "permit_name": "SLA Catering Permit (licensed caterer path)", "agency": "NY State Liquor Authority", "deadline": { "type": "business_days_minimum", "business_days": 15 }, "fee": { "display": "$48 per point of sale, per day" }, "notes": ["Only a currently licensed on-premises retailer may hold it; the applicant must provide real food (salads, soups, sandwiches — pretzels/chips do not qualify); private events only."] },
-      "source": { "citation": "sla.ny.gov permits page", "urls": ["https://sla.ny.gov/permits-available-online"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §5 (Round 1) + Round2 #11" }, "exercised_by_scenarios": ["F"]
+      "id": "SLA-CATERING-001",
+      "kind": "permit",
+      "trigger": {
+        "all": [
+          { "field": "alcohol", "op": "bool", "value": true },
+          { "field": "location_type", "op": "eq", "value": "private_venue" },
+          { "field": "venue_license_covers_event_area", "op": "in", "value": ["no", "unknown"] }
+        ]
+      },
+      "output": {
+        "disposition": "MAY_BE_REQUIRED",
+        "permit_name": "SLA Catering Permit (licensed caterer path)",
+        "agency": "NY State Liquor Authority",
+        "deadline": { "type": "business_days_minimum", "business_days": 15 },
+        "fee": { "display": "$48 per point of sale, per day" },
+        "notes": [
+          "Only a currently licensed on-premises retailer may hold it; the applicant must provide real food (salads, soups, sandwiches — pretzels/chips do not qualify); private events only."
+        ]
+      },
+      "source": {
+        "citation": "sla.ny.gov permits page",
+        "urls": ["https://sla.ny.gov/permits-available-online"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §5 (Round 1) + Round2 #11" },
+      "exercised_by_scenarios": ["F"]
     }
   ],
   "advisories": [
     {
-      "id": "ADV-ALCOHOL-PUBLIC-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "alcohol", "op": "bool", "value": true }, { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza", "park"] } ] },
-      "output": { "advisory_text": "Alcohol in public space is outside this ruleset version's validated coverage (SAPO prohibits alcohol at block parties, street events, festivals, and parades per the CECM FAQ; other paths not evaluated). Confirm with the relevant agency." },
-      "verification": { "status": "COVERAGE_GAP", "evidence": "CECM FAQ prohibition quote, VS Round2 #6" }, "exercised_by_scenarios": []
+      "id": "ADV-ALCOHOL-PUBLIC-001",
+      "kind": "advisory",
+      "trigger": {
+        "all": [
+          { "field": "alcohol", "op": "bool", "value": true },
+          { "field": "location_type", "op": "in", "value": ["street", "sidewalk", "plaza", "park"] }
+        ]
+      },
+      "output": {
+        "advisory_text": "Alcohol in public space is outside this ruleset version's validated coverage (SAPO prohibits alcohol at block parties, street events, festivals, and parades per the CECM FAQ; other paths not evaluated). Confirm with the relevant agency."
+      },
+      "verification": {
+        "status": "COVERAGE_GAP",
+        "evidence": "CECM FAQ prohibition quote, VS Round2 #6"
+      },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "ADV-SAPO-OTHER-CLASS-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "sapo_event_type", "op": "eq", "value": "other_sapo_class" } ] },
-      "output": { "advisory_text": "This SAPO class (e.g. street festival, single block festival, production event, open culture, plaza-and-street extra large) is outside this ruleset version's validated coverage. Known published deadlines for reference: production 10 days; open culture 15 days; street festival Dec 31 of prior year; single block festival OFFICIAL CONFLICT (90 days vs Dec 31 of prior year). Confirm with SAPO." },
-      "verification": { "status": "COVERAGE_GAP", "evidence": "VS Round2 #4-5" }, "exercised_by_scenarios": []
+      "id": "ADV-SAPO-OTHER-CLASS-001",
+      "kind": "advisory",
+      "trigger": {
+        "all": [{ "field": "sapo_event_type", "op": "eq", "value": "other_sapo_class" }]
+      },
+      "output": {
+        "advisory_text": "This SAPO class (e.g. street festival, single block festival, production event, open culture, plaza-and-street extra large) is outside this ruleset version's validated coverage. Known published deadlines for reference: production 10 days; open culture 15 days; street festival Dec 31 of prior year; single block festival OFFICIAL CONFLICT (90 days vs Dec 31 of prior year). Confirm with SAPO."
+      },
+      "verification": { "status": "COVERAGE_GAP", "evidence": "VS Round2 #4-5" },
+      "exercised_by_scenarios": []
     },
     {
-      "id": "ADV-NOISE-CODE-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "amplified_sound", "op": "bool", "value": true }, { "field": "location_type", "op": "eq", "value": "private_venue" }, { "field": "sound_audible_from_public_way", "op": "in", "value": ["no", "unknown"] } ] },
-      "output": { "advisory_text": "No NYPD sound permit identified for fully-indoor, non-projecting amplified sound — the NYC noise code still applies (Admin Code §24-244; commercial music 42 dB(A) limit inside receiving dwellings, §24-231). If sound will be audible on an adjacent street, park, or public place, the sound-device permit is in scope." },
-      "source": { "citation": "NYC Admin Code §24-244 (sound reproduction devices) + §24-231 (commercial music limit)", "urls": ["https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209196", "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209184"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §10 (Round 1)" }, "exercised_by_scenarios": ["F"]
+      "id": "ADV-NOISE-CODE-001",
+      "kind": "advisory",
+      "trigger": {
+        "all": [
+          { "field": "amplified_sound", "op": "bool", "value": true },
+          { "field": "location_type", "op": "eq", "value": "private_venue" },
+          { "field": "sound_audible_from_public_way", "op": "in", "value": ["no", "unknown"] }
+        ]
+      },
+      "output": {
+        "advisory_text": "No NYPD sound permit identified for fully-indoor, non-projecting amplified sound — the NYC noise code still applies (Admin Code §24-244; commercial music 42 dB(A) limit inside receiving dwellings, §24-231). If sound will be audible on an adjacent street, park, or public place, the sound-device permit is in scope."
+      },
+      "source": {
+        "citation": "NYC Admin Code §24-244 (sound reproduction devices) + §24-231 (commercial music limit)",
+        "urls": [
+          "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209196",
+          "https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-209184"
+        ]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §10 (Round 1)" },
+      "exercised_by_scenarios": ["F"]
     },
     {
-      "id": "ADV-VENUE-OCCUPANCY-001", "kind": "advisory",
-      "trigger": { "all": [ { "field": "location_type", "op": "eq", "value": "private_venue" } ] },
-      "output": { "advisory_text": "The venue's certificate of occupancy / legal use governs capacity regardless of permits. Below 75 indoors, ordinary assembly certification is typically not triggered [thresholds source-confirmed]; confirm the venue's permitted use and occupancy." },
-      "source": { "citation": "DOB Place of Assembly Certificate of Operation (PACO) thresholds", "urls": ["https://www.nyc.gov/site/buildings/dob/project-categories-paco.page"] },
-      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §6 (Round 1)" }, "exercised_by_scenarios": ["B", "F"]
+      "id": "ADV-VENUE-OCCUPANCY-001",
+      "kind": "advisory",
+      "trigger": { "all": [{ "field": "location_type", "op": "eq", "value": "private_venue" }] },
+      "output": {
+        "advisory_text": "The venue's certificate of occupancy / legal use governs capacity regardless of permits. Below 75 indoors, ordinary assembly certification is typically not triggered [thresholds source-confirmed]; confirm the venue's permitted use and occupancy."
+      },
+      "source": {
+        "citation": "DOB Place of Assembly Certificate of Operation (PACO) thresholds",
+        "urls": ["https://www.nyc.gov/site/buildings/dob/project-categories-paco.page"]
+      },
+      "verification": { "status": "SOURCE_CONFIRMED", "evidence": "VS §6 (Round 1)" },
+      "exercised_by_scenarios": ["B", "F"]
     }
   ],
   "reference_tables": {
-    "sapo_deadlines_out_of_scope_classes": { "production_event_days": 10, "open_culture_days": 15, "street_festival": "December 31 of preceding year", "single_block_festival": "OFFICIAL_CONFLICT: 90 days (permit-type + deadlines pages) vs December 31 of preceding year (FAQ)" }
+    "sapo_deadlines_out_of_scope_classes": {
+      "production_event_days": 10,
+      "open_culture_days": 15,
+      "street_festival": "December 31 of preceding year",
+      "single_block_festival": "OFFICIAL_CONFLICT: 90 days (permit-type + deadlines pages) vs December 31 of preceding year (FAQ)"
+    }
   }
 }

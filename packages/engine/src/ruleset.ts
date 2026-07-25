@@ -6,6 +6,7 @@
 import { parseAskedWhen } from "./conditions";
 import { EvaluationError } from "./types";
 import type {
+  LevelBinding,
   Condition,
   ConditionBoundary,
   ConditionOperator,
@@ -240,7 +241,7 @@ function parseLevelBinding(
   intakeFields: readonly IntakeFieldDefinition[],
   label: string,
   legacy: PrePublicationFacts | null,
-): { levelField: string; multiBlockField: string } {
+): LevelBinding {
   const declared = (key: "level_field" | "multi_block_field", fallback: string): string =>
     deadline[key] === undefined && legacy !== null
       ? fallback
@@ -322,12 +323,7 @@ function requireDeclaredField(
   return declared;
 }
 
-function parseDeadline(
-  value: unknown,
-  label: string,
-  intakeFields: readonly IntakeFieldDefinition[],
-  legacy: PrePublicationFacts | null,
-): Deadline | null {
+function parseDeadline(value: unknown, label: string): Deadline | null {
   if (value === undefined || value === null) return null;
   const deadline = asObject(value, label);
   const type = asString(deadline.type, `${label}.type`);
@@ -368,7 +364,6 @@ function parseDeadline(
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
         qualification,
         boundary,
-        ...parseLevelBinding(deadline, parsedLevels, intakeFields, label, legacy),
       };
     }
     case "composite": {
@@ -434,6 +429,8 @@ function parseRule(
     fail(`${label}.output.disposition has unsupported value "${publishedDisposition}"`);
   }
 
+  const deadline = parseDeadline(output.deadline, `${label}.output.deadline`);
+
   const verification = asObject(rule.verification, `${label}.verification`);
   const verificationStatus = asString(
     verification.status,
@@ -462,7 +459,17 @@ function parseRule(
     agency: optionalString(output, "agency"),
     publishedDisposition:
       publishedDisposition === null ? null : (PUBLISHED_DISPOSITIONS[publishedDisposition] ?? null),
-    deadline: parseDeadline(output.deadline, `${label}.output.deadline`, intakeFields, legacy),
+    deadline,
+    levelBinding:
+      deadline?.type === "published_minimum_by_level"
+        ? parseLevelBinding(
+            asObject(output.deadline, `${label}.output.deadline`),
+            deadline.levels,
+            intakeFields,
+            `${label}.output.deadline`,
+            legacy,
+          )
+        : null,
     feeDisplay: fee === null ? null : optionalString(fee, "display"),
     portalName: portal === null ? null : optionalString(portal, "name"),
     portalUrl: portal === null ? null : optionalString(portal, "url"),

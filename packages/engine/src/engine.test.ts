@@ -1120,6 +1120,175 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
     expect(replays(parkIntake)).toMatchObject({ verdictMatches: true, findingsMatch: true });
   });
 
+  it("never dates a level deadline from a field the plan was not asked", () => {
+    // Both halves of the binding, both reached by scoping the parser cannot disprove: "tier in
+    // gold/silver AND enabled" is accepted because every clause naming the level field admits both
+    // levels, and `enabled = false` still puts the field out of scope. Out of scope is not
+    // unanswered, so the old guard passed and the resolver read the flag as "no".
+    const scoped = (extra: unknown[], deadlineOverrides: Record<string, unknown> = {}) =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "enabled", type: "boolean" },
+          { field: "tier", type: "enum", values: ["gold", "silver"] },
+          ...extra,
+        ],
+        rules: [
+          {
+            id: "RULE-LEVEL",
+            kind: "permit",
+            // Fires whatever `enabled` says, so scope is the only thing under test.
+            trigger: { all: [{ field: "enabled", op: "in", value: [true, false] }] },
+            output: {
+              permit_name: "x",
+              agency: "DOT",
+              deadline: {
+                type: "published_minimum_by_level",
+                level_field: "tier",
+                multi_block_field: "spans",
+                levels: {
+                  gold: { calendar_days: 30, multi_block_days: 60 },
+                  silver: { calendar_days: 10, multi_block_days: 20 },
+                },
+                ...deadlineOverrides,
+              },
+            },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
+
+    const plan = (
+      ruleset: ReturnType<typeof parseEngineRuleset>,
+      intake: Record<string, unknown>,
+    ) =>
+      evaluate({ event_date: "2026-10-01", ...intake } as unknown as EventIntake, ruleset, TODAY, {
+        id: "test-calendar@2026",
+        holidays: [],
+      });
+
+    // The multi-block flag, unreachable through a clause that names no level.
+    const flagScoped = scoped([
+      { field: "spans", type: "boolean", asked_when: "tier in gold/silver AND enabled" },
+    ]);
+    const unreachableFlag = plan(flagScoped, { tier: "gold", enabled: false });
+    const flagFinding = unreachableFlag.findings[0];
+    // The shorter single-block window would have dated it 2026-09-01. It is not dated at all.
+    expect(flagFinding?.latestApplyDate).toBeNull();
+    expect(flagFinding?.deadlineStatus).toBe("not_calculable");
+    expect(flagFinding?.timelineUnresolvedReason).toContain("never asked spans");
+    expect(unreachableFlag.verdict).toBe("CONDITIONAL");
+    // Same ruleset, flag reachable: the deadline dates normally, so this is a scoping result and
+    // not the binding being broken.
+    expect(
+      plan(flagScoped, { tier: "gold", enabled: true, spans: true }).findings[0]?.latestApplyDate,
+    ).toBe("2026-08-02");
+
+    // The level field itself, scoped behind something the trigger does not imply.
+    const levelScoped = parseEngineRuleset({
+      ruleset_version: "test.v1",
+      jurisdiction: "US-NY-NYC",
+      snapshot_date: "2026-07-22",
+      config: {
+        slack_warning_days: { value: 14 },
+        business_day_math: { calendar: "test-calendar@2026" },
+      },
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "enabled", type: "boolean" },
+        { field: "tier", type: "enum", values: ["gold", "silver"], asked_when: "enabled" },
+        { field: "spans", type: "boolean", asked_when: "enabled" },
+      ],
+      rules: [
+        {
+          id: "RULE-LEVEL",
+          kind: "permit",
+          trigger: { all: [{ field: "enabled", op: "in", value: [true, false] }] },
+          output: {
+            permit_name: "x",
+            agency: "DOT",
+            deadline: {
+              type: "published_minimum_by_level",
+              level_field: "tier",
+              multi_block_field: "spans",
+              levels: {
+                gold: { calendar_days: 30, multi_block_days: 60 },
+                silver: { calendar_days: 10, multi_block_days: 20 },
+              },
+            },
+          },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ],
+      advisories: [],
+    });
+    const unreachableLevel = plan(levelScoped, { enabled: false });
+    expect(unreachableLevel.findings[0]?.deadlineStatus).toBe("not_calculable");
+    expect(unreachableLevel.findings[0]?.timelineUnresolvedReason).toContain("never asked tier");
+    // The hole this closes: a required permit with no date inside a FEASIBLE plan.
+    expect(unreachableLevel.findings[0]?.disposition).toBe("required");
+    expect(unreachableLevel.verdict).toBe("CONDITIONAL");
+
+    // An unresolved timeline is not a missing fact: nobody can answer an unasked question, so the
+    // verdict must not offer it as a branch. It also must not recurse trying.
+    expect(unreachableLevel.verdictDetail.missingFacts).toHaveLength(0);
+    expect(unreachableLevel.verdictDetail.unresolvedTimelines).toHaveLength(1);
+  });
+
+  it("reproduces a v2.3 plaza finding in the shape v2.3 serialised it", () => {
+    // The replay test above compares two findings from the same parser, so a key both sides gained
+    // together is invisible to it. This compares against a finding serialised by the engine on
+    // main, before any of this existed: `__fixtures__/plaza-finding-nyc.v2.3.json`, generated by
+    // running that engine against the v2.3 artifact and this intake. AD-7 replay is reproducing the
+    // historical artifact, so a shape change is a replay failure even when every value matches —
+    // and `buildFinding` snapshots `rule.deadline` verbatim, so anything the parser hangs on the
+    // deadline lands in the stored plan.
+    const historical = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL("./__fixtures__/plaza-finding-nyc.v2.3.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    const v23 = parseEngineRuleset(
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+          "utf8",
+        ),
+      ),
+    );
+    const plaza = evaluate(
+      {
+        ...parkIntake,
+        location_type: "plaza",
+        obstructs_public_way: "yes",
+        sapo_event_type: "plaza_event",
+        plaza_level: "b",
+        plaza_multiple_blocks: true,
+        amplified_sound: false,
+      } as EventIntake,
+      v23,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("SAPO-PLAZA-001"));
+
+    expect(plaza).toEqual(historical);
+    // Named explicitly, because equality above would also pass if the fixture were regenerated
+    // from the new parser by mistake.
+    expect(Object.keys(plaza?.deadline ?? {})).not.toContain("levelField");
+    expect(Object.keys(plaza?.deadline ?? {})).not.toContain("multiBlockField");
+  });
+
   it("requires the binding of any version that could have published it", () => {
     // The compatibility record is closed, not a default: a version not in it must declare the
     // fields. Without this the record would be the live constant the bump deleted, reachable by

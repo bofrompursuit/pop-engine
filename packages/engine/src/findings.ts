@@ -75,7 +75,7 @@ function buildFinding(
   triggeredBy: readonly TriggeredBy[],
   context: DeadlineContext,
 ): Finding {
-  const dated = computeDeadline(rule.deadline, context);
+  const dated = computeDeadline(rule.deadline, rule.levelBinding, context);
   return {
     ruleIds: [rule.id],
     kind: findingKind(rule),
