@@ -13,6 +13,11 @@ export type PlanResponse = {
   readonly eventRevision: number;
   /** The version that produced this plan, pinned at generation — never the live file's. */
   readonly rulesetVersion: string;
+  /**
+   * The publication date that version carried, pinned beside it (AC 4). Null on a plan generated
+   * before migration 002 added the column; the banner says so rather than substituting a date.
+   */
+  readonly snapshotDate: string | null;
   readonly verdict: Verdict;
   /** Fills the slots the approved verdict copy leaves open (slack days, unanswered fields). */
   readonly verdictDetail: VerdictDetail;
@@ -84,7 +89,15 @@ export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<Pla
   }
 
   const plan = asRecord(body);
-  if (plan === null || typeof plan.rulesetVersion !== "string" || !Array.isArray(plan.findings)) {
+  if (
+    plan === null ||
+    typeof plan.rulesetVersion !== "string" ||
+    // A plan that omits the field entirely is unreadable, not legacy. Only an explicit null means
+    // "generated before migration 002", and that is the one case the banner may say so for;
+    // reading an absent field as null would put that copy under a plumbing mismatch instead.
+    !(typeof plan.snapshotDate === "string" || plan.snapshotDate === null) ||
+    !Array.isArray(plan.findings)
+  ) {
     return { ok: false, missing: false, message: "The API returned a plan this page cannot read." };
   }
   return { ok: true, plan: plan as unknown as PlanResponse };

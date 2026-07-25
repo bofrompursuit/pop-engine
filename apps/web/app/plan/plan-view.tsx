@@ -153,9 +153,15 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
       <h1>Your permit plan</h1>
 
       {plan !== null && (
-        /* AC 4: the version this plan was generated from, read off the plan itself, so a plan
-           viewed after a rules update still names the ruleset that produced it. */
-        <SnapshotBanner rulesetVersion={plan.rulesetVersion} meta={meta} />
+        /* AC 4: the version this plan was generated from AND the publication date that version
+           carried, both read off the plan itself, so a plan viewed after a rules update states the
+           pair that produced it rather than a pinned version beside the live file's date. `meta`
+           only decides how the live ruleset stands relative to this one. */
+        <SnapshotBanner
+          rulesetVersion={plan.rulesetVersion}
+          snapshotDate={plan.snapshotDate}
+          meta={meta}
+        />
       )}
 
       {/* A missing plan and an unreadable one are different facts. Only the first can be answered

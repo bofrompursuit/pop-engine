@@ -18,6 +18,7 @@ const storedPlan = {
   eventId: "event-1",
   eventRevision: 2,
   rulesetVersion: "nyc.v2.3",
+  snapshotDate: "2026-07-25",
   verdict: "CONDITIONAL",
   today: "2026-07-25",
   generatedAt: "2026-07-25T12:00:00.000Z",
@@ -71,6 +72,24 @@ describe("loadPlan", () => {
 
   it("refuses a success body it cannot read as a plan", async () => {
     stubFetch(async () => jsonResponse(200, { findings: [] }));
+    await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
+      ok: false,
+      missing: false,
+      message: "The API returned a plan this page cannot read.",
+    });
+  });
+
+  it("keeps a null snapshot date, which is what a pre-migration-002 plan carries", async () => {
+    stubFetch(async () => jsonResponse(200, { ...storedPlan, snapshotDate: null }));
+    const result = await loadPlan("https://api.example.com", "event-1");
+    expect(result.ok && result.plan.snapshotDate).toBeNull();
+  });
+
+  it("refuses a plan that omits the snapshot date rather than reading it as null", async () => {
+    // Null means "generated before migration 002", which the banner says out loud. An absent field
+    // means the api and this page disagree, and must not be reported as a fact about the plan.
+    const { snapshotDate: _omitted, ...withoutDate } = storedPlan;
+    stubFetch(async () => jsonResponse(200, withoutDate));
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
       missing: false,

@@ -55,8 +55,9 @@ describe("GET /api/rules/meta", () => {
   });
 });
 
-// F-206 AC 4: a plan states the ruleset that produced it. Three versions have now been published
-// and superseded plans are real, so this is a live property of the read path rather than a
+// F-206 AC 4: a plan states the ruleset that produced it — the version AND the publication date
+// that version carried, both off the plan's own row. Several versions have now been published and
+// superseded plans are real, so this is a live property of the read path rather than a
 // hypothetical. Runs only when a database is configured, matching the other schema-backed suites.
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
@@ -132,25 +133,71 @@ describe.runIf(databaseUrl.length > 0)("a plan's pinned ruleset version", () => 
 
     expect(response.status).toBe(200);
     expect(response.body.rulesetVersion).toBe(published.rulesetVersion);
+    // The date is pinned with the version, not left for the reader to fetch off the live file.
+    expect(response.body.snapshotDate).toBe(published.snapshotDate);
   });
 
-  it("keeps serving the version that produced it after the live ruleset moves on", async () => {
+  it("returns the pinned pair from the generation call too, not only the read", async () => {
+    const created = await request(api)
+      .post("/api/events")
+      .send({
+        name: "Snapshot pinning on generate",
+        borough: "brooklyn",
+        location_type: "park",
+        headcount: 150,
+        event_date: "2026-09-16",
+        event_open_to_public: "yes",
+        food_present: false,
+        selling_anything: false,
+        amplified_sound: false,
+        structure_types: ["none"],
+        open_flame_or_cooking: ["none"],
+        generator_present: false,
+        // nyc.v2.5 asks this of every event, and `battery_system_kwh` only when it is true.
+        battery_present: false,
+        alcohol: false,
+      });
+    const eventId = String(created.body.event.id);
+    createdEventIds.push(eventId);
+
+    const generated = await request(api).post(`/api/events/${eventId}/plan`);
+    expect(generated.status).toBe(201);
+    expect(generated.body.rulesetVersion).toBe(published.rulesetVersion);
+    expect(generated.body.snapshotDate).toBe(published.snapshotDate);
+  });
+
+  it("keeps serving the pair that produced it after the live ruleset moves on", async () => {
     const eventId = await planForAPark();
-    // Stand in for a plan generated before the current publication: the row keeps the version it
-    // was written with, and the live file has since moved to a newer one.
-    await pool.query("UPDATE permit_plans SET ruleset_version = $1 WHERE event_id = $2", [
-      "nyc.v2.1",
-      eventId,
-    ]);
+    // Stand in for a plan generated before the current publication: the row keeps the version and
+    // date it was written with, and the live file has since moved to a newer pair.
+    await pool.query(
+      "UPDATE permit_plans SET ruleset_version = $1, snapshot_date = $2 WHERE event_id = $3",
+      ["nyc.v2.1", "2026-03-02", eventId],
+    );
 
     const response = await request(api).get(`/api/events/${eventId}/plan`);
     expect(response.body.rulesetVersion).toBe("nyc.v2.1");
     expect(response.body.rulesetVersion).not.toBe(published.rulesetVersion);
+    // The pair travels together: serving this version beside the live file's date would hand the
+    // banner a combination that never existed on any artifact.
+    expect(response.body.snapshotDate).toBe("2026-03-02");
+    expect(response.body.snapshotDate).not.toBe(published.snapshotDate);
 
     // The live file is unchanged and still says what it says; the banner reads the difference
-    // between the two and tells the organizer a newer ruleset exists.
+    // between the two versions and tells the organizer a newer ruleset exists.
     const meta = await request(api).get("/api/rules/meta");
     expect(meta.body.ruleset_version).toBe(published.rulesetVersion);
+  });
+
+  it("serves a null snapshot date for a plan generated before migration 002 added the column", async () => {
+    const eventId = await planForAPark();
+    // The only way a row reaches this state: it was written before the column existed. Nothing
+    // backfills it, because the plan does not record which artifact it read.
+    await pool.query("UPDATE permit_plans SET snapshot_date = NULL WHERE event_id = $1", [eventId]);
+
+    const response = await request(api).get(`/api/events/${eventId}/plan`);
+    expect(response.body.rulesetVersion).toBe(published.rulesetVersion);
+    expect(response.body.snapshotDate).toBeNull();
   });
 
   it("carries each line's canonical verification status and its sources, never the deprecated column", async () => {

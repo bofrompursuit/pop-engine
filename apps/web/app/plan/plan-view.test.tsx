@@ -78,6 +78,7 @@ const plan = (overrides: Record<string, unknown> = {}) => ({
   eventId: "event-1",
   eventRevision: 1,
   rulesetVersion: publishedRuleset.ruleset_version,
+  snapshotDate: publishedRuleset.snapshot_date,
   verdict: "CONDITIONAL",
   verdictDetail: emptyVerdictDetail,
   today: "2026-07-25",
@@ -138,13 +139,15 @@ describe("the snapshot banner (AC 1)", () => {
     const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
 
     expect(banner.textContent).toContain(`Rules snapshot ${publishedRuleset.ruleset_version}`);
-    expect(banner.textContent).toContain(`published ${formatSnapshotDate(liveMeta.snapshot_date)}`);
+    expect(banner.textContent).toContain(
+      `published ${formatSnapshotDate(publishedRuleset.snapshot_date)}`,
+    );
   });
 
   it("never says the rules were verified as of that date", () => {
     // A snapshot date is published-on, not all-facts-verified-on. Each line's own verification
     // status is what carries that claim, and this wording has been wrong once already.
-    render(<SnapshotBanner rulesetVersion="nyc.v2.3" meta={liveMeta} />);
+    render(<SnapshotBanner rulesetVersion="nyc.v2.3" snapshotDate="2026-07-25" meta={liveMeta} />);
     const banner = screen.getByRole("complementary", { name: "Rules snapshot" });
 
     expect(banner.textContent?.toLowerCase()).not.toContain("verified");
@@ -155,6 +158,7 @@ describe("the snapshot banner (AC 1)", () => {
     render(
       <SnapshotBanner
         rulesetVersion="nyc.v9.9"
+        snapshotDate="2030-01-31"
         meta={{ ruleset_version: "nyc.v9.9", snapshot_date: "2030-01-31" }}
       />,
     );
@@ -173,8 +177,11 @@ describe("the snapshot banner (AC 1)", () => {
 });
 
 describe("a plan pinned to an older ruleset (AC 4)", () => {
+  /** A pinned pair from an older ruleset, both values unlike anything the live file carries. */
+  const PINNED = { rulesetVersion: "nyc.v2.1", snapshotDate: "2026-03-02" };
+
   it("shows the version that produced the plan, not the one now published", async () => {
-    stubApi(plan({ rulesetVersion: "nyc.v2.1" }));
+    stubApi(plan(PINNED));
     renderPlan();
     const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
 
@@ -185,24 +192,78 @@ describe("a plan pinned to an older ruleset (AC 4)", () => {
     );
   });
 
-  it("does not date a superseded plan with the live file's publication date", async () => {
-    // The api only knows when the version it has loaded was published. Stating that date beside
-    // an older pinned version would date the plan wrongly.
-    stubApi(plan({ rulesetVersion: "nyc.v2.1" }));
+  it("dates a superseded plan from its own row, never from the live file", async () => {
+    // The pinned version and the pinned date travel together. Reading the date off the live file
+    // would render a version-and-date pair that never existed on any artifact.
+    stubApi(plan(PINNED));
     renderPlan();
     const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
 
-    expect(banner.textContent).not.toContain("published");
+    expect(banner.textContent).toContain("published March 2, 2026");
+    expect(banner.textContent).not.toContain(formatSnapshotDate(publishedRuleset.snapshot_date));
   });
 
-  it("still names the plan's version when the live ruleset cannot be read", async () => {
-    stubApi(plan(), {}, 200, 503);
+  it("states the pinned pair even when the live ruleset cannot be read", async () => {
+    // /api/rules/meta answers one question — whether a newer ruleset exists. Losing it costs the
+    // comparison, not the banner: both values the banner states come from the plan.
+    stubApi(plan(PINNED), {}, 200, 503);
     renderPlan();
     const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
 
-    expect(banner.textContent).toContain(`Rules snapshot ${publishedRuleset.ruleset_version}`);
-    expect(banner.textContent).not.toContain("published");
+    expect(banner.textContent).toContain("Rules snapshot nyc.v2.1");
+    expect(banner.textContent).toContain("published March 2, 2026");
     expect(banner.textContent).not.toContain("newer ruleset");
+  });
+
+  it("never asks the live file for a date, even when the versions agree", async () => {
+    // The version matching is not licence to read the live file's date: two artifacts can share a
+    // version string, and only the plan's row witnesses which date its evaluation ran against.
+    stubApi(plan({ snapshotDate: "2026-03-02" }), {
+      ruleset_version: publishedRuleset.ruleset_version,
+      snapshot_date: "2026-12-31",
+    });
+    renderPlan();
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(banner.textContent).toContain("published March 2, 2026");
+    expect(banner.textContent).not.toContain("December 31, 2026");
+  });
+});
+
+describe("a plan generated before migration 002 recorded a snapshot date (AC 4)", () => {
+  it("names the pinned version and says the publication date was not recorded", async () => {
+    stubApi(plan({ rulesetVersion: "nyc.v2.1", snapshotDate: null }));
+    renderPlan();
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(banner.textContent).toContain("Rules snapshot nyc.v2.1");
+    expect(banner.textContent).toContain("publication date not recorded for this plan");
+  });
+
+  it("does not fall back to the live file's date", async () => {
+    // A null snapshot_date is not an invitation to substitute one. The plan does not record which
+    // artifact it read, so any date rendered here would assert provenance nothing witnessed.
+    stubApi(plan({ snapshotDate: null }), {
+      ruleset_version: publishedRuleset.ruleset_version,
+      snapshot_date: "2026-12-31",
+    });
+    renderPlan();
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(banner.textContent).not.toContain("December 31, 2026");
+    expect(banner.textContent).not.toContain("published ");
+  });
+
+  it("is the only reading of a missing date — an absent field is unreadable, not legacy", async () => {
+    // A plan body with no `snapshotDate` at all is a plumbing mismatch, and rendering the legacy
+    // sentence for it would state something about the plan that nothing checked.
+    const { snapshotDate: _omitted, ...withoutDate } = plan();
+    stubApi(withoutDate);
+    renderPlan();
+
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(screen.queryByRole("complementary", { name: "Rules snapshot" })).toBeNull();
+    expect(screen.queryByText(/publication date not recorded/)).toBeNull();
   });
 });
 
@@ -733,11 +794,14 @@ describe("the metadata request", () => {
     );
     renderPlan();
 
-    // The plan renders with its own pinned version; the banner simply says nothing about a
-    // newer ruleset until the metadata arrives.
+    // The banner states the pinned pair off the plan, so a hanging meta call costs it nothing but
+    // the comparison: it simply says nothing about a newer ruleset until the metadata arrives.
     const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
     expect(banner.textContent).toContain(`Rules snapshot ${publishedRuleset.ruleset_version}`);
-    expect(banner.textContent).not.toContain("published");
+    expect(banner.textContent).toContain(
+      `published ${formatSnapshotDate(publishedRuleset.snapshot_date)}`,
+    );
+    expect(banner.textContent).not.toContain("ruleset (");
     expect(screen.getAllByRole("article").length).toBeGreaterThan(0);
   });
 });

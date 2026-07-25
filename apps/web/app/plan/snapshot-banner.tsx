@@ -12,6 +12,14 @@ import type { RulesMetaResponse } from "./plan-api";
 const PUBLISHED_PREFIX = "published";
 
 /**
+ * AC 4's copy for a plan whose `snapshot_date` is null — one generated before migration 002 added
+ * the column. The version alone is still the honest answer to "which rules produced this"; the
+ * live file's date is not, and the column is never backfilled, because the plan does not record
+ * which artifact it read and a derived date would assert provenance nothing witnessed.
+ */
+const DATE_NOT_RECORDED = "publication date not recorded for this plan";
+
+/**
  * `2026-07-25` is a calendar date, not an instant. Parsing it as UTC midnight and formatting it
  * in UTC returns the day the artifact names; letting the browser's zone in would render the
  * previous day anywhere west of Greenwich.
@@ -76,31 +84,45 @@ export function compareToPinned(
 
 export function SnapshotBanner({
   rulesetVersion,
+  snapshotDate,
   meta,
 }: {
   /** The version to state. On a plan this is the plan's pinned version, never the live file's. */
   rulesetVersion: string;
-  /** What the api's loaded rules file says about itself; null when it could not be read. */
+  /**
+   * The publication date that version carried, pinned on the same row (AC 4). Null means the plan
+   * predates migration 002 and never recorded one.
+   */
+  snapshotDate: string | null;
+  /**
+   * What the api's loaded rules file says about itself; null when it could not be read. Used for
+   * one thing: how the live ruleset stands relative to the pinned one. It is not where either
+   * value in the pair above comes from.
+   */
   meta: RulesMetaResponse | null;
 }) {
   const standing = meta === null ? null : compareToPinned(meta.ruleset_version, rulesetVersion);
 
   return (
     <aside className="snapshot" aria-label="Rules snapshot">
+      {/* The pair, both read off the plan's own row. Pairing this version with the live file's
+          date would render a combination that never existed on any artifact. */}
       <span className="snapshot__version">Rules snapshot {rulesetVersion}</span>
+      {snapshotDate === null ? (
+        <span className="snapshot__undated">
+          {" · "}
+          {DATE_NOT_RECORDED}
+        </span>
+      ) : (
+        <span className="snapshot__published">
+          {" · "}
+          {PUBLISHED_PREFIX} {formatSnapshotDate(snapshotDate)}
+        </span>
+      )}
       {/* Everything below compares the plan's pinned version with the api's live one, so it
           renders only when the live one could be read. */}
       {meta !== null && (
         <>
-          {/* The date is only known for the version the api has loaded. Stating the live file's
-              publication date next to an older pinned version would date it wrongly, so a plan on
-              any other version names its version and how the two stand instead. */}
-          {standing === "same" && (
-            <span className="snapshot__published">
-              {" · "}
-              {PUBLISHED_PREFIX} {formatSnapshotDate(meta.snapshot_date)}
-            </span>
-          )}
           {/* Only the "newer" case tells an organizer to regenerate. Regenerating onto an older
               ruleset would replace their plan with one built from superseded rules, and a version
               that cannot be ordered says nothing about which way round the two stand. */}
