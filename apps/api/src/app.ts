@@ -1,9 +1,15 @@
 import express, { type Express } from "express";
 import { describeEngine } from "@pop-engine/engine";
+import { createEventsRouter, type EventsDependencies } from "./events";
+
+/** The clock the API stamps requests with. The engine always receives it as a value. */
+const systemToday = (): string => new Date().toISOString().slice(0, 10);
+
+export type AppDependencies = Omit<EventsDependencies, "today"> & { today?: () => string };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
 // can drive it with supertest without opening a port.
-export function createApp(): Express {
+export function createApp(dependencies: AppDependencies): Express {
   const app = express();
 
   // The web app is served from a different origin than the api in both local dev and on
@@ -32,6 +38,11 @@ export function createApp(): Express {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "pop-engine-api", engine: describeEngine() });
   });
+
+  app.use(
+    "/api",
+    createEventsRouter({ ...dependencies, today: dependencies.today ?? systemToday }),
+  );
 
   return app;
 }

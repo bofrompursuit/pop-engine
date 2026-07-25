@@ -1,4 +1,5 @@
-import { Client } from "pg";
+import { Client, Pool } from "pg";
+import { parseIntakeContract } from "@pop-engine/engine";
 import { createApp } from "./app";
 import { loadRuleset, syncPermitRules } from "./ruleset";
 
@@ -21,6 +22,9 @@ try {
   await database.end();
 }
 
-createApp().listen(PORT, () => {
+createApp({
+  database: new Pool({ connectionString: databaseUrl }),
+  intakeContract: parseIntakeContract(ruleset.document),
+}).listen(PORT, () => {
   console.log(`pop-engine-api listening on :${PORT}`);
 });
