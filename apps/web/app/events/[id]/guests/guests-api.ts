@@ -73,7 +73,7 @@ function parseList(body: unknown): GuestList | null {
 export async function loadGuestList(apiBaseUrl: string, eventId: string): Promise<GuestListResult> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/rsvps`, { ...CREDENTIALED });
+    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/guests`, { ...CREDENTIALED });
   } catch {
     return { ok: false, message: UNREACHABLE };
   }
@@ -103,7 +103,7 @@ export async function cancelGuest(
 ): Promise<CancelResult> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/rsvps/${rsvpId}`, {
+    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/guests/${rsvpId}`, {
       method: "PATCH",
       ...CREDENTIALED,
       body: JSON.stringify({ status: "cancelled" }),

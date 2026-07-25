@@ -444,6 +444,12 @@ describe("saving and per-field errors", () => {
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDefined();
+    expect(screen.getByRole("link", { name: "Promote public page" }).getAttribute("href")).toBe(
+      "/events/event-1/promote",
+    );
+    expect(screen.getByRole("link", { name: "Guest list" }).getAttribute("href")).toBe(
+      "/events/event-1/guests",
+    );
   });
 
   it("shows the api's message against the field it belongs to", async () => {

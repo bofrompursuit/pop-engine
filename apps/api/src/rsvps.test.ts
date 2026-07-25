@@ -67,8 +67,26 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(response.status).toBe(201);
     const id: string = response.body.event.id;
     createdEventIds.push(id);
+    // Public RSVP requires F-301 publish; publish by default so capacity tests stay focused.
+    const published = await request(api)
+      .patch(`/api/events/${id}/public-page`)
+      .send({ public_page_published: true });
+    expect(published.status).toBe(200);
     return { id, headcount: response.body.event.headcount as number };
   };
+
+  it("refuses RSVPs while the public page is unpublished", async () => {
+    const response = await request(api).post("/api/events").send(scenarioA());
+    expect(response.status).toBe(201);
+    const eventId: string = response.body.event.id;
+    createdEventIds.push(eventId);
+
+    const blocked = await request(api)
+      .post(`/api/events/${eventId}/rsvps`)
+      .send({ name: "Ada", email: "ada@example.com" });
+    expect(blocked.status).toBe(404);
+    expect(blocked.body.error).toMatch(/not available/i);
+  });
 
   it("creates an RSVP and lists it on the guest list with count vs headcount", async () => {
     const { id: eventId, headcount } = await createEvent({ headcount: 5 });
@@ -81,7 +99,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(created.body.confirmed_count).toBe(1);
     expect(created.body.headcount).toBe(headcount);
 
-    const listed = await request(api).get(`/api/events/${eventId}/rsvps`);
+    const listed = await request(api).get(`/api/events/${eventId}/guests`);
     expect(listed.status).toBe(200);
     expect(listed.body.confirmed_count).toBe(1);
     expect(listed.body.headcount ?? listed.body.event.headcount).toBe(5);
@@ -132,7 +150,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(first.status).toBe(201);
 
     const cancelled = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .patch(`/api/events/${eventId}/guests/${first.body.rsvp.id}`)
       .send({ status: "cancelled" });
     expect(cancelled.status).toBe(200);
     expect(cancelled.body.rsvp.status).toBe("cancelled");
@@ -202,7 +220,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
       .send({ name: "A", email: "a@example.com" });
     expect(first.status).toBe(201);
     await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .patch(`/api/events/${eventId}/guests/${first.body.rsvp.id}`)
       .send({ status: "cancelled" });
 
     const seat = await request(api)
@@ -220,13 +238,13 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
   it("rejects a cancel with an unsupported status and an unknown RSVP id", async () => {
     const { id: eventId } = await createEvent({ headcount: 2 });
     const badStatus = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .patch(`/api/events/${eventId}/guests/${randomUUID()}`)
       .send({ status: "confirmed" });
     expect(badStatus.status).toBe(400);
     expect(badStatus.body.error).toMatch(/cancelled/i);
 
     const missing = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .patch(`/api/events/${eventId}/guests/${randomUUID()}`)
       .send({ status: "cancelled" });
     expect(missing.status).toBe(404);
   });

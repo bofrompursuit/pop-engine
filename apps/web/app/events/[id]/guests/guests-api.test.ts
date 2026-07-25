@@ -34,15 +34,17 @@ const sampleList = {
 };
 
 describe("loadGuestList", () => {
-  it("returns the organizer guest list", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(200, sampleList)),
-    );
+  it("returns the organizer guest list from /guests (not the public RSVP path)", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, sampleList));
+    vi.stubGlobal("fetch", fetchMock);
     await expect(loadGuestList("https://api.example.com", sampleList.event.id)).resolves.toEqual({
       ok: true,
       list: sampleList,
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://api.example.com/api/events/${sampleList.event.id}/guests`,
+      expect.anything(),
+    );
   });
 
   it("maps a missing event to a friendly message", async () => {
@@ -105,6 +107,9 @@ describe("cancelGuest", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.list.confirmed_count).toBe(0);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.com/api/events/${sampleList.event.id}/guests/${sampleList.rsvps[0]!.id}`,
+    );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PATCH" });
   });
 });
