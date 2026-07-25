@@ -27,7 +27,15 @@ export type RulesMetaResponse = {
   readonly snapshot_date: string;
 };
 
-export type PlanResult = { ok: true; plan: PlanResponse } | { ok: false; message: string };
+export type PlanResult =
+  | { ok: true; plan: PlanResponse }
+  /**
+   * `missing` separates "this event has no plan yet", which generating answers, from "a plan may
+   * exist but could not be read", which it does not. The plan endpoint answers 404 for both a
+   * missing plan and a missing event, so the caller confirms the event exists before offering to
+   * create one — a 404 alone is not enough to justify writing an immutable plan row.
+   */
+  | { ok: false; missing: boolean; message: string };
 export type RulesMetaResult =
   { ok: true; meta: RulesMetaResponse } | { ok: false; message: string };
 
@@ -58,13 +66,14 @@ export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<Pla
   try {
     response = await fetch(`${apiBaseUrl}/api/events/${eventId}/plan`, { ...CREDENTIALED });
   } catch {
-    return { ok: false, message: UNREACHABLE };
+    return { ok: false, missing: false, message: UNREACHABLE };
   }
 
   const body = await readJson(response);
   if (!response.ok) {
     return {
       ok: false,
+      missing: response.status === 404,
       message: failureMessage(
         body,
         response.status === 404
@@ -76,7 +85,7 @@ export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<Pla
 
   const plan = asRecord(body);
   if (plan === null || typeof plan.rulesetVersion !== "string" || !Array.isArray(plan.findings)) {
-    return { ok: false, message: "The API returned a plan this page cannot read." };
+    return { ok: false, missing: false, message: "The API returned a plan this page cannot read." };
   }
   return { ok: true, plan: plan as unknown as PlanResponse };
 }

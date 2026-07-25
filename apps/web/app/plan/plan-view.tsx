@@ -1,42 +1,71 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadEvent, regeneratePlan } from "../intake/events-api";
 import { loadPlan, loadRulesMeta, type PlanResponse, type RulesMetaResponse } from "./plan-api";
 import { PlanLine } from "./plan-line";
-import { SnapshotBanner } from "./snapshot-banner";
+import { compareToPinned, SnapshotBanner } from "./snapshot-banner";
 import { verdictCopy } from "./verdict-copy";
 
 // The plan view. F-206 owns what this page is for: the snapshot banner and the per-line citation
 // and verification-status rendering. The verdict is shown in its approved copy; F-102's branch
 // tables and rescope ladder are its own feature.
+//
+// What this page can be showing is written down once, as two states, rather than inferred from a
+// handful of booleans. Three review findings in a row were "a failure path was not considered",
+// and each was a combination the booleans allowed but nobody had enumerated: a failure with a
+// plan already on screen, a missing plan and an unreadable one treated alike, an action promised
+// by the banner that no state offered.
+
+/** What came back for the plan itself. */
+type PlanState =
+  | { status: "loading" }
+  /** The plan endpoint says this event has no plan yet — the only state that can be generated from. */
+  | { status: "missing"; message: string }
+  /** Anything else went wrong. A plan may well exist; we just could not read it. */
+  | { status: "unavailable"; message: string }
+  | { status: "ready"; plan: PlanResponse };
+
+/** What came back for the event, which is what says whether the plan is still current. */
+type EventState =
+  { status: "loading" } | { status: "found"; revision: number } | { status: "unavailable" };
 
 export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
-  const [plan, setPlan] = useState<PlanResponse | null>(null);
+  const [planState, setPlanState] = useState<PlanState>({ status: "loading" });
+  const [eventState, setEventState] = useState<EventState>({ status: "loading" });
   const [meta, setMeta] = useState<RulesMetaResponse | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  /** The event's revision now, or null when it could not be read. */
-  const [currentRevision, setCurrentRevision] = useState<number | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerationFailure, setRegenerationFailure] = useState<string | null>(null);
+
+  /**
+   * Which event this page is currently showing. `generate()` runs outside the effect, so it
+   * cannot rely on the effect's cleanup: it re-checks this after every await and drops its
+   * results if the page has moved to another event in the meantime.
+   */
+  const showing = `${apiBaseUrl}|${eventId}`;
+  const active = useRef(showing);
 
   useEffect(() => {
+    active.current = showing;
     let abandoned = false;
 
     // Everything on screen belongs to one event. Navigating to another one clears it first, so a
     // previous event's regulatory plan can never be read under a different event's id — not while
     // the new request runs, and not if the new request fails.
-    setPlan(null);
+    setPlanState({ status: "loading" });
+    setEventState({ status: "loading" });
     setMeta(null);
-    setFailure(null);
-    setCurrentRevision(null);
-    setLoading(true);
+    setRegenerationFailure(null);
+    // A generation belonging to the event we just left is no longer this page's business: its
+    // result is dropped by the guard in `generate`, and its in-flight label must not sit on the
+    // new event's button.
+    setRegenerating(false);
 
     void loadPlan(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
-      if (result.ok) setPlan(result.plan);
-      else setFailure(result.message);
-      setLoading(false);
+      if (result.ok) setPlanState({ status: "ready", plan: result.plan });
+      else if (result.missing) setPlanState({ status: "missing", message: result.message });
+      else setPlanState({ status: "unavailable", message: result.message });
     });
 
     // A plan pins the revision it evaluated (AD-13), and the plan endpoint serves the latest plan
@@ -44,11 +73,15 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     // it is the same comparison the checklist API refuses on: current > pinned means stale.
     void loadEvent(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
-      if (result.ok) setCurrentRevision(result.loaded.event.revision_counter);
+      setEventState(
+        result.ok
+          ? { status: "found", revision: result.loaded.event.revision_counter }
+          : { status: "unavailable" },
+      );
     });
 
     // The banner states the plan's own pinned version without this, so the plan is never held up
-    // waiting for it; the live version only decides whether to say a newer ruleset exists.
+    // waiting for it; the live version only decides how the two rulesets stand.
     void loadRulesMeta(apiBaseUrl).then((result) => {
       if (abandoned) return;
       if (result.ok) setMeta(result.meta);
@@ -57,32 +90,42 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     return () => {
       abandoned = true;
     };
-  }, [apiBaseUrl, eventId]);
+  }, [apiBaseUrl, eventId, showing]);
 
   /**
-   * Generate a plan for the event as it stands now: the first one when none exists, and the
-   * replacement when an edit has left the stored plan behind.
+   * Generate a plan for the event as it stands now: the first one when none exists, the
+   * replacement when an edit or a rules update has left the stored one behind.
    */
   const generate = async () => {
-    setGenerating(true);
-    setFailure(null);
+    const requested = showing;
+    setRegenerating(true);
+    setRegenerationFailure(null);
+
     const generated = await regeneratePlan(apiBaseUrl, eventId);
+    if (active.current !== requested) return;
     if (!generated.ok) {
-      setFailure(generated.message);
-      setGenerating(false);
+      setRegenerationFailure(generated.message);
+      setRegenerating(false);
       return;
     }
+
     const [result, event] = await Promise.all([
       loadPlan(apiBaseUrl, eventId),
       loadEvent(apiBaseUrl, eventId),
     ]);
-    if (result.ok) setPlan(result.plan);
-    else setFailure(result.message);
-    if (event.ok) setCurrentRevision(event.loaded.event.revision_counter);
-    setGenerating(false);
+    if (active.current !== requested) return;
+    if (result.ok) setPlanState({ status: "ready", plan: result.plan });
+    else if (result.missing) setPlanState({ status: "missing", message: result.message });
+    else setPlanState({ status: "unavailable", message: result.message });
+    setEventState(
+      event.ok
+        ? { status: "found", revision: event.loaded.event.revision_counter }
+        : { status: "unavailable" },
+    );
+    setRegenerating(false);
   };
 
-  if (loading) {
+  if (planState.status === "loading") {
     return (
       <p className="intake__lede" role="status">
         Loading your permit plan…
@@ -90,68 +133,111 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     );
   }
 
-  if (plan === null) {
-    return (
-      <main className="plan">
-        <h1>Your permit plan</h1>
-        <p className="intake__error" role="alert">
-          {failure}
-        </p>
-        <button
-          className="intake__submit"
-          type="button"
-          onClick={() => void generate()}
-          disabled={generating}
-        >
-          {generating ? "Generating plan…" : "Generate the plan"}
-        </button>
-      </main>
-    );
-  }
+  const plan = planState.status === "ready" ? planState.plan : null;
+  const standing =
+    plan === null || meta === null
+      ? null
+      : compareToPinned(meta.ruleset_version, plan.rulesetVersion);
 
-  const isStale = currentRevision !== null && currentRevision > plan.eventRevision;
+  const isStale =
+    plan !== null && eventState.status === "found" && eventState.revision > plan.eventRevision;
+  // The banner tells the organizer a newer ruleset exists, so the page has to offer the action it
+  // names. Regeneration also needs an event to generate from: an event that cannot be read is not
+  // one this page may create an immutable plan row for.
+  const canGenerate =
+    eventState.status === "found" &&
+    (planState.status === "missing" || isStale || standing === "newer");
 
   return (
     <main className="plan">
       <h1>Your permit plan</h1>
-      {/* AC 4: the version this plan was generated from, read off the plan itself, so a plan
-          viewed after a rules update still names the ruleset that produced it. */}
-      <SnapshotBanner rulesetVersion={plan.rulesetVersion} meta={meta} />
+
+      {plan !== null && (
+        /* AC 4: the version this plan was generated from, read off the plan itself, so a plan
+           viewed after a rules update still names the ruleset that produced it. */
+        <SnapshotBanner rulesetVersion={plan.rulesetVersion} meta={meta} />
+      )}
+
+      {/* A missing plan and an unreadable one are different facts. Only the first can be answered
+          by generating; offering it for the second would write a second immutable plan row for an
+          event whose existing plan merely could not be read. */}
+      {planState.status !== "ready" && (
+        <p className="intake__error" role="alert">
+          {planState.message}
+        </p>
+      )}
 
       {/* The plan endpoint serves the latest plan whether or not the event has moved on since it
           was generated. Presenting deadlines computed from an older headcount, date or location
-          as current is the failure F-101's revision counter exists to prevent, so the plan is
-          shown with what it was computed against and an action to replace it. */}
-      {isStale && (
-        <div className="plan__stale" role="alert">
-          <p>
-            This plan was generated for revision {plan.eventRevision}; the event has since been
-            edited and is now at revision {currentRevision}. The dates and verdict below were
-            computed from the older answers.
-          </p>
-          <button type="button" onClick={() => void generate()} disabled={generating}>
-            {generating ? "Regenerating plan…" : "Regenerate the plan"}
-          </button>
-        </div>
+          as current is the failure F-101's revision counter exists to prevent. */}
+      {isStale && plan !== null && eventState.status === "found" && (
+        <p className="plan__stale" role="alert">
+          This plan was generated for revision {plan.eventRevision}; the event has since been edited
+          and is now at revision {eventState.revision}. The dates and verdict below were computed
+          from the older answers.
+        </p>
       )}
+
       {/* Without the event we cannot say whether the plan still matches it, and silence would
           read as confirmation that it does. */}
-      {currentRevision === null && (
+      {plan !== null && eventState.status === "unavailable" && (
         <p className="plan__unconfirmed" role="status">
           The event could not be read, so whether this plan is still current is unconfirmed.
         </p>
       )}
 
-      <p className="plan__verdict">
-        <strong>{verdictCopy(plan.verdict, plan.verdictDetail)}</strong> · generated{" "}
-        {plan.generatedAt.slice(0, 10)} · revision {plan.eventRevision}
-      </p>
+      {/* One place the regeneration action and its failure are rendered, whatever else is on
+          screen. A failure that only appeared in the no-plan branch left an organizer clicking a
+          re-enabled button with no idea it had failed, and each attempt writes a plan row. */}
+      {(canGenerate || regenerationFailure !== null) && (
+        <div className="plan__actions">
+          {canGenerate && (
+            <button
+              className="intake__submit"
+              type="button"
+              onClick={() => void generate()}
+              disabled={regenerating}
+            >
+              {regenerating
+                ? "Generating plan…"
+                : planState.status === "missing"
+                  ? "Generate the plan"
+                  : "Regenerate the plan"}
+            </button>
+          )}
+          {regenerationFailure !== null && (
+            <p className="intake__error" role="alert">
+              {regenerationFailure}
+            </p>
+          )}
+        </div>
+      )}
 
-      <div className="plan__lines">
-        {plan.findings.map((finding) => (
-          <PlanLine key={finding.ruleIds.join("+")} finding={finding} />
-        ))}
-      </div>
+      {plan !== null && (
+        <>
+          <p className="plan__verdict">
+            <strong>{verdictCopy(plan.verdict, plan.verdictDetail)}</strong> · generated{" "}
+            {plan.generatedAt.slice(0, 10)} · revision {plan.eventRevision}
+          </p>
+
+          {plan.findings.length === 0 ? (
+            /* F-201 AC 4 and ARCHITECTURE both make the near-empty result first-class, in those
+               words. An empty container under a verdict reads as an evaluation that failed or was
+               dropped; the sentence is what says the evaluation ran and found nothing. (The
+               ruleset's engine_conventions phrases the same statement "from the provided facts";
+               the spec governs this feature's acceptance, so its wording is the one rendered.) */
+            <p className="plan__empty">
+              No new city event requirement identified from your answers.
+            </p>
+          ) : (
+            <div className="plan__lines">
+              {plan.findings.map((finding) => (
+                <PlanLine key={finding.ruleIds.join("+")} finding={finding} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </main>
   );
 }

@@ -46,6 +46,7 @@ describe("loadPlan", () => {
     stubFetch(async () => jsonResponse(404, {}));
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
+      missing: true,
       message: "No plan has been generated for this event yet.",
     });
   });
@@ -54,6 +55,7 @@ describe("loadPlan", () => {
     stubFetch(async () => jsonResponse(500, { error: "plan lookup failed" }));
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
+      missing: false,
       message: "plan lookup failed",
     });
   });
@@ -62,6 +64,7 @@ describe("loadPlan", () => {
     stubFetch(async () => new Response("<html>gateway</html>", { status: 502 }));
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
+      missing: false,
       message: "The plan could not be loaded (HTTP 502).",
     });
   });
@@ -70,6 +73,7 @@ describe("loadPlan", () => {
     stubFetch(async () => jsonResponse(200, { findings: [] }));
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
+      missing: false,
       message: "The API returned a plan this page cannot read.",
     });
   });
@@ -80,6 +84,7 @@ describe("loadPlan", () => {
     });
     await expect(loadPlan("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
+      missing: false,
       message: "The API could not be reached.",
     });
   });

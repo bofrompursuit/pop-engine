@@ -94,18 +94,27 @@ const liveMeta = {
   snapshot_date: publishedRuleset.snapshot_date,
 };
 
-/** Answers the plan call and the rules-meta call by URL, the way the api does. */
+/**
+ * Answers all three calls the page makes, the way the api does: the plan, the rules meta, and the
+ * event whose revision says whether the plan is still current. The event defaults to the revision
+ * the plan pinned, so nothing reads as stale unless a test says so.
+ */
 const stubApi = (
   planBody: unknown,
   metaBody: unknown = liveMeta,
   planStatus = 200,
   metaStatus = 200,
 ) => {
-  const fetchMock = vi.fn(async (url: string) =>
-    url.endsWith("/rules/meta")
-      ? jsonResponse(metaStatus, metaBody)
-      : jsonResponse(planStatus, planBody),
-  );
+  const pinned = (planBody as { eventRevision?: number }).eventRevision ?? 1;
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/rules/meta")) return jsonResponse(metaStatus, metaBody);
+    if (url.endsWith("/plan")) return jsonResponse(planStatus, planBody);
+    return jsonResponse(200, {
+      event: { id: "event-1", revision_counter: pinned },
+      warnings: [],
+      plan_stale: false,
+    });
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 };
@@ -631,11 +640,18 @@ describe("the first plan for an event", () => {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
-        if (init?.method === "POST") {
-          generated = true;
-          return jsonResponse(201, { ...plan(), eventRevision: 1 });
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            generated = true;
+            return jsonResponse(201, { ...plan(), eventRevision: 1 });
+          }
+          return generated ? jsonResponse(200, plan()) : jsonResponse(404, {});
         }
-        return generated ? jsonResponse(200, plan()) : jsonResponse(404, {});
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
       }),
     );
     const user = userEvent.setup();
@@ -654,8 +670,16 @@ describe("the first plan for an event", () => {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
-        if (init?.method === "POST") return jsonResponse(500, { error: "plan generation failed" });
-        return jsonResponse(404, {});
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST")
+            return jsonResponse(500, { error: "plan generation failed" });
+          return jsonResponse(404, {});
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
       }),
     );
     const user = userEvent.setup();
@@ -663,7 +687,12 @@ describe("the first plan for an event", () => {
 
     await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("plan generation failed");
+    // The failure renders alongside the missing-plan message rather than replacing it.
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toContain(
+        "plan generation failed",
+      ),
+    );
     expect(screen.getByRole("button", { name: "Generate the plan" }).hasAttribute("disabled")).toBe(
       false,
     );
@@ -705,19 +734,42 @@ describe("verdictCopy on its own", () => {
 
 describe("a generated plan that cannot then be read back", () => {
   it("reports the read failure rather than claiming the plan is there", async () => {
+    let generated = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
-        if (init?.method === "POST") return jsonResponse(201, plan());
-        return jsonResponse(500, { error: "plan lookup failed" });
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            generated = true;
+            return jsonResponse(201, plan());
+          }
+          // Missing before generating, unreadable after it: the plan was written and then could
+          // not be read back.
+          return generated
+            ? jsonResponse(500, { error: "plan lookup failed" })
+            : jsonResponse(404, {});
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
       }),
     );
     const user = userEvent.setup();
     renderPlan();
 
     await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("plan lookup failed");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toContain(
+        "plan lookup failed",
+      ),
+    );
+    // A plan that could not be read is not a plan that is missing, so generating is not offered
+    // again — that would write a second plan row for one that already exists.
+    expect(screen.queryByRole("button", { name: "Generate the plan" })).toBeNull();
   });
 });
 
@@ -856,7 +908,7 @@ describe("a plan the event has moved past", () => {
     const warning = await screen.findByRole("alert");
     expect(warning.textContent).toContain("generated for revision 1");
     expect(warning.textContent).toContain("now at revision 3");
-    expect(within(warning).getByRole("button", { name: "Regenerate the plan" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Regenerate the plan" })).toBeDefined();
   });
 
   it("does not warn when the plan matches the event's current revision", async () => {
@@ -907,5 +959,199 @@ describe("a plan the event has moved past", () => {
 
     await screen.findByRole("complementary", { name: "Rules snapshot" });
     expect(screen.getByText(/whether this plan is still current is unconfirmed/)).toBeDefined();
+  });
+});
+
+describe("the states this page can be in", () => {
+  /** Answers each endpoint from a small script, so a test states exactly what the api did. */
+  const stubScript = (script: {
+    plan?: () => Response;
+    post?: () => Response;
+    event?: () => Response;
+    meta?: () => Response;
+  }) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/rules/meta"))
+        return (script.meta ?? (() => jsonResponse(200, liveMeta)))();
+      if (url.endsWith("/plan")) {
+        if (init?.method === "POST") return (script.post ?? (() => jsonResponse(201, plan())))();
+        return (script.plan ?? (() => jsonResponse(200, plan())))();
+      }
+      return (
+        script.event ??
+        (() =>
+          jsonResponse(200, {
+            event: { id: "event-1", revision_counter: 1 },
+            warnings: [],
+            plan_stale: false,
+          }))
+      )();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  it("offers generation for a missing plan but not for one it could not read", async () => {
+    // A 500, an integrity error or an unreachable api all leave no plan on screen, but a plan may
+    // well exist — generating would write a second immutable row for one that is merely unread.
+    for (const unreadable of [
+      () => jsonResponse(500, { error: "plan lookup failed" }),
+      () => jsonResponse(500, { error: "stored plan is incomplete" }),
+      () => new Response("<html>gateway</html>", { status: 502 }),
+    ]) {
+      stubScript({ plan: unreadable });
+      renderPlan();
+      await screen.findByRole("alert");
+      expect(screen.queryByRole("button", { name: /Generate|Regenerate/ })).toBeNull();
+      cleanup();
+    }
+
+    stubScript({ plan: () => jsonResponse(404, {}) });
+    renderPlan();
+    expect(await screen.findByRole("button", { name: "Generate the plan" })).toBeDefined();
+  });
+
+  it("does not offer to create a plan for an event that does not exist", async () => {
+    // The plan endpoint answers 404 for a missing event as well as a missing plan; only the event
+    // itself distinguishes them.
+    stubScript({
+      plan: () => jsonResponse(404, { error: "event event-1 not found" }),
+      event: () => jsonResponse(404, { error: "event not found" }),
+    });
+    renderPlan();
+
+    expect((await screen.findByRole("alert")).textContent).toBe("event event-1 not found");
+    expect(screen.queryByRole("button", { name: /Generate|Regenerate/ })).toBeNull();
+  });
+
+  it("shows a regeneration failure while the stale plan is still on screen", async () => {
+    // The button re-enabling with no message left the organizer clicking again, and every attempt
+    // writes another immutable plan row.
+    stubScript({
+      plan: () => jsonResponse(200, plan({ eventRevision: 1 })),
+      event: () =>
+        jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 4 },
+          warnings: [],
+          plan_stale: true,
+        }),
+      post: () => jsonResponse(500, { error: "plan generation failed" }),
+    });
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Regenerate the plan" }));
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toContain(
+        "plan generation failed",
+      ),
+    );
+    // The plan it failed to replace is still readable, and still marked stale.
+    expect(screen.getAllByRole("article").length).toBeGreaterThan(0);
+    expect(screen.getByText(/generated for revision 1/)).toBeDefined();
+  });
+
+  it("offers the regeneration the banner tells the organizer to perform", async () => {
+    // A rules update with no event edit: the banner says a newer ruleset exists, so the page has
+    // to offer the action it names. Nothing else on the page would.
+    stubScript({
+      plan: () => jsonResponse(200, plan({ rulesetVersion: "nyc.v2.1", eventRevision: 1 })),
+      meta: () => jsonResponse(200, { ruleset_version: "nyc.v2.3", snapshot_date: "2026-07-25" }),
+    });
+    renderPlan();
+
+    const banner = await screen.findByRole("complementary", { name: "Rules snapshot" });
+    expect(banner.textContent).toContain("regenerate to update");
+    expect(screen.getByRole("button", { name: "Regenerate the plan" })).toBeDefined();
+    // The event matches its plan, so this is the rules-update case and not the stale one.
+    expect(screen.queryByText(/has since been edited/)).toBeNull();
+  });
+
+  it("offers nothing when the live ruleset is older or unorderable", async () => {
+    // The banner does not tell the organizer to regenerate in either case, so neither should the
+    // page: regenerating onto an older ruleset would rebuild the plan from superseded rules.
+    for (const live of ["nyc.v2.2", "nyc-hotfix"]) {
+      stubScript({
+        plan: () => jsonResponse(200, plan({ rulesetVersion: "nyc.v2.3", eventRevision: 1 })),
+        meta: () => jsonResponse(200, { ruleset_version: live, snapshot_date: "2026-07-24" }),
+      });
+      renderPlan();
+      await screen.findByRole("complementary", { name: "Rules snapshot" });
+      expect(screen.queryByRole("button", { name: /Regenerate/ }), live).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("explains an evaluation that found nothing rather than rendering an empty page", async () => {
+    // The approved boundary fixture: a park event at headcount 19 triggers no rule at all, and
+    // F-201 AC 4 makes that result first-class so it is never read as a failed evaluation.
+    stubScript({
+      plan: () => jsonResponse(200, plan({ verdict: "FEASIBLE", findings: [] })),
+    });
+    renderPlan();
+
+    expect(
+      await screen.findByText("No new city event requirement identified from your answers."),
+    ).toBeDefined();
+    expect(screen.getByText("On track")).toBeDefined();
+    expect(screen.queryAllByRole("article")).toEqual([]);
+  });
+
+  it("still lists findings when there are any", async () => {
+    stubScript({});
+    renderPlan();
+
+    await waitFor(() => expect(screen.getAllByRole("article").length).toBe(1));
+    expect(screen.queryByText(/No new city event requirement/)).toBeNull();
+  });
+});
+
+describe("a regeneration that finishes after the page has moved on", () => {
+  it("does not install one event's plan under another event's id", async () => {
+    // The effect's guard covers its own requests; this one starts outside it. After the POST for
+    // event-1 lands, event-1's plan is readable — so without a guard the follow-up read installs
+    // it, and the page is showing event-2.
+    let releasePost: (response: Response) => void = () => {};
+    let generated = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            return new Promise<Response>((resolvePromise) => {
+              releasePost = (response) => {
+                generated = true;
+                resolvePromise(response);
+              };
+            });
+          }
+          return url.includes("event-1") && generated
+            ? jsonResponse(200, plan({ eventId: "event-1", rulesetVersion: "nyc.v2.1" }))
+            : jsonResponse(404, {});
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    const view = render(<PlanView apiBaseUrl="https://api.example.com" eventId="event-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+    // Away to another event while event-1's generation is still in flight.
+    view.rerender(<PlanView apiBaseUrl="https://api.example.com" eventId="event-2" />);
+    await screen.findByRole("button", { name: "Generate the plan" });
+
+    releasePost(jsonResponse(201, plan({ eventId: "event-1", rulesetVersion: "nyc.v2.1" })));
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 50));
+
+    // event-1's plan must not appear under event-2, current or otherwise.
+    expect(screen.queryByText(/nyc\.v2\.1/)).toBeNull();
+    expect(screen.queryAllByRole("article")).toEqual([]);
+    expect(screen.getByRole("button", { name: "Generate the plan" })).toBeDefined();
   });
 });
