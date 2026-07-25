@@ -16,7 +16,7 @@ import { IntakeForm } from "./intake-form";
 // Resolved from the repo root, which is vitest's working directory: under jsdom
 // `import.meta.url` is the document's http URL, not a file one.
 const contract = parseIntakeContract(
-  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.4.json"), "utf8")),
+  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.5.json"), "utf8")),
 );
 
 const jsonResponse = (status: number, body: unknown): Response =>
@@ -232,6 +232,8 @@ describe("'I don't know' is a real answer (spec #3)", () => {
   it("keeps a quantity that was typed and then cleared out of the submission", async () => {
     const user = renderForm();
     await answerParkEvent(user);
+    // The kWh question is only on screen once the battery question is answered yes (nyc.v2.5).
+    await chooseOption(user, "battery_present", "true");
     await fillField(user, "battery_system_kwh", "20.5");
     await fillField(user, "capacity", "400");
     const battery = document.querySelector<HTMLInputElement>('input[name="battery_system_kwh"]');

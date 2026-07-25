@@ -1,20 +1,20 @@
 # PopEngine — Architecture (Canonical)
 
-**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`). Technical design for Phase 0–1.5. Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo), `ARCHITECTURE-FUTURE.md` (Phase 2+ target). Permit facts referenced here trace to `rules/nyc-rules.v2.4.json`; none are asserted beyond it.
+**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`). Technical design for Phase 0–1.5. Companion to `PRD.md` (requirements), `ROADMAP.md` (phasing), `DESIGN.md` (lanes, gates, demo), `ARCHITECTURE-FUTURE.md` (Phase 2+ target). Permit facts referenced here trace to `rules/nyc-rules.v2.5.json`; none are asserted beyond it.
 
 ## Architecture Decisions (2026-07-21, extended 2026-07-22)
 
 | # | Decision | Rationale |
 |---|---|---|
 | AD-1 | Separate Express API + Next.js frontend (two services) | Canonical stack; long-lived process hosts the alert poller in-process; decoupled lifecycles. Chosen after explicit tradeoff review vs. single Next.js app. |
-| AD-2 | The published ruleset file in git (`rules/nyc-rules.v2.4.json`) is authoritative; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true. |
+| AD-2 | The published ruleset file in git (`rules/nyc-rules.v2.5.json`) is authoritative; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true. |
 | AD-3 | S3-compatible object storage for F-202 document uploads (metadata in Postgres) | Production-correct from day one; survives redeploys. |
 | AD-4 | No Redis | Demo-scale check-in volume needs no queue layer (PRD appendix). Alerts run on a DB-backed poller. |
 | AD-5 | No auth in MVP | Demo runs single-tenant. F-701 is Phase 2. |
 | AD-6 | Rules engine is a pure module (no DB, no HTTP, no clock) | Deterministic; testable against the 6 scenarios as plain unit tests from day 3. `today` is a parameter, never `Date.now()` inside evaluation. |
 | AD-7 | Plans are immutable snapshots | Regeneration inserts a new plan row pinned to its ruleset version; history is reproducible even after rules change. |
 | AD-8 | TypeScript across the monorepo | The engine package's exported intake/plan/verdict types are the client/server contract; TS makes it enforced rather than conventional. Decided 2026-07-22 (OPEN-QUESTIONS S-5). |
-| AD-9 | Ruleset baseline: nyc.v2.4 (corrected subset), schema popengine-rules/v2 | Adopted 2026-07-22 as nyc.v2.1 after two fetch-confirmed verification passes; retargeted to nyc.v2.4 on 2026-07-25 with no regulatory change; the 59-rule draft in `rules/proposals/` is the post-capstone target. |
+| AD-9 | Ruleset baseline: nyc.v2.5 (corrected subset), schema popengine-rules/v2 | Adopted 2026-07-22 as nyc.v2.1 after two fetch-confirmed verification passes; retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change; the 59-rule draft in `rules/proposals/` is the post-capstone target. |
 | AD-10 | Layered result model: finding kind + disposition + per-finding deadline status, summarized by the four-state verdict | Preserves demo vocabulary while never overclaiming; INFEASIBLE = "published deadline missed as scoped." |
 | AD-11 | Real business-day math against a pinned holiday calendar (`us-ny-business-days@2026`) | Fixture dates are pinned, so determinism holds; the calendar artifact versions with the ruleset. Holiday source is an open research item. |
 | AD-12 | Demo environment is access-gated with synthetic data only | The no-auth MVP must not hold real PII, documents, or notification destinations (audit finding B-07). A host-level gate (basic auth or IP allowlist) fronts the demo deploy; public RSVP/check-in routes open only for the rehearsal/demo window. |
@@ -27,7 +27,7 @@
 │  apps/web        │ ─────────────────▶ │  apps/api (Express)       │
 │  Next.js         │                    │  ├─ routes/validation     │
 │  (organizer UI,  │                    │  ├─ alert poller (60s)    │
-│   plan render,   │                    │  └─ packages/engine ◀── rules/nyc-rules.v2.4.json
+│   plan render,   │                    │  └─ packages/engine ◀── rules/nyc-rules.v2.5.json
 │   stretch pages) │                    └────────┬─────────┬───────┘
 └─────────────────┘                              │         │
                                           PostgreSQL   S3-compatible
@@ -45,7 +45,7 @@
 /apps/web          Next.js frontend (Dev 2 lane; stretch pages Dev 3/4)
 /apps/api          Express API + alert poller (Dev 1/3/4 lanes)
 /packages/engine   Pure rules engine module (Dev 1 lane)
-/rules             nyc-rules.v2.4.json (published ruleset) + proposals/ (drafts; never build from these)
+/rules             nyc-rules.v2.5.json (published ruleset) + proposals/ (drafts; never build from these)
 /specs             One spec per F-id
 /docs              PRD, ROADMAP, DESIGN, this file, OPEN-QUESTIONS
 ```
@@ -65,7 +65,7 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 
 ### events
 
-Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.4.json` is authoritative for names, enums, and asked-when conditions; the table below groups them):
+Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.5.json` is authoritative for names, enums, and asked-when conditions; the table below groups them):
 
 | Column group | Columns | Notes |
 |---|---|---|
@@ -75,14 +75,14 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | Audience + food | event_open_to_public (yes/no/unknown), food_present (bool), food_vendor_count (integer), food_affinity_private_exception_claimed (yes/no/unknown), selling_anything (bool) | drive DOHMH vendor/notification rules, Parks TUA, block-party eligibility |
 | Sound | amplified_sound (bool), sound_audible_from_public_way (yes/no/unknown) | audibility asked only at private venues (§10-108(b)(3) scope) |
 | Structures | structure_types (nonempty text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable, or exclusive none), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown) | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL) |
-| Flame + power | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
+| Flame + power | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_present (bool), battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns. `battery_present` gates `battery_system_kwh` the way `generator_present` gates the gallon fields; the registry asks it of every event, so it is always answered |
 | Alcohol + assembly | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown) | the Scenario F branch facts; `unknown` is first-class |
 | Lifecycle | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13) |
 | Public page (F-301) | description (text, nullable), public_page_published (bool, default false) | Promotion copy + visibility; not intake/rules fields. Unpublished (`public_page_published = false`) → `GET /e/:eventId` returns friendly 404. Added in migration 005 (resolves SPEC-CONFLICT #100). |
 
 *Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field bumps `revision_counter` server-side, marks the current plan stale, and prompts regeneration (recalculate, don't patch).*
 
-### permit_rules *(read model, seeded from `rules/nyc-rules.v2.4.json` at migration/boot; never hand-edited)*
+### permit_rules *(read model, seeded from `rules/nyc-rules.v2.5.json` at migration/boot; never hand-edited)*
 
 | Column | Type | Notes |
 |---|---|---|
@@ -212,7 +212,7 @@ evaluate(intake, ruleset, today, calendar) → {
 
 ### Rules as data
 
-Each rule in `rules/nyc-rules.v2.4.json` carries: `id`, `kind`, `trigger` (condition tree over the declared intake fields), `output` (name/variants, agency, typed deadline, fee, portal, paths for branchable rules), `verification` (status + evidence reference into `VERIFICATION-SOURCES.md`), and `source`. The file also declares its own `intake_fields` registry, `config` (slack threshold, calendar, assembly thresholds), and `engine_conventions`. A second city is a new JSON file, not a core-engine rewrite (F-207) — the engine knows condition operators and deadline types, never NYC specifics (jurisdiction-specific classification helpers live with the ruleset, per `ARCHITECTURE-FUTURE.md` §8.3).
+Each rule in `rules/nyc-rules.v2.5.json` carries: `id`, `kind`, `trigger` (condition tree over the declared intake fields), `output` (name/variants, agency, typed deadline, fee, portal, paths for branchable rules), `verification` (status + evidence reference into `VERIFICATION-SOURCES.md`), and `source`. The file also declares its own `intake_fields` registry, `config` (slack threshold, calendar, assembly thresholds), and `engine_conventions`. A second city is a new JSON file, not a core-engine rewrite (F-207) — the engine knows condition operators and deadline types, never NYC specifics (jurisdiction-specific classification helpers live with the ruleset, per `ARCHITECTURE-FUTURE.md` §8.3).
 
 ### Condition evaluation (tri-state)
 
@@ -283,7 +283,7 @@ Error principle: rule-evaluation failures return an explicit error; the API neve
 ## Deployment (Dev 4 lane)
 
 - Two services (web + api) on any node host (Railway / Render / Fly), managed Postgres (Neon / Supabase / host-provided), S3-compatible bucket (S3 / R2 / Supabase storage).
-- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v2.4.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
+- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v2.5.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
 - Demo environment is seeded via script (scenario events pre-loaded as drafts) and never redeployed on demo day after final rehearsal.
 - **Access gate + synthetic data (AD-12):** the demo deploy sits behind a host-level gate (basic auth or IP allowlist); all data is synthetic; no real identity documents, applications, or attendee PII enter the system before F-701 ships. Public RSVP/check-in routes are enabled only for the rehearsal/demo window.
 
@@ -292,5 +292,5 @@ Error principle: rule-evaluation failures return an explicit error; the API neve
 - **CORS:** api allows the web origin only.
 - **Shared types:** `packages/engine` exports the intake/plan/verdict types; both apps import from it.
 - **Migrations:** plain SQL or a light tool (node-pg-migrate); the `events` migration is PR #1 and requires all-hands approval (Phase 0).
-- **Rules loading:** api boots by validating `rules/nyc-rules.v2.4.json` (schema check; 33 rules + 4 advisories present; every trigger field declared in the file's `intake_fields` registry) and syncing `permit_rules`; a validation failure aborts boot loudly.
+- **Rules loading:** api boots by validating `rules/nyc-rules.v2.5.json` (schema check; 33 rules + 4 advisories present; every trigger field declared in the file's `intake_fields` registry) and syncing `permit_rules`; a validation failure aborts boot loudly.
 - **Observability (MVP-appropriate):** structured request logs + an engine-evaluation trace (rule → tri-state result) attached to each plan row in `verdict_detail`; nothing fancier until Phase 2.

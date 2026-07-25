@@ -192,6 +192,15 @@ export type EngineRule = {
   readonly dedupeKey: string | null;
   readonly verificationStatus: VerificationStatus;
   readonly verificationQualification: string | null;
+  /**
+   * The date a rule's facts were last confirmed against their sources, when one is published.
+   *
+   * Optional and null throughout nyc.v2.5: every fact is still pre-VERIFIED, and a date this repo
+   * cannot evidence would be an invented permit fact. `permit_plan_items.last_verified_date` and
+   * F-206's per-line date have had a column and a writer since migration 001 with nothing to read;
+   * this is what they will read when verification rounds resume.
+   */
+  readonly verificationLastVerifiedDate: string | null;
   readonly source: RuleSource | null;
 };
 

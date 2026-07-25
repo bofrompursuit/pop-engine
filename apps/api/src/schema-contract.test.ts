@@ -137,7 +137,10 @@ describe.runIf(databaseUrl.length > 0)("shared enum contracts do not drift", () 
   it("documents every CHECK IN list exactly as the schema enforces it", () => {
     for (const { key, values, line } of documented) {
       const enforced = schemaEnums.get(key);
-      expect(enforced, `ARCHITECTURE.md:${line} documents ${key}, which has no enum CHECK`).toBeDefined();
+      expect(
+        enforced,
+        `ARCHITECTURE.md:${line} documents ${key}, which has no enum CHECK`,
+      ).toBeDefined();
       expect(sorted(values), `ARCHITECTURE.md:${line} disagrees with the ${key} CHECK`).toEqual(
         enforced,
       );
@@ -159,7 +162,7 @@ describe.runIf(databaseUrl.length > 0)("shared enum contracts do not drift", () 
 
   it("keeps the published status_legend equal to the verification-status enum", () => {
     const ruleset: { status_legend: Record<string, string> } = JSON.parse(
-      readFileSync(repoFile("rules/nyc-rules.v2.4.json"), "utf8"),
+      readFileSync(repoFile("rules/nyc-rules.v2.5.json"), "utf8"),
     );
     expect(
       sorted(Object.keys(ruleset.status_legend)),

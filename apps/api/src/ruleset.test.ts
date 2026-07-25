@@ -7,7 +7,7 @@ import { loadRuleset, syncPermitRules, validateRuleset, type PublishedRuleset } 
 
 type JsonObject = Record<string, unknown>;
 
-const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.4.json", import.meta.url));
+const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.5.json", import.meta.url));
 const packageFile = fileURLToPath(new URL("../../../package.json", import.meta.url));
 const originalRulesFile = process.env.RULES_FILE;
 
@@ -55,9 +55,9 @@ describe("ruleset validation", () => {
     const ruleset = await loadRuleset();
 
     expect(ruleset.schema).toBe("popengine-rules/v2");
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.4");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.5");
     expect(ruleset.snapshotDate).toBe("2026-07-25");
-    expect(ruleset.intakeFields).toHaveLength(32);
+    expect(ruleset.intakeFields).toHaveLength(33);
     expect(ruleset.rules).toHaveLength(33);
     expect(ruleset.advisories).toHaveLength(4);
   });
@@ -92,7 +92,7 @@ describe("ruleset validation", () => {
   it("honors RULES_FILE", async () => {
     process.env.RULES_FILE = rulesFile;
     await expect(loadRuleset()).resolves.toMatchObject({
-      rulesetVersion: "nyc.v2.4",
+      rulesetVersion: "nyc.v2.5",
     });
   });
 
@@ -610,10 +610,10 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
     // so only the pairwise constraint can reject this. Without it the row lands and F-202
     // answers "has your plan changed" against a plan this organizer never saw.
     await expect(
-      database.query(
-        `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)`,
-        [ownEventId, otherPlanId],
-      ),
+      database.query(`INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)`, [
+        ownEventId,
+        otherPlanId,
+      ]),
     ).rejects.toThrow(/foreign key constraint/);
 
     const ownPlanId = randomUUID();

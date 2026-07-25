@@ -3,10 +3,10 @@
 **Build name:** PopEngine
 **Owner:** Naquan McKune, Jason Zeng, Adedoyin Ahoton, Bo Moldenhauer
 **Date:** July 21, 2026
-**Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.4 on 2026-07-25 with no regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
+**Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
 **Scope of this document:** the full product vision. The iron-clad MVP (permit planning) carries detailed, demo-observable requirements; everything else is planned scope, phased in `ROADMAP.md`. Completing the full vision by the capstone demo is explicitly not a commitment.
-**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v3) · `rules/nyc-rules.v2.4.json` (published ruleset).
-**Permit facts:** every permit fact traces to `rules/nyc-rules.v2.4.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.
+**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v3) · `rules/nyc-rules.v2.5.json` (published ruleset).
+**Permit facts:** every permit fact traces to `rules/nyc-rules.v2.5.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.
 
 ---
 
@@ -111,7 +111,7 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 | Goal | Signal | Metric | Target |
 | :- | :- | :- | :- |
-| Complete plan generation | Demo events produce correct plans | Expected findings matched vs. the approved fixture suite (6 scenarios + boundary fixtures, derived from ruleset nyc.v2.4) | 100% of expected findings, 0 false omissions, 0 false additions |
+| Complete plan generation | Demo events produce correct plans | Expected findings matched vs. the approved fixture suite (6 scenarios + boundary fixtures, derived from ruleset nyc.v2.5) | 100% of expected findings, 0 false omissions, 0 false additions |
 | Trustworthy output | Every requirement is verifiable | Plan line items citing an official source + verification status | 100% |
 | Feasibility detection | Infeasible dates caught at intake | Scenarios with impossible timelines flagged, with reason | 100% of seeded cases, <5 sec |
 | Determinism | Same input, same output | Re-running any scenario against the same ruleset version | Identical plan, 100% |
@@ -127,11 +127,11 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 ## 3. REQUIREMENTS — MVP CORE (iron-clad; Phase 1)
 
-The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v3, derived from ruleset nyc.v2.4) are the acceptance suite for F-201/F-102.
+The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v3, derived from ruleset nyc.v2.5) are the acceptance suite for F-201/F-102.
 
 ### F-101 · Event Intake Questionnaire [P0]
 
-- User completes a conditional intake whose fields mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.4.json` is authoritative for the field list): borough; location type; whether the activity obstructs the public way; SAPO event class + size or plaza level where applicable; headcount; event date; open-to-public; food (present, vendor count, private-function exception); selling anything; amplified sound (+ audibility from the public way at private venues); structures by type with dimensions; flame/fuel types; generator specs (fuel gallons, kW) and battery kWh; alcohol + whether the venue's license covers the event area; assembly approval at 75+.
+- User completes a conditional intake whose fields mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.5.json` is authoritative for the field list): borough; location type; whether the activity obstructs the public way; SAPO event class + size or plaza level where applicable; headcount; event date; open-to-public; food (present, vendor count, private-function exception); selling anything; amplified sound (+ audibility from the public way at private venues); structures by type with dimensions; flame/fuel types; generator specs (fuel gallons, kW); whether a battery system is present and its kWh; alcohol + whether the venue's license covers the event area; assembly approval at 75+.
 - Conditional follow-ups appear only when triggered; a typical event answers 10–15 questions. Target stays under 2 minutes for typical events.
 - Branching facts allow "I don't know" (recorded as `unknown`, propagating to CONDITIONAL); unknowns are never silently defaulted.
 - Contradictory inputs are challenged, not silently resolved (e.g., tent dimensions without a tent; a block party plus sales).
@@ -140,7 +140,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 
 ### F-201 · Permit Plan Generator [P0]
 
-- System evaluates the published ruleset (`rules/nyc-rules.v2.4.json`: 33 rules + 4 advisories) against the intake and returns every applicable finding: kind (permit / insurance / notification / registration / eligibility / prohibition / advisory / note), disposition (required / may-be-required / prohibited-or-ineligible / advisory / no-new-requirement), name, agency, typed deadline, fee, portal, and the rule + triggering answers that produced it.
+- System evaluates the published ruleset (`rules/nyc-rules.v2.5.json`: 33 rules + 4 advisories) against the intake and returns every applicable finding: kind (permit / insurance / notification / registration / eligibility / prohibition / advisory / note), disposition (required / may-be-required / prohibited-or-ineligible / advisory / no-new-requirement), name, agency, typed deadline, fee, portal, and the rule + triggering answers that produced it.
 - Every line cites its official source and verification status. RESEARCH_REQUIRED facts render "confirm with agency"; OFFICIAL_CONFLICT rules render both readings with their sources; the system never fills gaps with guesses or silently resolves conflicts.
 - A near-empty result is first-class and honest: "no new city event requirement identified from your answers," plus exactly what to confirm (Scenario B).
 - The ruleset version is stored with the generated plan; re-running the same event on the same version and date is deterministic.
@@ -156,7 +156,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 
 ### F-206 · Rules Snapshot Banner [P0]
 
-- "Rules snapshot nyc.v2.4 · published July 25, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
+- "Rules snapshot nyc.v2.5 · published July 25, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
 - Per-line verification status renders honestly (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED); citations click through to official sources.
 
 ### F-202 · Compliance Checklist & Status Tracker [P0]
@@ -239,7 +239,7 @@ Phasing lives in `ROADMAP.md`. Requirement statements here are directional, one 
 ## 7. APPENDIX
 
 - **Technical Stack:** React / Next.js (frontend), Node.js / Express (backend), PostgreSQL (main database + rules tables), Twilio (SMS deadline alerts). *(Redis removed from MVP: check-in volume at demo scale doesn't require a queue layer; re-add post-MVP if needed.)*
-- **Rules Engine:** NYC permit logic encoded as data (conditions → findings), not hardcoded. Each rule stores kind, trigger, typed deadline (published minimum by class/size/level, hard floor, processing range, business-day, before-issuance), fee, portal, evidence reference, and verification status. Published ruleset: `rules/nyc-rules.v2.4.json` (33 rules + 4 advisories); scenario fixtures in `test-scenario-answer-key.md` derive from it. Rule updates are data changes, published per `DOCUMENTATION-GOVERNANCE.md`.
+- **Rules Engine:** NYC permit logic encoded as data (conditions → findings), not hardcoded. Each rule stores kind, trigger, typed deadline (published minimum by class/size/level, hard floor, processing range, business-day, before-issuance), fee, portal, evidence reference, and verification status. Published ruleset: `rules/nyc-rules.v2.5.json` (33 rules + 4 advisories); scenario fixtures in `test-scenario-answer-key.md` derive from it. Rule updates are data changes, published per `DOCUMENTATION-GOVERNANCE.md`.
 - **Known Risk & Mitigation:** Permit rules change seasonally and administratively *(IDEKO practitioner guidance)*. Every output cites source + verification date; the demo states its rules snapshot date on screen (F-206).
 - **Demo Script Anchor (Scenario A, re-anchored 2026-07-22):** Bushwick street activation, 75 people, DJ, food vendor, 35 days out, classified as a Large street event. The plan generates; the published 45-day SAPO deadline has already passed; PopEngine shows the deadline ladder (Small 14 / Medium 30 / Large 45) and re-evaluated rescopes (Medium → at-risk, private venue → SAPO drops); a checklist is created with portal links. Full demo sequence in `DESIGN.md`.
 

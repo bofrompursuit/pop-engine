@@ -16,7 +16,7 @@ import {
 
 const publishedRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.4.json", import.meta.url)),
+    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.5.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -372,8 +372,8 @@ describe("conditional flow (spec #2)", () => {
     );
   });
 
-  it("asks each scenario a fraction of the 32 declared questions", () => {
-    expect(contract.fields).toHaveLength(32);
+  it("asks each scenario a fraction of the 33 declared questions", () => {
+    expect(contract.fields).toHaveLength(33);
     const asked = Object.fromEntries(
       SCENARIO_INTAKE_FIXTURES.map((fixture) => [
         fixture.scenario,
@@ -381,12 +381,12 @@ describe("conditional flow (spec #2)", () => {
       ]),
     );
     // The low-burden scenarios land in the spec's 10-15 band; the SAPO and
-    // max-complexity ones ask more because they classify. None asks all 32.
+    // max-complexity ones ask more because they classify. None asks all 33.
     expect(asked.B).toBeGreaterThanOrEqual(10);
     expect(asked.B).toBeLessThanOrEqual(15);
     expect(asked.C).toBeGreaterThanOrEqual(10);
     expect(asked.C).toBeLessThanOrEqual(15);
-    for (const count of Object.values(asked)) expect(count).toBeLessThan(32);
+    for (const count of Object.values(asked)) expect(count).toBeLessThan(33);
   });
 
   it("treats a field with no asked_when as always asked", () => {
@@ -423,15 +423,34 @@ describe("the six scenario fixtures are enterable (spec #1)", () => {
     // the registry. This test is expected to change when #88 is resolved.
     const asWritten = scenarioFixture("F").intake;
     expect(scenarioFixture("F").inferred).toEqual({
+      battery_present: { value: false, conflictIssue: 106 },
       food_vendor_count: { value: 1, conflictIssue: 88 },
     });
-    expect(codesFor(asWritten)).toEqual({ food_vendor_count: "required" });
+    expect(codesFor(asWritten)).toEqual({
+      battery_present: "required",
+      food_vendor_count: "required",
+    });
   });
 
-  it("states no inferred value for the five scenarios the key specifies in full", () => {
-    for (const fixture of SCENARIO_INTAKE_FIXTURES.filter((entry) => entry.scenario !== "F")) {
-      expect(fixture.inferred, `scenario ${fixture.scenario}`).toBeUndefined();
-    }
+  it("marks every supplied answer as inferred, and nothing the key states", () => {
+    // The register of what the fixtures supply beyond the approved key, asserted exactly so a new
+    // supplied value cannot arrive unlisted. Both entries here are open conflicts: #88 is Scenario
+    // F's food_vendor_count; #106 is battery_present, which nyc.v2.5 asks of every event while the
+    // key states an answer for E only ("battery none") and C only by "nothing else".
+    const supplied = Object.fromEntries(
+      SCENARIO_INTAKE_FIXTURES.map((fixture) => [
+        fixture.scenario,
+        Object.keys(fixture.inferred ?? {}).sort(),
+      ]),
+    );
+    expect(supplied).toEqual({
+      A: ["battery_present"],
+      B: ["battery_present"],
+      C: [],
+      D: ["battery_present"],
+      E: [],
+      F: ["battery_present", "food_vendor_count"],
+    });
   });
 
   it("stores every question the scenario was not asked as null", () => {
@@ -564,7 +583,7 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
       generator_diesel_gallons: "invalid_value",
       generator_kw: "invalid_value",
     });
-    expect(codesFor({ ...scenario("E"), battery_system_kwh: -21 })).toEqual({
+    expect(codesFor({ ...scenario("E"), battery_present: true, battery_system_kwh: -21 })).toEqual({
       battery_system_kwh: "invalid_value",
     });
     expect(codesFor({ ...scenario("C"), capacity: -400 })).toEqual({ capacity: "invalid_value" });
@@ -591,6 +610,9 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
   it("accepts zero on every quantity, which is a real answer", () => {
     const zeroed = {
       ...scenario("E"),
+      // Zero kWh is a real answer to a question that was asked, which since nyc.v2.5 means the
+      // battery question was answered yes; unasked is a different state and no longer spelled 0.
+      battery_present: true,
       tent_area_sqft: 0,
       tent_days_in_place: 0,
       generator_gasoline_gallons: 0,

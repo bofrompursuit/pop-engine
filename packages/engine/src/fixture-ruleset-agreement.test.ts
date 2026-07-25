@@ -34,7 +34,7 @@ const repoFile = (relativePath: string): string =>
 const publishedRuleset: {
   rules: { id: string; exercised_by_scenarios?: string[] }[];
   advisories: { id: string; exercised_by_scenarios?: string[] }[];
-} = JSON.parse(readFileSync(repoFile("rules/nyc-rules.v2.4.json"), "utf8"));
+} = JSON.parse(readFileSync(repoFile("rules/nyc-rules.v2.5.json"), "utf8"));
 
 const ruleset = parseEngineRuleset(publishedRuleset);
 const answerKey = readFileSync(repoFile("docs/test-scenario-answer-key.md"), "utf8");
@@ -258,30 +258,6 @@ const KNOWN_DISAGREEMENTS: readonly {
   issue: string;
 }[] = [
   {
-    scenarios: ["A-rescope"],
-    ruleId: "ADV-VENUE-OCCUPANCY-001",
-    kind: "reaches-scenario-it-omits",
-    issue:
-      "#89: Scenario A's private-venue rescope newly reaches this advisory — the key's own rescope " +
-      "(c) says the venue-occupancy advisory remains — but its exercised_by_scenarios does not name " +
-      "A-rescope. Surfaced by evaluating the rescopes rather than only admitting the name.",
-  },
-  {
-    scenarios: ["A-rescope"],
-    ruleId: "DOB-ASSEMBLY-001",
-    kind: "reaches-scenario-it-omits",
-    issue:
-      "#89: same private-venue rescope, same omission. The rescope moves the event indoors, which " +
-      "is what reaches the assembly rule; whether a rescope-only rule should carry A-rescope at all " +
-      "is the product decision, so both are recorded rather than resolved here.",
-  },
-  {
-    scenarios: ["A-rescope"],
-    ruleId: "ADV-NOISE-CODE-001",
-    kind: "reaches-scenario-it-omits",
-    issue: "#89: same private-venue rescope, same omission.",
-  },
-  {
     scenarios: ["F"],
     ruleId: "ADV-VENUE-OCCUPANCY-001",
     kind: "reaches-but-key-omits",
@@ -316,16 +292,6 @@ const KNOWN_DISAGREEMENTS: readonly {
       "names only A and E.",
   },
   {
-    scenarios: ["A", "B", "C", "D", "F"],
-    ruleId: "FDNY-GENERATOR-001",
-    kind: "reaches-but-key-omits",
-    issue:
-      "#88: the same unanswered battery_system_kwh as the metadata entry below, seen from the " +
-      "other side. Because the rule is conditional in these five scenarios, each plan carries an " +
-      "FDNY line their expected findings do not list. One root cause, two checks — recorded twice " +
-      "so resolving the fixture question clears both rather than leaving one silently exempt.",
-  },
-  {
     scenarios: ["E"],
     ruleId: "DOB-TALL-STRUCTURE-001",
     kind: "reaches-scenario-it-omits",
@@ -333,18 +299,6 @@ const KNOWN_DISAGREEMENTS: readonly {
       "#89: the rule is conditional in E — structure_over_10ft_tall is unknown there — and E's " +
       "expected findings name it inside item 8, but its exercised_by_scenarios is empty. Found by " +
       "widening the reverse check from fired to reached.",
-  },
-  {
-    scenarios: ["A", "B", "C", "D", "F"],
-    ruleId: "FDNY-GENERATOR-001",
-    kind: "reaches-scenario-it-omits",
-    issue:
-      "#88: not a rule defect. The shared intake fixtures never answer battery_system_kwh, which " +
-      "the registry asks unconditionally and allows to be blank, so the battery arm of this " +
-      "rule's `any` trigger is unknown in every scenario and the rule is conditional throughout. " +
-      'The answer key states a battery answer only for E ("battery none"). Filling the blank ' +
-      "would invent an answer the key does not state for the other five, which is the same " +
-      "conflict class already recorded for Scenario F's food_vendor_count.",
   },
 ];
 
