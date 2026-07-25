@@ -8,7 +8,7 @@ As an organizer whose event is now compliant, one click turns the same event rec
 
 ## Inputs / Outputs
 
-- Source: the `events` row (name, date, location_name, headcount, borough) + organizer-entered `description` and `public_page_published` (migration 003; resolves SPEC-CONFLICT #100).
+- Source: the `events` row (name, date, location_name, headcount, borough) + organizer-entered `description` and `public_page_published` (migration 005; resolves SPEC-CONFLICT #100).
 - `GET /e/:eventId` (public, no auth): title, date, venue, description, map link, RSVP affordance (wired to F-302 when present). Returns friendly 404 when `public_page_published` is false.
 - `GET` / `PATCH /api/events/:id/public-page`: organizer promote controls (description, publish toggle, shareable path, infeasible warning when latest plan verdict is infeasible).
 - Shareable URL shown to the organizer with copy-to-clipboard.

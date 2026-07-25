@@ -85,7 +85,10 @@ export function GuestListView({ eventId, apiBaseUrl }: GuestListProps) {
       </p>
       <p className="guests__note">
         Synthetic demo data only (AD-12). Capacity uses intake headcount. Guests RSVP from the
-        published public event page.
+        published public event page.{" "}
+        <a href={`/events/${eventId}/promote`}>Promote / publish</a>
+        {" · "}
+        <a href={`/intake/${eventId}`}>Edit intake</a>
       </p>
 
       {failure !== null && (

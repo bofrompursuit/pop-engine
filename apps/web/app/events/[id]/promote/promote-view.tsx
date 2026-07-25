@@ -8,7 +8,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type PromoteViewProps = {
   eventId: string;
   apiBaseUrl: string;
-  webOrigin: string;
+  /** Optional absolute origin override; defaults to `window.location.origin`. */
+  webOrigin?: string;
 };
 
 export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps) {
@@ -17,6 +18,13 @@ export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps
   const [failure, setFailure] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [browserOrigin, setBrowserOrigin] = useState("");
+
+  useEffect(() => {
+    if (webOrigin === undefined || webOrigin.trim() === "") {
+      setBrowserOrigin(window.location.origin);
+    }
+  }, [webOrigin]);
 
   useEffect(() => {
     if (!UUID.test(eventId)) {
@@ -59,7 +67,11 @@ export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps
     );
   }
 
-  const shareUrl = `${webOrigin.replace(/\/$/, "")}${state.public_path}`;
+  const origin = (webOrigin !== undefined && webOrigin.trim() !== ""
+    ? webOrigin
+    : browserOrigin
+  ).replace(/\/$/, "");
+  const shareUrl = origin.length > 0 ? `${origin}${state.public_path}` : state.public_path;
 
   const persist = async (patch: {
     description?: string | null;
@@ -149,6 +161,7 @@ export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps
         </button>
         <a href={state.public_path}>Open public page</a>
         <a href={`/events/${eventId}/guests`}>Guest list</a>
+        <a href={`/intake/${eventId}`}>Edit intake</a>
       </div>
 
       {failure !== null && (

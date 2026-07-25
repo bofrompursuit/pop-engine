@@ -332,7 +332,7 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
         "revision_counter",
         "created_at",
         "updated_at",
-        // F-301 promotion fields (migration 003 / SPEC-CONFLICT #100) — not intake.
+        // F-301 promotion fields (migration 005 / SPEC-CONFLICT #100) — not intake.
         "description",
         "public_page_published",
       ].sort(),

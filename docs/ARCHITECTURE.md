@@ -78,7 +78,7 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | Flame + power | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
 | Alcohol + assembly | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown) | the Scenario F branch facts; `unknown` is first-class |
 | Lifecycle | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13) |
-| Public page (F-301) | description (text, nullable), public_page_published (bool, default false) | Promotion copy + visibility; not intake/rules fields. Unpublished (`public_page_published = false`) → `GET /e/:eventId` returns friendly 404. Added in migration 003 (resolves SPEC-CONFLICT #100). |
+| Public page (F-301) | description (text, nullable), public_page_published (bool, default false) | Promotion copy + visibility; not intake/rules fields. Unpublished (`public_page_published = false`) → `GET /e/:eventId` returns friendly 404. Added in migration 005 (resolves SPEC-CONFLICT #100). |
 
 *Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field bumps `revision_counter` server-side, marks the current plan stale, and prompts regeneration (recalculate, don't patch).*
 

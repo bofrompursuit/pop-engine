@@ -341,6 +341,11 @@ export function IntakeForm({
             Saved as revision {saved.revision_counter}.{" "}
             <a href={`/intake/${saved.id}`}>Come back to this event</a> to edit it later.
           </p>
+          <p>
+            <a href={`/events/${saved.id}/promote`}>Promote public page</a>
+            {" · "}
+            <a href={`/events/${saved.id}/guests`}>Guest list</a>
+          </p>
           {planStale && (
             <div className="intake__stale">
               <p>

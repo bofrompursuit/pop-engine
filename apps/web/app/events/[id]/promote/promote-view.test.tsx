@@ -58,4 +58,13 @@ describe("PromoteView", () => {
     });
     expect(screen.getByText(`https://web.example.com/e/${EVENT_ID}`)).toBeDefined();
   });
+
+  it("builds the share URL from the browser origin when webOrigin is unset", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(200, sample)),
+    );
+    render(<PromoteView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" />);
+    expect(await screen.findByText(`${window.location.origin}/e/${EVENT_ID}`)).toBeDefined();
+  });
 });
