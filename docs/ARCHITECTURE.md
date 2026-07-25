@@ -105,6 +105,9 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | verdict_detail | jsonb | blocking permit, missing facts + branches, min slack days, rescope suggestions |
 | intake_snapshot | jsonb | the intake values evaluated, for reproducibility |
 | generated_at | timestamptz | |
+| snapshot_date | date, nullable | *(migration 002)* the ruleset's published `snapshot_date`, pinned beside `ruleset_version` so a stored plan reproduces the banner it was shown with (F-206). Published-on, not verified-on. Nullable because plans generated before 002 have no recorded value and backfilling would assert a publication date the plan was never evaluated against |
+
+> UNIQUE (event_id, id) *(migration 002)*: not a second identity, only the target a composite foreign key needs. It lets `checklist_acknowledgements` reference the pair so the database rejects an acknowledgement pointing at another event's plan. Same shape as `rsvps` UNIQUE (event_id, id) serving `checkins`.
 
 ### permit_plan_items *(denormalized snapshot of the rule at generation time — plans stay reproducible after rules change)*
 
@@ -141,6 +144,18 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | status | text CHECK IN (not_started, in_progress, submitted, approved, rejected) | |
 | notes | text | |
 | updated_at | timestamptz | |
+
+### checklist_acknowledgements *(migration 002; one row per event, overwritten on re-acknowledgement)*
+
+| Column | Type | Notes |
+|---|---|---|
+| event_id | uuid PK, FK → events | one acknowledgement per event; re-acknowledging replaces it |
+| plan_id | uuid FK → permit_plans | the plan the organizer last reviewed |
+| acknowledged_at | timestamptz | |
+
+> Composite FK (event_id, plan_id) → permit_plans (event_id, id), so the database cannot record event A as having reviewed event B's plan.
+>
+> Why the checklist cannot answer this itself: F-202's "your plan changed" prompt compares the latest plan against what the organizer reviewed. Derived from `checklist_items`, that comparison is blind in exactly the case it matters most — a regeneration that removes every trackable requirement leaves no row to compare, so the prompt stays silent on the largest possible change. The acknowledgement is a separate fact from the checklist's contents and needs its own record.
 
 ### documents
 

@@ -581,6 +581,71 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
     ).rejects.toThrow(/unique constraint/);
   });
 
+  it("refuses an acknowledgement naming another event's plan", async () => {
+    const [ownEventId, otherEventId] = [randomUUID(), randomUUID()];
+    for (const id of [ownEventId, otherEventId]) {
+      await database.query(
+        `INSERT INTO events
+          (id, name, borough, location_type, headcount, event_date,
+           event_open_to_public, food_present, selling_anything, amplified_sound,
+           structure_types, open_flame_or_cooking, generator_present, alcohol)
+         VALUES ($1, 'Acknowledgement test', 'manhattan', 'private_venue', 50, '2026-10-01',
+                 'yes', false, false, false, ARRAY['none'], ARRAY['none'], false, false)`,
+        [id],
+      );
+    }
+
+    const otherPlanId = randomUUID();
+    await database.query(
+      `INSERT INTO permit_plans
+        (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
+       VALUES ($1, $2, 1, $3, 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+      [otherPlanId, otherEventId, ruleset.rulesetVersion],
+    );
+
+    // Both foreign keys are individually satisfiable — the event exists and the plan exists —
+    // so only the pairwise constraint can reject this. Without it the row lands and F-202
+    // answers "has your plan changed" against a plan this organizer never saw.
+    await expect(
+      database.query(
+        `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)`,
+        [ownEventId, otherPlanId],
+      ),
+    ).rejects.toThrow(/foreign key constraint/);
+
+    const ownPlanId = randomUUID();
+    await database.query(
+      `INSERT INTO permit_plans
+        (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
+       VALUES ($1, $2, 1, $3, 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+      [ownPlanId, ownEventId, ruleset.rulesetVersion],
+    );
+    await database.query(
+      `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)`,
+      [ownEventId, ownPlanId],
+    );
+
+    // One row per event: re-acknowledging a later plan replaces the earlier answer rather than
+    // accumulating rows a "latest acknowledgement" read would have to disambiguate.
+    const laterPlanId = randomUUID();
+    await database.query(
+      `INSERT INTO permit_plans
+        (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
+       VALUES ($1, $2, 2, $3, 'feasible', '{}'::jsonb, '{}'::jsonb)`,
+      [laterPlanId, ownEventId, ruleset.rulesetVersion],
+    );
+    await database.query(
+      `INSERT INTO checklist_acknowledgements (event_id, plan_id) VALUES ($1, $2)
+       ON CONFLICT (event_id) DO UPDATE SET plan_id = EXCLUDED.plan_id`,
+      [ownEventId, laterPlanId],
+    );
+    const acknowledged = await database.query<{ plan_id: string }>(
+      `SELECT plan_id FROM checklist_acknowledgements WHERE event_id = $1`,
+      [ownEventId],
+    );
+    expect(acknowledged.rows).toEqual([{ plan_id: laterPlanId }]);
+  });
+
   it("syncs all 37 rules and repairs same-version drift", async () => {
     await syncPermitRules(database, ruleset);
 
