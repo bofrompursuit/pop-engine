@@ -6,11 +6,11 @@
 // structures" / "no flame" are the registry's exclusive `none` option (the columns are
 // NOT NULL).
 //
-// Every value below is now stated by the key. v4 wrote down the six the fixtures had been
-// running on unstated — `battery_present` in A, B, D and F, `structure_types` and
-// `generator_present` in D and F, `open_flame_or_cooking` in E and F, and F's
-// `food_vendor_count` — closing SPEC-CONFLICT #88 and #106. No fixture value changed, which is
-// why no expected finding moved.
+// Every value below is now stated by the key. v4 wrote down the 11 answers, across 5 fields, the
+// fixtures had been running on unstated — `battery_present` in A, B, D and F; `structure_types`
+// and `generator_present` in D and F; `open_flame_or_cooking` in E and F; `food_vendor_count` in
+// F — closing SPEC-CONFLICT #88 and #106. No fixture value changed, which is why no expected
+// finding moved.
 //
 // Imported as `@pop-engine/engine/fixtures`.
 

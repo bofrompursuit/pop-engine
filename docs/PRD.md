@@ -5,7 +5,7 @@
 **Date:** July 21, 2026
 **Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
 **Scope of this document:** the full product vision. The iron-clad MVP (permit planning) carries detailed, demo-observable requirements; everything else is planned scope, phased in `ROADMAP.md`. Completing the full vision by the capstone demo is explicitly not a commitment.
-**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v3) · `rules/nyc-rules.v2.5.json` (published ruleset).
+**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v4) · `rules/nyc-rules.v2.5.json` (published ruleset).
 **Permit facts:** every permit fact traces to `rules/nyc-rules.v2.5.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.
 
 ---
@@ -127,7 +127,7 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 ## 3. REQUIREMENTS — MVP CORE (iron-clad; Phase 1)
 
-The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v3, derived from ruleset nyc.v2.5) are the acceptance suite for F-201/F-102.
+The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v4, derived from ruleset nyc.v2.5) are the acceptance suite for F-201/F-102.
 
 ### F-101 · Event Intake Questionnaire [P0]
 
