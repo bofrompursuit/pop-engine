@@ -225,7 +225,16 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
           Object.fromEntries(
             Object.entries(stored.body.event).filter(
               ([column]) =>
-                !["id", "status", "revision_counter", "created_at", "updated_at"].includes(column),
+                ![
+                  "id",
+                  "status",
+                  "revision_counter",
+                  "created_at",
+                  "updated_at",
+                  // F-301 promotion fields — not intake; re-sending them is unknown_field.
+                  "description",
+                  "public_page_published",
+                ].includes(column),
             ),
           ),
         );
@@ -255,7 +264,15 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       const noOpIntake = Object.fromEntries(
         Object.entries(stored.body.event).filter(
           ([column]) =>
-            !["id", "status", "revision_counter", "created_at", "updated_at"].includes(column),
+            ![
+              "id",
+              "status",
+              "revision_counter",
+              "created_at",
+              "updated_at",
+              "description",
+              "public_page_published",
+            ].includes(column),
         ),
       );
 

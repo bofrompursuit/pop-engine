@@ -1,0 +1,84 @@
+/* Route-local styles for F-301 public event page. */
+
+.event-page {
+  max-width: 28rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem 0 3rem;
+  min-height: 100dvh;
+}
+
+.event-page__eyebrow {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.event-page__title {
+  margin: 0;
+  font-size: 1.85rem;
+  line-height: 1.15;
+}
+
+.event-page__lede,
+.event-page__note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.event-page__note {
+  font-size: 0.9rem;
+}
+
+.event-page__map {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.event-page__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.event-page__label {
+  font-weight: 600;
+}
+
+.event-page__input {
+  font: inherit;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
+.event-page__submit {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.95rem 1rem;
+  border: none;
+  border-radius: 0.4rem;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+}
+
+.event-page__submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.event-page__error {
+  margin: 0;
+  color: var(--error);
+}
+
+.event-page__success {
+  margin: 0;
+  font-weight: 600;
+}
