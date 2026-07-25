@@ -108,8 +108,22 @@ export type IntakeFieldDefinition = {
   readonly type: string;
   readonly values: readonly string[] | null;
   readonly askedWhen: string | null;
+  /** The parsed form of `askedWhen`, validated when the ruleset loads; null when unscoped. */
+  readonly askedWhenClauses: readonly AskedWhenClause[] | null;
   readonly nullable: boolean;
 };
+
+export type AskedWhenClause =
+  | { readonly kind: "in"; readonly field: string; readonly values: readonly string[] }
+  | {
+      readonly kind: "compare";
+      readonly field: string;
+      readonly op: "=" | "!=";
+      readonly value: string;
+    }
+  | { readonly kind: "at_least"; readonly field: string; readonly threshold: number }
+  | { readonly kind: "truthy"; readonly field: string }
+  | { readonly kind: "member"; readonly field: string; readonly member: string };
 
 export type EngineRule = {
   readonly id: string;

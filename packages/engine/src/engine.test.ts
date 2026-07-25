@@ -594,12 +594,12 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
 });
 
 describe("asked_when scoping", () => {
-  it("rejects a clause that names neither a declared field nor a declared value", () => {
-    const badScope = parseEngineRuleset({
+  const withScoping = (askedWhen: string) => () =>
+    parseEngineRuleset({
       ...rawRuleset,
       intake_fields: [
         { field: "event_date", type: "date" },
-        { field: "headcount", type: "integer", asked_when: "the_vibes_are_right" },
+        { field: "headcount", type: "integer", asked_when: askedWhen },
       ],
       rules: [
         {
@@ -613,12 +613,21 @@ describe("asked_when scoping", () => {
       ],
       advisories: [],
     });
-    expect(() =>
-      evaluate({ event_date: "2026-12-04", headcount: 5 }, badScope, TODAY, {
-        id: badScope.calendarId,
-        holidays: [],
-      }),
-    ).toThrow(/names no declared field or value/);
+
+  it("rejects a non-numeric threshold when the ruleset loads, not silently at evaluation", () => {
+    // The failure this prevents is silence: Number("seventy_five") is NaN, the clause reads false,
+    // and headcount plus every rule scoped by it drops out, so the plan omits requirements with no
+    // error anywhere. Boot is the only place to catch it.
+    expect(withScoping("headcount gte seventy_five")).toThrow(
+      /compares "headcount" against a non-numeric threshold "seventy_five"/,
+    );
+    expect(withScoping("headcount gte seventy_five")).toThrow(/unusable asked_when/);
+    // The well-formed expression the published registry actually uses still loads.
+    expect(withScoping("headcount gte 75")).not.toThrow();
+  });
+
+  it("rejects a clause that names neither a declared field nor a declared value", () => {
+    expect(withScoping("the_vibes_are_right")).toThrow(/names no declared field or value/);
   });
 
   it("rejects a cyclic asked_when chain", () => {

@@ -3,6 +3,7 @@
 // Anything malformed throws — an evaluation input the engine cannot read is an error,
 // never a quiet "no requirement" (AC 5).
 
+import { parseAskedWhen } from "./conditions";
 import { EvaluationError } from "./types";
 import type {
   Condition,
@@ -301,8 +302,32 @@ function parseIntakeField(value: unknown, label: string): IntakeFieldDefinition 
             asString(entry, `${label}.values[${index}]`),
           ),
     askedWhen: optionalString(definition, "asked_when"),
+    // Parsed below, once every field is known: a clause can name any declared field or value.
+    askedWhenClauses: null,
     nullable: definition.nullable === true,
   };
+}
+
+/**
+ * Validate every `asked_when` expression while the ruleset loads, so a malformed one aborts boot
+ * instead of quietly putting a field out of scope. A scoping typo is silent by nature: the clause
+ * reads false, the field and every rule depending on it drop out, and the plan omits requirements
+ * with no error at all.
+ */
+function withParsedScoping(
+  fields: readonly IntakeFieldDefinition[],
+): readonly IntakeFieldDefinition[] {
+  return fields.map((field) => {
+    if (field.askedWhen === null) return field;
+    try {
+      return { ...field, askedWhenClauses: parseAskedWhen(field.askedWhen, fields) };
+    } catch (error) {
+      return fail(
+        `intake field "${field.field}" has an unusable asked_when: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  });
 }
 
 /** Narrow parsed ruleset JSON into the engine's typed view. */
@@ -312,8 +337,10 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
   const slackWarning = asObject(config.slack_warning_days, "ruleset.config.slack_warning_days");
   const businessDayMath = asObject(config.business_day_math, "ruleset.config.business_day_math");
 
-  const intakeFields = asArray(ruleset.intake_fields, "ruleset.intake_fields").map((field, index) =>
-    parseIntakeField(field, `ruleset.intake_fields[${index}]`),
+  const intakeFields = withParsedScoping(
+    asArray(ruleset.intake_fields, "ruleset.intake_fields").map((field, index) =>
+      parseIntakeField(field, `ruleset.intake_fields[${index}]`),
+    ),
   );
   const rules = asArray(ruleset.rules, "ruleset.rules").map((rule, index) =>
     parseRule(rule, `ruleset.rules[${index}]`),
