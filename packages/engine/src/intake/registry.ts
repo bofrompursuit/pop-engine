@@ -41,14 +41,25 @@ export type IntakeField = {
 export type IntakeRegistry = readonly IntakeField[];
 
 /**
+ * A notice quoted from a published rule. The verification status travels with the text
+ * so it stays visible end to end (AGENTS.md "Regulatory safety"): a COVERAGE_GAP warning
+ * must never be rendered as though it were SOURCE_CONFIRMED.
+ */
+export type PublishedNotice = {
+  readonly ruleId: string;
+  readonly text: string;
+  readonly verificationStatus: string;
+};
+
+/**
  * Everything intake needs from the ruleset: the field registry plus the two published
- * texts the intake screen renders inline (F-101 spec #4 and #5). The texts are looked up
- * by rule id so the wording stays the ruleset's, never ours.
+ * notices the intake screen renders inline (F-101 spec #4 and #5). They are looked up by
+ * rule id so the wording and the status stay the ruleset's, never ours.
  */
 export type IntakeContract = {
   readonly fields: IntakeRegistry;
-  readonly blockPartyEligibilityNotice: string;
-  readonly alcoholInPublicSpaceNotice: string;
+  readonly blockPartyEligibilityNotice: PublishedNotice;
+  readonly alcoholInPublicSpaceNotice: PublishedNotice;
 };
 
 const BLOCK_PARTY_ELIGIBILITY_RULE_ID = "SAPO-BLOCK-PARTY-ELIG-001";
@@ -193,7 +204,7 @@ function parseAskedWhen(
   };
 }
 
-function publishedText(ruleset: Record<string, unknown>, ruleId: string): string {
+function publishedNotice(ruleset: Record<string, unknown>, ruleId: string): PublishedNotice {
   const published = [
     ...asArray(ruleset.rules, "ruleset.rules"),
     ...asArray(ruleset.advisories, "ruleset.advisories"),
@@ -205,7 +216,13 @@ function publishedText(ruleset: Record<string, unknown>, ruleId: string): string
   const output = asRecord(published.output, `${ruleId}.output`);
   const text = optionalString(output, "note_text") ?? optionalString(output, "advisory_text");
   if (text === null) contractError(`${ruleId} publishes no note_text or advisory_text`);
-  return text;
+
+  const verification = asRecord(published.verification, `${ruleId}.verification`);
+  const verificationStatus = optionalString(verification, "status");
+  if (verificationStatus === null) {
+    contractError(`${ruleId}.verification.status must be a non-empty string`);
+  }
+  return { ruleId, text, verificationStatus };
 }
 
 /** Parse the ruleset's intake registry and the inline notices intake renders. */
@@ -230,7 +247,7 @@ export function parseIntakeContract(ruleset: unknown): IntakeContract {
 
   return {
     fields,
-    blockPartyEligibilityNotice: publishedText(source, BLOCK_PARTY_ELIGIBILITY_RULE_ID),
-    alcoholInPublicSpaceNotice: publishedText(source, ALCOHOL_IN_PUBLIC_SPACE_ADVISORY_ID),
+    blockPartyEligibilityNotice: publishedNotice(source, BLOCK_PARTY_ELIGIBILITY_RULE_ID),
+    alcoholInPublicSpaceNotice: publishedNotice(source, ALCOHOL_IN_PUBLIC_SPACE_ADVISORY_ID),
   };
 }

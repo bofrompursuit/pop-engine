@@ -16,12 +16,18 @@ export type {
   IntakeField,
   IntakeFieldType,
   IntakeRegistry,
+  PublishedNotice,
 } from "./intake/registry";
 export { parseIntakeContract } from "./intake/registry";
 export type { IntakeAnswers, IntakeValue } from "./intake/visibility";
 export { askedFieldNames, askedFields } from "./intake/visibility";
 export type { IntakeIssue, IntakeRecord, IntakeValidation } from "./intake/validate";
-export { intakeColumnNames, intakeWarnings, validateIntake } from "./intake/validate";
+export {
+  intakeColumnNames,
+  intakeWarnings,
+  mergeIntakeEdit,
+  validateIntake,
+} from "./intake/validate";
 
 /** Hello-world placeholder. Deterministic and side-effect free by construction. */
 export function describeEngine(): string {

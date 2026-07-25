@@ -8,13 +8,16 @@ export default defineConfig({
   test: {
     environment: "node",
     // Discovery covers every workspace, so a new app's tests run the day they land.
-    // Coverage `include` below stays narrower on purpose (apps/web is deferred to F-101).
-    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}"],
+    // Next.js keeps its code in `app/`, not `src/`, so that tree is listed too.
+    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}", "apps/web/app/**/*.test.{ts,tsx}"],
     // Workspace packages export TypeScript source; force Vite to transform them.
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
       provider: "v8",
-      include: ["packages/engine/src/**", "apps/api/src/**"],
+      // apps/web's non-component modules are covered; its React components are not,
+      // because component tests need jsdom + Testing Library, which is a new-dependency
+      // decision for the team (CONTRIBUTING.md). Their logic lives in packages/engine.
+      include: ["packages/engine/src/**", "apps/api/src/**", "apps/web/app/**/*.ts"],
       exclude: ["**/*.test.ts", "apps/api/src/index.ts"],
       thresholds: {
         statements: 90,

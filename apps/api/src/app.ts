@@ -2,8 +2,24 @@ import express, { type Express } from "express";
 import { describeEngine } from "@pop-engine/engine";
 import { createEventsRouter, type EventsDependencies } from "./events";
 
+// Event dates are local calendar dates in the ruleset's jurisdiction (US-NY-NYC), not
+// UTC instants. Deriving "today" in UTC rejects a same-day event all evening, once UTC
+// has rolled over and New York has not.
+const JURISDICTION_TIME_ZONE = "America/New_York";
+const JURISDICTION_DAY = new Intl.DateTimeFormat("en-US", {
+  timeZone: JURISDICTION_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 /** The clock the API stamps requests with. The engine always receives it as a value. */
-const systemToday = (): string => new Date().toISOString().slice(0, 10);
+export const jurisdictionToday = (now: Date = new Date()): string => {
+  const parts = new Map(
+    JURISDICTION_DAY.formatToParts(now).map(({ type, value }) => [type, value]),
+  );
+  return `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}`;
+};
 
 export type AppDependencies = Omit<EventsDependencies, "today"> & { today?: () => string };
 
@@ -41,7 +57,7 @@ export function createApp(dependencies: AppDependencies): Express {
 
   app.use(
     "/api",
-    createEventsRouter({ ...dependencies, today: dependencies.today ?? systemToday }),
+    createEventsRouter({ ...dependencies, today: dependencies.today ?? jurisdictionToday }),
   );
 
   return app;

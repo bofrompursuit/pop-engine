@@ -2,18 +2,39 @@
 // v3, the green-gate acceptance suite). Only the intake half lives here — expected
 // findings and verdicts belong to the rules engine (F-201).
 //
-// Values are transcribed from the answer key, using the registry's field names. Two
-// details the key leaves implicit: "no structures" / "no flame" are the registry's
-// exclusive `none` option (the columns are NOT NULL), and Scenario F's catered food is
-// entered as one vendor because the key states the caterer but no count.
+// Values are transcribed from the answer key, using the registry's field names. "No
+// structures" / "no flame" are the registry's exclusive `none` option (the columns are
+// NOT NULL).
+//
+// One value is NOT from the answer key. Scenario F states catered food but no
+// `food_vendor_count`, which the registry makes mandatory whenever food is present, so
+// the scenario cannot be entered exactly as written. That contradiction between two
+// APPROVED artifacts is filed as SPEC-CONFLICT #88 and is not resolved here; the
+// inferred value is listed separately below so no test can claim the scenario is
+// entered as written while it stands.
 //
 // Imported as `@pop-engine/engine/fixtures`.
 
 export type ScenarioIntakeFixture = {
   readonly scenario: string;
   readonly title: string;
+  /** Transcribed from the answer key. */
   readonly intake: Readonly<Record<string, unknown>>;
+  /**
+   * Answers the scenario does not state that the registry nonetheless requires, keyed
+   * by field and carrying the open SPEC-CONFLICT issue. Empty for every scenario the
+   * answer key specifies completely.
+   */
+  readonly inferred?: Readonly<Record<string, { value: unknown; conflictIssue: number }>>;
 };
+
+/** The complete submission for a fixture: what the key states, plus anything inferred. */
+export const fixtureSubmission = (fixture: ScenarioIntakeFixture): Record<string, unknown> => ({
+  ...fixture.intake,
+  ...Object.fromEntries(
+    Object.entries(fixture.inferred ?? {}).map(([field, { value }]) => [field, value]),
+  ),
+});
 
 /** The answer key's clock: every fixture date is computed from this day. */
 export const FIXTURE_TODAY = "2026-07-22";
@@ -143,7 +164,6 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       event_date: "2026-08-11",
       event_open_to_public: "no",
       food_present: true,
-      food_vendor_count: 1,
       food_affinity_private_exception_claimed: "unknown",
       selling_anything: false,
       amplified_sound: true,
@@ -155,5 +175,9 @@ export const SCENARIO_INTAKE_FIXTURES: readonly ScenarioIntakeFixture[] = [
       venue_license_covers_event_area: "unknown",
       venue_has_assembly_approval: "unknown",
     },
+    // Not in the answer key. The scenario says the food is catered and stops there,
+    // while the registry requires a count whenever food is present (SPEC-CONFLICT #88).
+    // One caterer is the reading that lets the fixture run; it is not an approved value.
+    inferred: { food_vendor_count: { value: 1, conflictIssue: 88 } },
   },
 ];

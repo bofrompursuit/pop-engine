@@ -9,6 +9,7 @@ import {
   type IntakeIssue,
   type IntakeValue,
 } from "@pop-engine/engine";
+import { regeneratePlan } from "./regenerate-plan";
 
 // The intake questionnaire. Every question, option, and asked-when condition comes from
 // the contract prop, which the server component parses from the published ruleset — this
@@ -68,6 +69,9 @@ export function IntakeForm({
   const [errors, setErrors] = useState<IntakeIssue[]>([]);
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerationError, setRegenerationError] = useState<string | null>(null);
+  const [regeneratedRevision, setRegeneratedRevision] = useState<number | null>(null);
 
   const questions = useMemo(() => askedFields(contract.fields, answers), [contract, answers]);
   // Contradictions and coverage gaps are shown while the organizer types, not only on
@@ -82,11 +86,16 @@ export function IntakeForm({
   const submission = (): Record<string, IntakeValue> => {
     const asked = new Set(questions.map((question) => question.field));
     const payload: Record<string, IntakeValue> = {};
-    for (const [field, value] of Object.entries(answers)) {
-      const descriptive = DESCRIPTIVE_QUESTIONS.some((question) => question.field === field);
-      // Answers to questions this event is no longer asked are cleared, not sent.
-      if (!descriptive && !asked.has(field)) continue;
-      payload[field] = isBlank(value) ? null : value;
+    for (const question of DESCRIPTIVE_QUESTIONS) {
+      const value = answers[question.field] ?? null;
+      if (!isBlank(value)) payload[question.field] = value;
+    }
+    for (const field of contract.fields) {
+      // A question this event is no longer asked is sent as an explicit null, so an
+      // edit that hides a question clears its old answer instead of leaving a value
+      // behind that validation would reject against a control nobody can see.
+      const value = answers[field.field] ?? null;
+      payload[field.field] = asked.has(field.field) && !isBlank(value) ? value : null;
     }
     return payload;
   };
@@ -98,6 +107,10 @@ export function IntakeForm({
       const target = saved === null ? "/api/events" : `/api/events/${saved.id}`;
       const response = await fetch(`${apiBaseUrl}${target}`, {
         method: saved === null ? "POST" : "PATCH",
+        // Web and api are separate origins behind Cloudflare Access (BASELINE.md
+        // provider baseline), so the Access cookie has to ride along; the api already
+        // answers with Access-Control-Allow-Credentials.
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(submission()),
       });
@@ -115,6 +128,21 @@ export function IntakeForm({
     } finally {
       setSaving(false);
     }
+  };
+
+  // Spec #8: one click regenerates the plan for the revision just saved. The plan
+  // endpoint belongs to F-201; intake calls it and reports what it answered.
+  const regenerate = async (eventId: string) => {
+    setRegenerating(true);
+    setRegenerationError(null);
+    const result = await regeneratePlan(apiBaseUrl, eventId);
+    setRegenerating(false);
+    if (result.ok) {
+      setPlanStale(false);
+      setRegeneratedRevision(saved?.revision_counter ?? null);
+      return;
+    }
+    setRegenerationError(result.message);
   };
 
   return (
@@ -166,6 +194,13 @@ export function IntakeForm({
       {warnings.map((warning) => (
         <p className="intake__warning" key={warning.code} role="status">
           <strong>{humanize(warning.code)}:</strong> {warning.message}
+          {warning.ruleId !== undefined && (
+            // The published rule and its verification status stay visible end to end:
+            // a COVERAGE_GAP notice must never read as a confirmed requirement.
+            <span className="intake__provenance">
+              {warning.ruleId} · {warning.verificationStatus}
+            </span>
+          )}
         </p>
       ))}
 
@@ -196,10 +231,22 @@ export function IntakeForm({
               <p>
                 This edit is newer than the plan that was generated, so the plan is out of date.
               </p>
-              <button type="button" disabled>
-                Regenerate plan (arrives with F-201)
+              <button
+                type="button"
+                onClick={() => void regenerate(saved.id)}
+                disabled={regenerating}
+              >
+                {regenerating ? "Regenerating plan…" : "Regenerate plan"}
               </button>
+              {regenerationError !== null && (
+                <p className="intake__error" role="alert">
+                  {regenerationError}
+                </p>
+              )}
             </div>
+          )}
+          {planStale === false && regeneratedRevision !== null && (
+            <p role="status">Plan regenerated for revision {regeneratedRevision}.</p>
           )}
         </section>
       )}

@@ -3,8 +3,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseIntakeContract } from "./registry";
 import { askedFields } from "./visibility";
-import { validateIntake } from "./validate";
-import { FIXTURE_TODAY, SCENARIO_INTAKE_FIXTURES } from "./scenario-intake-fixtures";
+import { mergeIntakeEdit, validateIntake } from "./validate";
+import {
+  FIXTURE_TODAY,
+  SCENARIO_INTAKE_FIXTURES,
+  fixtureSubmission,
+} from "./scenario-intake-fixtures";
 
 // The published ruleset is the only source of the intake contract, so these tests read
 // the real file rather than a hand-built stub wherever the assertion is about the
@@ -23,11 +27,29 @@ const fieldNamed = (name: string) => {
   return field;
 };
 
-const scenario = (id: string) => {
+const scenarioFixture = (id: string) => {
   const fixture = SCENARIO_INTAKE_FIXTURES.find((candidate) => candidate.scenario === id);
   if (fixture === undefined) throw new Error(`no fixture ${id}`);
   return fixture;
 };
+
+/** A scenario's complete submission: the answer key's values plus anything inferred. */
+const scenario = (id: string): Record<string, unknown> => fixtureSubmission(scenarioFixture(id));
+
+// Test names say where each scenario's values came from, so a green run never reads as
+// "entered exactly as written" while an inferred value is standing in for a missing one.
+const SCENARIO_CASES = SCENARIO_INTAKE_FIXTURES.map((fixture) => ({
+  ...fixture,
+  submission: fixtureSubmission(fixture),
+  provenance:
+    fixture.inferred === undefined
+      ? "exactly as the answer key specifies"
+      : `with ${Object.keys(fixture.inferred).join(", ")} inferred (SPEC-CONFLICT #${Object.values(
+          fixture.inferred,
+        )
+          .map((entry) => entry.conflictIssue)
+          .join(", #")})`,
+}));
 
 const askedFieldNames = (answers: Record<string, unknown>): string[] =>
   askedFields(contract.fields, answers as never).map((field) => field.field);
@@ -39,6 +61,12 @@ const codesFor = (
   Object.fromEntries(
     validateIntake(contract, submission, today).errors.map((error) => [error.field, error.code]),
   );
+
+type PublishedRuleJson = {
+  id: string;
+  output: Record<string, string>;
+  verification: { status: string };
+};
 
 /** A synthetic ruleset carrying just the pieces the contract parser reads. */
 const rulesetWith = (fields: unknown[]): Record<string, unknown> => ({
@@ -97,17 +125,27 @@ describe("intake contract derives from the published registry", () => {
     expect(fieldNamed("borough").note).toBeNull();
   });
 
-  it("takes both inline notices verbatim from their published rules", () => {
+  it("takes both inline notices verbatim from their published rules, status included", () => {
     const published = [
-      ...(publishedRuleset.rules as { id: string; output: Record<string, string> }[]),
-      ...(publishedRuleset.advisories as { id: string; output: Record<string, string> }[]),
+      ...(publishedRuleset.rules as PublishedRuleJson[]),
+      ...(publishedRuleset.advisories as PublishedRuleJson[]),
     ];
-    expect(contract.blockPartyEligibilityNotice).toBe(
-      published.find((rule) => rule.id === "SAPO-BLOCK-PARTY-ELIG-001")?.output.note_text,
-    );
-    expect(contract.alcoholInPublicSpaceNotice).toBe(
-      published.find((rule) => rule.id === "ADV-ALCOHOL-PUBLIC-001")?.output.advisory_text,
-    );
+    const blockParty = published.find((rule) => rule.id === "SAPO-BLOCK-PARTY-ELIG-001");
+    expect(contract.blockPartyEligibilityNotice).toEqual({
+      ruleId: "SAPO-BLOCK-PARTY-ELIG-001",
+      text: blockParty?.output.note_text,
+      verificationStatus: blockParty?.verification.status,
+    });
+
+    const alcohol = published.find((rule) => rule.id === "ADV-ALCOHOL-PUBLIC-001");
+    expect(contract.alcoholInPublicSpaceNotice).toEqual({
+      ruleId: "ADV-ALCOHOL-PUBLIC-001",
+      text: alcohol?.output.advisory_text,
+      verificationStatus: alcohol?.verification.status,
+    });
+    // The two notices carry different statuses; neither may be rendered as the other.
+    expect(contract.alcoholInPublicSpaceNotice.verificationStatus).toBe("COVERAGE_GAP");
+    expect(contract.blockPartyEligibilityNotice.verificationStatus).toBe("SOURCE_CONFIRMED");
   });
 
   it("keeps the coverage warning's location set equal to the advisory's own trigger", () => {
@@ -205,6 +243,15 @@ describe("contract parsing rejects a registry it cannot honor", () => {
         advisories: [],
       }),
     ).toThrow(/publishes no note_text or advisory_text/);
+    expect(() =>
+      parseIntakeContract({
+        intake_fields: [],
+        rules: [
+          { id: "SAPO-BLOCK-PARTY-ELIG-001", output: { note_text: "text" }, verification: {} },
+        ],
+        advisories: [],
+      }),
+    ).toThrow(/verification.status must be a non-empty string/);
   });
 });
 
@@ -230,16 +277,16 @@ describe("conditional flow (spec #2)", () => {
   });
 
   it("asks street size only for street events and plaza level only for plazas", () => {
-    const street = askedFieldNames(scenario("A").intake);
+    const street = askedFieldNames(scenario("A"));
     expect(street).toContain("street_event_size");
     expect(street).not.toContain("plaza_level");
     expect(street).not.toContain("has_amusement_ride");
 
-    const plaza = askedFieldNames(scenario("E").intake);
+    const plaza = askedFieldNames(scenario("E"));
     expect(plaza).toEqual(expect.arrayContaining(["plaza_level", "plaza_multiple_blocks"]));
     expect(plaza).not.toContain("street_event_size");
 
-    expect(askedFieldNames(scenario("D").intake)).toContain("has_amusement_ride");
+    expect(askedFieldNames(scenario("D"))).toContain("has_amusement_ride");
   });
 
   it("asks dimensions only for the structure types selected", () => {
@@ -301,7 +348,7 @@ describe("conditional flow (spec #2)", () => {
     const asked = Object.fromEntries(
       SCENARIO_INTAKE_FIXTURES.map((fixture) => [
         fixture.scenario,
-        askedFieldNames(fixture.intake).length,
+        askedFieldNames(fixtureSubmission(fixture)).length,
       ]),
     );
     // The low-burden scenarios land in the spec's 10-15 band; the SAPO and
@@ -332,18 +379,34 @@ describe("conditional flow (spec #2)", () => {
   });
 });
 
-describe("the six scenario fixtures are enterable as written (spec #1)", () => {
-  it.each(SCENARIO_INTAKE_FIXTURES)("accepts scenario $scenario ($title)", (fixture) => {
-    const result = validateIntake(contract, fixture.intake, FIXTURE_TODAY);
+describe("the six scenario fixtures are enterable (spec #1)", () => {
+  it.each(SCENARIO_CASES)("accepts scenario $scenario ($title), $provenance", (fixture) => {
+    const result = validateIntake(contract, fixture.submission, FIXTURE_TODAY);
     expect(result.errors).toEqual([]);
     expect(result.values).not.toBeNull();
-    for (const [field, value] of Object.entries(fixture.intake)) {
+    for (const [field, value] of Object.entries(fixture.submission)) {
       expect(result.values?.[field]).toEqual(value);
     }
   });
 
+  it("cannot enter Scenario F as the answer key writes it (SPEC-CONFLICT #88)", () => {
+    // Honest failing case for the conflict: the key's own inputs are incomplete against
+    // the registry. This test is expected to change when #88 is resolved.
+    const asWritten = scenarioFixture("F").intake;
+    expect(scenarioFixture("F").inferred).toEqual({
+      food_vendor_count: { value: 1, conflictIssue: 88 },
+    });
+    expect(codesFor(asWritten)).toEqual({ food_vendor_count: "required" });
+  });
+
+  it("states no inferred value for the five scenarios the key specifies in full", () => {
+    for (const fixture of SCENARIO_INTAKE_FIXTURES.filter((entry) => entry.scenario !== "F")) {
+      expect(fixture.inferred, `scenario ${fixture.scenario}`).toBeUndefined();
+    }
+  });
+
   it("stores every question the scenario was not asked as null", () => {
-    const values = validateIntake(contract, scenario("C").intake, FIXTURE_TODAY).values;
+    const values = validateIntake(contract, scenario("C"), FIXTURE_TODAY).values;
     expect(values?.obstructs_public_way).toBeNull();
     expect(values?.food_vendor_count).toBeNull();
     expect(values?.venue_has_assembly_approval).toBeNull();
@@ -351,9 +414,9 @@ describe("the six scenario fixtures are enterable as written (spec #1)", () => {
     expect(values?.capacity).toBeNull();
   });
 
-  it("raises no inline warning on any approved fixture as written", () => {
-    const warned = SCENARIO_INTAKE_FIXTURES.filter(
-      (fixture) => validateIntake(contract, fixture.intake, FIXTURE_TODAY).warnings.length > 0,
+  it("raises no inline warning on any approved fixture", () => {
+    const warned = SCENARIO_CASES.filter(
+      (fixture) => validateIntake(contract, fixture.submission, FIXTURE_TODAY).warnings.length > 0,
     );
     expect(warned).toEqual([]);
   });
@@ -375,7 +438,7 @@ describe("unknown is a real answer (spec #3)", () => {
   });
 
   it("stores unknown answers as unknown, never as false or null", () => {
-    const values = validateIntake(contract, scenario("F").intake, FIXTURE_TODAY).values;
+    const values = validateIntake(contract, scenario("F"), FIXTURE_TODAY).values;
     expect(values?.sound_audible_from_public_way).toBe("unknown");
     expect(values?.venue_license_covers_event_area).toBe("unknown");
     expect(values?.venue_has_assembly_approval).toBe("unknown");
@@ -384,7 +447,7 @@ describe("unknown is a real answer (spec #3)", () => {
 
   it("keeps blank numeric answers on a selected structure or generator as null", () => {
     const blankDimensions = {
-      ...scenario("E").intake,
+      ...scenario("E"),
       tent_area_sqft: null,
       tent_days_in_place: null,
       generator_gasoline_gallons: null,
@@ -397,14 +460,14 @@ describe("unknown is a real answer (spec #3)", () => {
   });
 
   it("still requires a conditional question that has no blank option", () => {
-    const { street_event_size: _dropped, ...withoutSize } = scenario("A").intake;
+    const { street_event_size: _dropped, ...withoutSize } = scenario("A");
     expect(codesFor(withoutSize)).toEqual({ street_event_size: "required" });
   });
 });
 
 describe("contradictions are challenged, never resolved silently (spec #4)", () => {
   it("rejects dimensions for a structure type that was not selected", () => {
-    expect(codesFor({ ...scenario("A").intake, tent_area_sqft: 200 })).toEqual({
+    expect(codesFor({ ...scenario("A"), tent_area_sqft: 200 })).toEqual({
       tent_area_sqft: "not_applicable",
     });
   });
@@ -412,22 +475,23 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
   it("names the condition that would have made the question apply", () => {
     const [error] = validateIntake(
       contract,
-      { ...scenario("A").intake, tent_area_sqft: 200 },
+      { ...scenario("A"), tent_area_sqft: 200 },
       FIXTURE_TODAY,
     ).errors;
     expect(error?.message).toContain("only asked when tent_canopy");
   });
 
   it("rejects generator specifications without a generator", () => {
-    expect(
-      codesFor({ ...scenario("A").intake, generator_kw: 50, generator_diesel_gallons: 4 }),
-    ).toEqual({ generator_kw: "not_applicable", generator_diesel_gallons: "not_applicable" });
+    expect(codesFor({ ...scenario("A"), generator_kw: 50, generator_diesel_gallons: 4 })).toEqual({
+      generator_kw: "not_applicable",
+      generator_diesel_gallons: "not_applicable",
+    });
   });
 
   it("rejects licence and assembly answers without their trigger conditions", () => {
     expect(
       codesFor({
-        ...scenario("A").intake,
+        ...scenario("A"),
         venue_license_covers_event_area: "yes",
         venue_has_assembly_approval: "yes",
       }),
@@ -438,28 +502,91 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
   });
 
   it("rejects a SAPO classification on an event that cannot obstruct a public way", () => {
-    expect(codesFor({ ...scenario("C").intake, sapo_event_type: "street_event" })).toEqual({
+    expect(codesFor({ ...scenario("C"), sapo_event_type: "street_event" })).toEqual({
       sapo_event_type: "not_applicable",
     });
   });
 
   it("rejects an event date in the past and a headcount of zero or less", () => {
-    expect(codesFor({ ...scenario("C").intake, event_date: "2026-07-21" })).toEqual({
+    expect(codesFor({ ...scenario("C"), event_date: "2026-07-21" })).toEqual({
       event_date: "in_the_past",
     });
-    expect(
-      codesFor({ ...scenario("C").intake, event_date: FIXTURE_TODAY }).event_date,
-    ).toBeUndefined();
-    expect(codesFor({ ...scenario("C").intake, headcount: 0 })).toEqual({
+    expect(codesFor({ ...scenario("C"), event_date: FIXTURE_TODAY }).event_date).toBeUndefined();
+    expect(codesFor({ ...scenario("C"), headcount: 0 })).toEqual({
       headcount: "must_be_positive",
     });
-    expect(codesFor({ ...scenario("C").intake, headcount: -5 })).toEqual({
-      headcount: "must_be_positive",
+    // A negative headcount is caught by the non-negative rule that guards every
+    // quantity, one step earlier than the spec's "at least 1" rule.
+    expect(codesFor({ ...scenario("C"), headcount: -5 })).toEqual({
+      headcount: "invalid_value",
     });
   });
 
+  it("rejects a negative quantity instead of letting it evaluate below a threshold", () => {
+    // Under-prescribing is the failure mode here: -5 gallons would clear
+    // FDNY-GENERATOR-001's "more than 2.5" and silently drop the permit.
+    const negatives = {
+      generator_gasoline_gallons: -5,
+      generator_diesel_gallons: -1,
+      generator_kw: -50,
+    };
+    expect(codesFor({ ...scenario("E"), ...negatives })).toEqual({
+      generator_gasoline_gallons: "invalid_value",
+      generator_diesel_gallons: "invalid_value",
+      generator_kw: "invalid_value",
+    });
+    expect(codesFor({ ...scenario("E"), battery_system_kwh: -21 })).toEqual({
+      battery_system_kwh: "invalid_value",
+    });
+    expect(codesFor({ ...scenario("C"), capacity: -400 })).toEqual({ capacity: "invalid_value" });
+
+    const structures = {
+      structure_types: ["tent_canopy", "stage_platform_scaffold"],
+      tent_area_sqft: -401,
+      tent_days_in_place: -30,
+      stage_height_ft: -2.5,
+      stage_area_sqft: -120,
+      structure_over_10ft_tall: "no",
+    };
+    expect(codesFor({ ...scenario("C"), ...structures })).toEqual({
+      tent_area_sqft: "invalid_value",
+      tent_days_in_place: "invalid_value",
+      stage_height_ft: "invalid_value",
+      stage_area_sqft: "invalid_value",
+    });
+    expect(codesFor({ ...scenario("A"), food_vendor_count: -1 })).toEqual({
+      food_vendor_count: "invalid_value",
+    });
+  });
+
+  it("accepts zero on every quantity, which is a real answer", () => {
+    const zeroed = {
+      ...scenario("E"),
+      tent_area_sqft: 0,
+      tent_days_in_place: 0,
+      generator_gasoline_gallons: 0,
+      generator_diesel_gallons: 0,
+      generator_kw: 0,
+      battery_system_kwh: 0,
+    };
+    const result = validateIntake(contract, zeroed, FIXTURE_TODAY);
+    expect(result.errors).toEqual([]);
+    expect(result.values?.generator_diesel_gallons).toBe(0);
+    expect(result.values?.tent_days_in_place).toBe(0);
+  });
+
+  it("returns a field error for a date that matches the shape but is not a day", () => {
+    // "2026-13-01" parses to an Invalid Date; it must not escape as a thrown RangeError.
+    for (const malformed of ["2026-13-01", "2026-02-30", "2026-00-10", "2026-01-32"]) {
+      expect(codesFor({ ...scenario("C"), event_date: malformed }), malformed).toEqual({
+        event_date: "invalid_value",
+      });
+    }
+    expect(codesFor({ ...scenario("C"), event_date: "2026-12-31" })).toEqual({});
+  });
+
   it("reports a field it does not recognize instead of dropping it", () => {
-    expect(codesFor({ ...scenario("C").intake, attendee_wifi: true })).toEqual({
+    expect(codesFor({ ...scenario("C"), attendee_wifi: true })).toEqual({
       attendee_wifi: "unknown_field",
     });
   });
@@ -467,7 +594,7 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
   it("checks each declared type", () => {
     expect(
       codesFor({
-        ...scenario("C").intake,
+        ...scenario("C"),
         borough: "hoboken",
         headcount: 12.5,
         event_date: "2026-02-30",
@@ -481,43 +608,43 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
       food_present: "invalid_value",
       structure_types: "invalid_value",
     });
-    expect(codesFor({ ...scenario("E").intake, generator_kw: "lots" })).toEqual({
+    expect(codesFor({ ...scenario("E"), generator_kw: "lots" })).toEqual({
       generator_kw: "invalid_value",
     });
-    expect(codesFor({ ...scenario("C").intake, event_date: 20260916 })).toEqual({
+    expect(codesFor({ ...scenario("C"), event_date: 20260916 })).toEqual({
       event_date: "invalid_value",
     });
   });
 
   it("checks multi-select answers against their published options", () => {
-    expect(codesFor({ ...scenario("C").intake, structure_types: ["bouncy_house"] })).toEqual({
+    expect(codesFor({ ...scenario("C"), structure_types: ["bouncy_house"] })).toEqual({
       structure_types: "invalid_value",
     });
-    expect(
-      codesFor({ ...scenario("C").intake, open_flame_or_cooking: ["none", "propane_lpg"] }),
-    ).toEqual({ open_flame_or_cooking: "invalid_value" });
+    expect(codesFor({ ...scenario("C"), open_flame_or_cooking: ["none", "propane_lpg"] })).toEqual({
+      open_flame_or_cooking: "invalid_value",
+    });
     const deduplicated = validateIntake(
       contract,
-      { ...scenario("D").intake, open_flame_or_cooking: ["charcoal_wood", "charcoal_wood"] },
+      { ...scenario("D"), open_flame_or_cooking: ["charcoal_wood", "charcoal_wood"] },
       FIXTURE_TODAY,
     );
     expect(deduplicated.values?.open_flame_or_cooking).toEqual(["charcoal_wood"]);
   });
 
   it("requires a name and validates the optional descriptive answers", () => {
-    const { name: _dropped, ...unnamed } = scenario("C").intake;
+    const { name: _dropped, ...unnamed } = scenario("C");
     expect(codesFor(unnamed)).toEqual({ name: "required" });
-    expect(codesFor({ ...scenario("C").intake, name: "   " })).toEqual({ name: "invalid_value" });
-    expect(codesFor({ ...scenario("C").intake, capacity: 0 })).toEqual({
+    expect(codesFor({ ...scenario("C"), name: "   " })).toEqual({ name: "invalid_value" });
+    expect(codesFor({ ...scenario("C"), capacity: 0 })).toEqual({
       capacity: "invalid_value",
     });
-    expect(codesFor({ ...scenario("C").intake, location_name: 12 })).toEqual({
+    expect(codesFor({ ...scenario("C"), location_name: 12 })).toEqual({
       location_name: "invalid_value",
     });
 
     const described = validateIntake(
       contract,
-      { ...scenario("C").intake, location_name: "  Prospect Park  ", capacity: 400 },
+      { ...scenario("C"), location_name: "  Prospect Park  ", capacity: 400 },
       FIXTURE_TODAY,
     );
     expect(described.values?.location_name).toBe("Prospect Park");
@@ -526,53 +653,109 @@ describe("contradictions are challenged, never resolved silently (spec #4)", () 
 
   it("returns no values to store while any error stands", () => {
     expect(
-      validateIntake(contract, { ...scenario("C").intake, headcount: 0 }, FIXTURE_TODAY).values,
+      validateIntake(contract, { ...scenario("C"), headcount: 0 }, FIXTURE_TODAY).values,
     ).toBeNull();
   });
 });
 
 describe("inline warnings do not block submission (spec #4, #5)", () => {
   const warningsFor = (submission: Record<string, unknown>) =>
-    validateIntake(contract, submission, FIXTURE_TODAY).warnings.map(({ code, message }) => ({
-      code,
-      message,
-    }));
+    validateIntake(contract, submission, FIXTURE_TODAY).warnings;
 
   it("warns that sales conflict with block-party eligibility, and stores the event", () => {
-    const selling = { ...scenario("D").intake, selling_anything: true };
+    const selling = { ...scenario("D"), selling_anything: true };
     const result = validateIntake(contract, selling, FIXTURE_TODAY);
     expect(result.errors).toEqual([]);
     expect(result.values?.selling_anything).toBe(true);
     expect(warningsFor(selling)).toEqual([
-      { code: "block_party_eligibility_conflict", message: contract.blockPartyEligibilityNotice },
+      {
+        field: "sapo_event_type",
+        code: "block_party_eligibility_conflict",
+        message: contract.blockPartyEligibilityNotice.text,
+        ruleId: "SAPO-BLOCK-PARTY-ELIG-001",
+        verificationStatus: "SOURCE_CONFIRMED",
+      },
     ]);
   });
 
   it("warns the same way when a block party serves alcohol", () => {
-    const codes = warningsFor({ ...scenario("D").intake, alcohol: true }).map(
-      (warning) => warning.code,
-    );
+    const codes = warningsFor({ ...scenario("D"), alcohol: true }).map((warning) => warning.code);
     expect(codes).toContain("block_party_eligibility_conflict");
   });
 
   it("renders the published coverage warning for alcohol in public space", () => {
-    expect(warningsFor({ ...scenario("C").intake, alcohol: true })).toEqual([
-      { code: "coverage_gap", message: contract.alcoholInPublicSpaceNotice },
+    // The COVERAGE_GAP status travels with the text so the UI cannot render an
+    // uncovered area as an evaluated one (AGENTS.md "Regulatory safety").
+    expect(warningsFor({ ...scenario("C"), alcohol: true })).toEqual([
+      {
+        field: "alcohol",
+        code: "coverage_gap",
+        message: contract.alcoholInPublicSpaceNotice.text,
+        ruleId: "ADV-ALCOHOL-PUBLIC-001",
+        verificationStatus: "COVERAGE_GAP",
+      },
     ]);
-    expect(contract.alcoholInPublicSpaceNotice).toContain("Confirm with the relevant agency.");
+    expect(contract.alcoholInPublicSpaceNotice.text).toContain("Confirm with the relevant agency.");
   });
 
   it("does not warn about alcohol at a private venue", () => {
-    expect(warningsFor(scenario("F").intake)).toEqual([]);
+    expect(warningsFor(scenario("F"))).toEqual([]);
   });
 
   it("warns before the submission is complete enough to store", () => {
     const result = validateIntake(
       contract,
-      { ...scenario("D").intake, selling_anything: true, headcount: 0 },
+      { ...scenario("D"), selling_anything: true, headcount: 0 },
       FIXTURE_TODAY,
     );
     expect(result.values).toBeNull();
     expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe("editing a saved intake (spec #8)", () => {
+  const stored = (id: string): Record<string, unknown> => {
+    const values = validateIntake(contract, scenario(id), FIXTURE_TODAY).values;
+    if (values === null) throw new Error(`fixture ${id} does not validate`);
+    return { ...values };
+  };
+
+  it("clears the answers a rescope hides, so the edit can be saved", () => {
+    // The dead end this prevents: the organizer moves a street event into a park, the
+    // SAPO controls disappear, and the stored answers fail validation against fields
+    // the form no longer renders. The edit could never be saved.
+    const edited = mergeIntakeEdit(contract, stored("A"), { location_type: "park" });
+    expect(edited.obstructs_public_way).toBeNull();
+    expect(edited.sapo_event_type).toBeNull();
+    expect(edited.street_event_size).toBeNull();
+    expect(edited.headcount).toBe(75);
+
+    const result = validateIntake(contract, edited, FIXTURE_TODAY);
+    expect(result.errors).toEqual([]);
+    expect(result.values?.location_type).toBe("park");
+  });
+
+  it("keeps an answer the edit supplies explicitly, so a contradiction still fails", () => {
+    const edited = mergeIntakeEdit(contract, stored("A"), {
+      location_type: "park",
+      sapo_event_type: "street_event",
+    });
+    expect(edited.sapo_event_type).toBe("street_event");
+    expect(codesFor(edited)).toEqual({ sapo_event_type: "not_applicable" });
+  });
+
+  it("leaves answers alone when the edit hides nothing", () => {
+    const edited = mergeIntakeEdit(contract, stored("A"), { headcount: 90 });
+    expect(edited.headcount).toBe(90);
+    expect(edited.street_event_size).toBe("large");
+    expect(edited.obstructs_public_way).toBe("yes");
+  });
+
+  it("clears the dimensions of a structure type the edit deselects", () => {
+    const edited = mergeIntakeEdit(contract, stored("E"), { structure_types: ["none"] });
+    expect(edited.tent_area_sqft).toBeNull();
+    expect(edited.tent_days_in_place).toBeNull();
+    expect(edited.structure_over_10ft_tall).toBeNull();
+    expect(validateIntake(contract, edited, FIXTURE_TODAY).errors).toEqual([]);
   });
 });

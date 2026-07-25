@@ -4,6 +4,7 @@ import { types, type Pool } from "pg";
 import {
   intakeColumnNames,
   intakeWarnings,
+  mergeIntakeEdit,
   validateIntake,
   type IntakeAnswers,
   type IntakeContract,
@@ -160,8 +161,10 @@ export function createEventsRouter(dependencies: EventsDependencies): Router {
       }
 
       // The whole intake is re-validated after the edit is applied, so an edit cannot
-      // leave the row in a state the intake would have refused to create.
-      const edited = { ...pickIntake(stored, columns), ...submission };
+      // leave the row in a state the intake would have refused to create. Answers the
+      // edit hides are cleared by the merge, so a rescope (street event → park) saves
+      // without the client having to null out every SAPO answer by hand.
+      const edited = mergeIntakeEdit(intakeContract, pickIntake(stored, columns), submission);
       const { values, errors, warnings } = validateIntake(intakeContract, edited, today());
       if (values === null) {
         res.status(400).json({ errors, warnings });

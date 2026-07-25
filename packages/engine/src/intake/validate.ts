@@ -5,13 +5,17 @@
 // the spec's inline warnings (block-party eligibility, alcohol in public space) never
 // block submission — they are shown and the event is stored as answered.
 
-import type { IntakeContract, IntakeField } from "./registry";
+import type { IntakeContract, IntakeField, PublishedNotice } from "./registry";
 import { askedFieldNames, type IntakeAnswers, type IntakeValue } from "./visibility";
 
 export type IntakeIssue = {
   readonly field: string;
   readonly code: string;
   readonly message: string;
+  /** Set when the message is quoted from a published rule, so the rule id and its
+   * verification status stay visible wherever the issue is rendered. */
+  readonly ruleId?: string;
+  readonly verificationStatus?: string;
 };
 
 export type IntakeRecord = Readonly<Record<string, IntakeValue>>;
@@ -44,9 +48,33 @@ const issue = (field: string, code: string, message: string): IntakeIssue => ({
   message,
 });
 
+/** An issue whose text is a published rule's, carrying that rule's verification status. */
+const noticeIssue = (field: string, code: string, notice: PublishedNotice): IntakeIssue => ({
+  field,
+  code,
+  message: notice.text,
+  ruleId: notice.ruleId,
+  verificationStatus: notice.verificationStatus,
+});
+
 function isIsoDate(value: string): boolean {
-  return ISO_DATE.test(value) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+  if (!ISO_DATE.test(value)) return false;
+  // "2026-13-01" matches the shape but parses to an Invalid Date, and "2026-02-30"
+  // parses to a different day: both are field errors, never a thrown RangeError.
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
 }
+
+/**
+ * Every registry number is a count or a physical quantity (vendors, square feet, days,
+ * feet, gallons, kW, kWh), so a negative answer is not a smaller value — it is not an
+ * answer. It is rejected rather than stored, because the published thresholds are all
+ * "greater than" comparisons and a negative would evaluate below them and silently
+ * suppress a requirement. Zero is accepted on every field: it is a real answer (no
+ * diesel, no days in place) and it evaluates below every threshold correctly. The one
+ * exception is `headcount`, which the spec requires to be at least 1.
+ */
+const negativeMessage = (field: string): string => `${field} cannot be negative`;
 
 /** Coerce one submitted value against its declared type, or describe why it does not fit. */
 function readFieldValue(field: IntakeField, raw: unknown): IntakeValue | IntakeIssue {
@@ -77,13 +105,13 @@ function readFieldValue(field: IntakeField, raw: unknown): IntakeValue | IntakeI
     case "boolean":
       return typeof raw === "boolean" ? raw : rejected(`${field.field} must be true or false`);
     case "integer":
-      return Number.isInteger(raw)
-        ? (raw as number)
-        : rejected(`${field.field} must be a whole number`);
+      if (!Number.isInteger(raw)) return rejected(`${field.field} must be a whole number`);
+      return (raw as number) < 0 ? rejected(negativeMessage(field.field)) : (raw as number);
     case "number":
-      return typeof raw === "number" && Number.isFinite(raw)
-        ? raw
-        : rejected(`${field.field} must be a number`);
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        return rejected(`${field.field} must be a number`);
+      }
+      return raw < 0 ? rejected(negativeMessage(field.field)) : raw;
     case "date":
       return typeof raw === "string" && isIsoDate(raw)
         ? raw
@@ -123,6 +151,29 @@ export function intakeColumnNames(contract: IntakeContract): string[] {
   ];
 }
 
+/**
+ * Apply an edit to a stored intake.
+ *
+ * An answer the edit hides is cleared rather than carried forward: a question that is no
+ * longer asked has no answer, and leaving the old one in place would make the event
+ * unsavable — validation would reject a field whose control the UI no longer renders. A
+ * value the caller supplies explicitly is kept exactly as supplied, so a contradictory
+ * edit still fails validation instead of being silently dropped.
+ */
+export function mergeIntakeEdit(
+  contract: IntakeContract,
+  stored: Readonly<Record<string, unknown>>,
+  submission: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...stored, ...submission };
+  const asked = askedFieldNames(contract.fields, merged as IntakeAnswers);
+  for (const field of contract.fields) {
+    if (asked.has(field.field) || Object.hasOwn(submission, field.field)) continue;
+    merged[field.field] = null;
+  }
+  return merged;
+}
+
 /** The spec's inline warnings for a set of answers. Never blocking; safe to recompute. */
 export function intakeWarnings(contract: IntakeContract, answers: IntakeAnswers): IntakeIssue[] {
   const warnings: IntakeIssue[] = [];
@@ -135,7 +186,7 @@ export function intakeWarnings(contract: IntakeContract, answers: IntakeAnswers)
     (answers.selling_anything === true || answers.alcohol === true)
   ) {
     warnings.push(
-      issue(
+      noticeIssue(
         "sapo_event_type",
         "block_party_eligibility_conflict",
         contract.blockPartyEligibilityNotice,
@@ -151,7 +202,7 @@ export function intakeWarnings(contract: IntakeContract, answers: IntakeAnswers)
     typeof answers.location_type === "string" &&
     answers.location_type !== "private_venue"
   ) {
-    warnings.push(issue("alcohol", "coverage_gap", contract.alcoholInPublicSpaceNotice));
+    warnings.push(noticeIssue("alcohol", "coverage_gap", contract.alcoholInPublicSpaceNotice));
   }
 
   return warnings;

@@ -3,7 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { Pool } from "pg";
 import { parseIntakeContract } from "@pop-engine/engine";
-import { FIXTURE_TODAY, SCENARIO_INTAKE_FIXTURES } from "@pop-engine/engine/fixtures";
+import {
+  FIXTURE_TODAY,
+  SCENARIO_INTAKE_FIXTURES,
+  fixtureSubmission,
+} from "@pop-engine/engine/fixtures";
 import { createApp } from "./app";
 import { loadRuleset } from "./ruleset";
 
@@ -13,6 +17,25 @@ import { loadRuleset } from "./ruleset";
 // matching the other schema-backed suites (CI applies `migrate up` first).
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
+
+/** A scenario's complete submission: the answer key's values plus anything inferred. */
+const scenario = (id: string): Record<string, unknown> => {
+  const fixture = SCENARIO_INTAKE_FIXTURES.find((candidate) => candidate.scenario === id);
+  if (fixture === undefined) throw new Error(`no fixture ${id}`);
+  return fixtureSubmission(fixture);
+};
+
+// Scenario F's `food_vendor_count` is inferred, not stated by the answer key
+// (SPEC-CONFLICT #88), so the test names say so rather than claiming all six scenarios
+// are entered exactly as written.
+const SCENARIO_CASES = SCENARIO_INTAKE_FIXTURES.map((fixture) => ({
+  ...fixture,
+  submission: fixtureSubmission(fixture),
+  provenance:
+    fixture.inferred === undefined
+      ? "exactly as the answer key specifies"
+      : `with ${Object.keys(fixture.inferred).join(", ")} inferred (SPEC-CONFLICT #88)`,
+}));
 
 describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
   let database: Pool;
@@ -47,37 +70,34 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     Object.fromEntries((body.errors ?? []).map((error) => [error.field, error.code]));
 
   describe("POST /api/events", () => {
-    it.each(SCENARIO_INTAKE_FIXTURES)(
-      "stores scenario $scenario ($title) exactly as the answer key specifies",
-      async (fixture) => {
-        const response = await post(fixture.intake);
-        expect(response.status).toBe(201);
-        for (const [field, value] of Object.entries(fixture.intake)) {
-          expect(response.body.event[field], field).toEqual(value);
-        }
-        expect(response.body.event.revision_counter).toBe(1);
-        expect(response.body.event.status).toBe("draft");
-        expect(response.body.plan_stale).toBe(false);
-      },
-    );
+    it.each(SCENARIO_CASES)("stores scenario $scenario ($title), $provenance", async (fixture) => {
+      const response = await post(fixture.submission);
+      expect(response.status).toBe(201);
+      for (const [field, value] of Object.entries(fixture.submission)) {
+        expect(response.body.event[field], field).toEqual(value);
+      }
+      expect(response.body.event.revision_counter).toBe(1);
+      expect(response.body.event.status).toBe("draft");
+      expect(response.body.plan_stale).toBe(false);
+    });
 
     it("stores unknown answers and blank dimensions as the answer key writes them", async () => {
-      const rooftop = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "F");
-      const { body } = await post({ ...rooftop?.intake });
+      const rooftop = scenario("F");
+      const { body } = await post({ ...rooftop });
       expect(body.event.venue_license_covers_event_area).toBe("unknown");
       expect(body.event.venue_has_assembly_approval).toBe("unknown");
       expect(body.event.sound_audible_from_public_way).toBe("unknown");
 
-      const plaza = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "E");
-      const blank = await post({ ...plaza?.intake, tent_area_sqft: null, generator_kw: null });
+      const plaza = scenario("E");
+      const blank = await post({ ...plaza, tent_area_sqft: null, generator_kw: null });
       expect(blank.body.event.tent_area_sqft).toBeNull();
       expect(blank.body.event.generator_kw).toBeNull();
       expect(blank.body.event.structure_over_10ft_tall).toBe("unknown");
     });
 
     it("leaves every question the event was not asked null", async () => {
-      const park = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "C");
-      const { body } = await post({ ...park?.intake });
+      const park = scenario("C");
+      const { body } = await post({ ...park });
       expect(body.event.obstructs_public_way).toBeNull();
       expect(body.event.street_event_size).toBeNull();
       expect(body.event.food_vendor_count).toBeNull();
@@ -85,9 +105,9 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("rejects a contradictory submission with a per-field error and stores nothing", async () => {
-      const street = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "A");
+      const street = scenario("A");
       const before = await database.query<{ count: string }>("SELECT count(*) FROM events");
-      const response = await post({ ...street?.intake, tent_area_sqft: 200, headcount: 0 });
+      const response = await post({ ...street, tent_area_sqft: 200, headcount: 0 });
       expect(response.status).toBe(400);
       expect(errorCodes(response.body)).toEqual({
         tent_area_sqft: "not_applicable",
@@ -98,8 +118,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("rejects an event date in the past against the injected clock", async () => {
-      const park = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "C");
-      const response = await post({ ...park?.intake, event_date: "2026-07-21" });
+      const park = scenario("C");
+      const response = await post({ ...park, event_date: "2026-07-21" });
       expect(response.status).toBe(400);
       expect(errorCodes(response.body)).toEqual({ event_date: "in_the_past" });
     });
@@ -111,8 +131,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("warns inline that a selling block party conflicts with eligibility, and stores it", async () => {
-      const blockParty = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "D");
-      const response = await post({ ...blockParty?.intake, selling_anything: true });
+      const blockParty = scenario("D");
+      const response = await post({ ...blockParty, selling_anything: true });
       expect(response.status).toBe(201);
       expect(response.body.event.selling_anything).toBe(true);
       expect(response.body.warnings).toHaveLength(1);
@@ -120,8 +140,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("renders the coverage warning for alcohol in public space", async () => {
-      const park = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "C");
-      const response = await post({ ...park?.intake, alcohol: true });
+      const park = scenario("C");
+      const response = await post({ ...park, alcohol: true });
       expect(response.status).toBe(201);
       expect(response.body.warnings[0].code).toBe("coverage_gap");
       expect(response.body.warnings[0].message).toContain("Confirm with the relevant agency.");
@@ -130,8 +150,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
 
   describe("GET /api/events/:id", () => {
     it("returns the stored event and repeats any standing warning", async () => {
-      const park = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "C");
-      const created = await post({ ...park?.intake, alcohol: true });
+      const park = scenario("C");
+      const created = await post({ ...park, alcohol: true });
       const response = await request(api).get(`/api/events/${created.body.event.id}`);
       expect(response.status).toBe(200);
       expect(response.body.event).toEqual(created.body.event);
@@ -146,8 +166,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
 
   describe("PATCH /api/events/:id", () => {
     const createStreetEvent = async () => {
-      const street = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "A");
-      const created = await post({ ...street?.intake });
+      const street = scenario("A");
+      const created = await post({ ...street });
       return created.body.event as Record<string, unknown> & { id: string };
     };
 
@@ -182,30 +202,47 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
       expect((await request(api).get(`/api/events/${event.id}`)).body.plan_stale).toBe(true);
     });
 
-    it("re-validates the whole intake, so an edit cannot leave a contradiction behind", async () => {
+    it("saves a rescope that hides questions, without the client clearing them", async () => {
+      // Regression: a street event moved to a park used to be unsavable. The merge kept
+      // the stored SAPO answers, validation rejected them as not_applicable, and their
+      // controls were already hidden, so the error had nowhere to render.
       const event = await createStreetEvent();
       const response = await request(api)
         .patch(`/api/events/${event.id}`)
         .send({ location_type: "park" });
-      expect(response.status).toBe(400);
-      // The SAPO answers the street event carried no longer apply to a park.
-      expect(errorCodes(response.body)).toMatchObject({ obstructs_public_way: "not_applicable" });
 
+      expect(response.status).toBe(200);
+      expect(response.body.event.location_type).toBe("park");
+      expect(response.body.event.obstructs_public_way).toBeNull();
+      expect(response.body.event.sapo_event_type).toBeNull();
+      expect(response.body.event.street_event_size).toBeNull();
+      expect(response.body.event.revision_counter).toBe(2);
+      // The answers the park still asks are untouched.
+      expect(response.body.event.headcount).toBe(75);
+      expect(response.body.event.food_vendor_count).toBe(1);
+    });
+
+    it("still rejects an inapplicable answer the edit supplies on purpose", async () => {
+      const event = await createStreetEvent();
+      const response = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ location_type: "park", sapo_event_type: "street_event" });
+
+      expect(response.status).toBe(400);
+      expect(errorCodes(response.body)).toEqual({ sapo_event_type: "not_applicable" });
       const unchanged = await request(api).get(`/api/events/${event.id}`);
       expect(unchanged.body.event.revision_counter).toBe(1);
       expect(unchanged.body.event.location_type).toBe("street");
     });
 
-    it("accepts a rescope that clears the answers it makes inapplicable", async () => {
+    it("asks the questions a rescope reveals before it will save", async () => {
       // Scenario A's rescope (c): the same event moved to a private venue. The SAPO
-      // answers go away and the venue questions take their place.
+      // answers go away on their own and the venue questions take their place.
       const event = await createStreetEvent();
-      const missing = await request(api).patch(`/api/events/${event.id}`).send({
-        location_type: "private_venue",
-        obstructs_public_way: null,
-        sapo_event_type: null,
-        street_event_size: null,
-      });
+      const missing = await request(api)
+        .patch(`/api/events/${event.id}`)
+        .send({ location_type: "private_venue" });
+      expect(missing.status).toBe(400);
       expect(errorCodes(missing.body)).toEqual({
         sound_audible_from_public_way: "required",
         venue_has_assembly_approval: "required",
@@ -213,9 +250,6 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
 
       const response = await request(api).patch(`/api/events/${event.id}`).send({
         location_type: "private_venue",
-        obstructs_public_way: null,
-        sapo_event_type: null,
-        street_event_size: null,
         sound_audible_from_public_way: "unknown",
         venue_has_assembly_approval: "unknown",
       });
@@ -227,8 +261,8 @@ describe.runIf(databaseUrl.length > 0)("F-101 event intake endpoints", () => {
     });
 
     it("warns inline on an edit that creates a coverage gap", async () => {
-      const park = SCENARIO_INTAKE_FIXTURES.find((fixture) => fixture.scenario === "C");
-      const created = await post({ ...park?.intake });
+      const park = scenario("C");
+      const created = await post({ ...park });
       const response = await request(api)
         .patch(`/api/events/${created.body.event.id}`)
         .send({ alcohol: true });
