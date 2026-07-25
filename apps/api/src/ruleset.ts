@@ -25,11 +25,11 @@ export type PublishedRuleset = {
 };
 
 const EXPECTED_SCHEMA = "popengine-rules/v2";
-const EXPECTED_RULESET_VERSION = "nyc.v2.1";
+const EXPECTED_RULESET_VERSION = "nyc.v2.2";
 const EXPECTED_RULE_COUNT = 33;
 const EXPECTED_ADVISORY_COUNT = 4;
 const DEFAULT_RULES_FILE = fileURLToPath(
-  new URL("../../../rules/nyc-rules.v2.1.json", import.meta.url),
+  new URL("../../../rules/nyc-rules.v2.2.json", import.meta.url),
 );
 
 export const RULE_KINDS = new Set([
@@ -255,9 +255,12 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   };
 }
 
-export async function loadRuleset(
-  filePath = process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : DEFAULT_RULES_FILE,
-): Promise<PublishedRuleset> {
+/** The published ruleset path the api boots from; the engine parses the same file (AD-2). */
+export function rulesFilePath(): string {
+  return process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : DEFAULT_RULES_FILE;
+}
+
+export async function loadRuleset(filePath = rulesFilePath()): Promise<PublishedRuleset> {
   try {
     return validateRuleset(JSON.parse(await readFile(filePath, "utf8")));
   } catch (error) {

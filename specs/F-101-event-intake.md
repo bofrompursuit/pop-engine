@@ -1,8 +1,8 @@
 # F-101 · Event Intake Questionnaire
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
-**Phase:** 1 (core, week 1) · **Lane:** Dev 2 · **Depends on:** events schema (Phase 0), ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** everything (single source of truth)
-**Updated:** 2026-07-22 for the nyc.v2.1 baseline.
+**Phase:** 1 (core, week 1) · **Lane:** Dev 2 · **Depends on:** events schema (Phase 0), ruleset nyc.v2.2 ratified (BASELINE.md) · **Feeds:** everything (single source of truth)
+**Updated:** 2026-07-22 for the nyc.v2.2 baseline.
 
 ## User Story
 
@@ -10,7 +10,7 @@ As an independent organizer, I describe my event once in plain language, so PopE
 
 ## Inputs
 
-The field list, enums, and asked-when conditions come from the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.1.json`) — **the registry is authoritative; do not duplicate or drift from it.** Field groups (mirrored by the `events` table in ARCHITECTURE.md):
+The field list, enums, and asked-when conditions come from the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.2.json`) — **the registry is authoritative; do not duplicate or drift from it.** Field groups (mirrored by the `events` table in ARCHITECTURE.md):
 
 1. **Identity:** name, borough, location_type, location_name
 2. **SAPO classification** (public-way locations only): obstructs_public_way; sapo_event_type; street_event_size OR plaza_level + plaza_multiple_blocks; has_amusement_ride (block parties)
