@@ -108,6 +108,7 @@ export type EngineRule = {
   readonly feeDisplay: string | null;
   readonly portalName: string | null;
   readonly portalUrl: string | null;
+  readonly portalInstructions: string | null;
   readonly noteText: string | null;
   readonly notes: readonly string[];
   readonly dedupeKey: string | null;
@@ -164,6 +165,12 @@ export type Finding = {
   readonly feeDisplay: string | null;
   readonly portalName: string | null;
   readonly portalUrl: string | null;
+  /**
+   * How to file when the portal is not a URL. NYPD-SOUND-001 publishes no URL and carries the
+   * precinct and form number here, so dropping it leaves the only actionable filing detail on the
+   * floor and F-204 with no in-person path to render.
+   */
+  readonly portalInstructions: string | null;
   readonly notes: readonly string[];
   /** The rule's published note text, verbatim — carries eligibility rescope guidance and scope caveats. */
   readonly noteText: string | null;

@@ -231,7 +231,16 @@ export function evaluateTrigger(
     return {
       result: decisive,
       unknownFields: [],
-      triggeredBy: decisive === "true" ? children.flatMap((child) => child.triggeredBy) : [],
+      // A decisive `any` is settled by its true children alone, so only those are the answers
+      // that triggered the finding (AC 1). Recording an unanswered sibling — FDNY-GENERATOR-001's
+      // null diesel amount next to a decisive gasoline figure — would claim provenance it has not
+      // got. The `all` path and the undecided `any` path keep every contribution.
+      triggeredBy:
+        decisive === "true"
+          ? children
+              .filter((child) => child.result === "true")
+              .flatMap((child) => child.triggeredBy)
+          : [],
     };
   }
 

@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { countBusinessDays, evaluate, parseEngineRuleset } from "./index";
+import { countBusinessDays, differenceInCalendarDays, evaluate, parseEngineRuleset } from "./index";
 import type { EventIntake, Finding, PermitPlan, PublishedHolidayCalendar } from "./types";
 
 const TODAY = "2026-07-22";
@@ -301,6 +301,19 @@ describe("Scenario C — Prospect Park Community Day (dependency chain)", () => 
     ]);
   });
 
+  it("keeps the published in-person filing instructions on the sound permit", () => {
+    // NYPD-SOUND-001 publishes no portal URL; the precinct and form number are the only
+    // actionable filing detail it has.
+    const sound = plan(intakeC).findings.find((finding) =>
+      finding.ruleIds.includes("NYPD-SOUND-001"),
+    );
+    expect(sound?.portalUrl).toBeNull();
+    expect(sound?.portalName).toBe("Local NYPD precinct (in person)");
+    expect(sound?.portalInstructions).toBe(
+      "File at the precinct where the device will be used; application form PD 656-041A.",
+    );
+  });
+
   it("renders FEASIBLE with the sequencing caveat as a note, not a verdict change", () => {
     const result = plan(intakeC);
     expect(result.verdict).toBe("FEASIBLE");
@@ -323,6 +336,25 @@ describe("Scenario C — Prospect Park Community Day (dependency chain)", () => 
     expect(sound?.notes.join(" ")).toContain("21–30 day decision window");
     // The order itself is not confirmed by located primary text, so the note says so.
     expect(sound?.notes.join(" ")).toContain("not confirmed by located primary text");
+  });
+
+  it("reports gated slack as the filing window, not the distance to the deadline", () => {
+    // 35-day runway. Parks processing opens the window 21 days out (2026-08-12); the sound
+    // permit's own 5-day deadline is 2026-08-21. The buffer that matters is the 9 days between
+    // them, not the 30 days from today, because nothing can be filed before the window opens.
+    const runway35 = plan({ ...intakeC, event_date: "2026-08-26" });
+    const sound = runway35.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+
+    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    expect(sound?.latestApplyDate).toBe("2026-08-21");
+    // Pin the arithmetic, not the number: slack is latest_apply − apply_after (F-102 AC 5).
+    expect(sound?.slackDays).toBe(
+      differenceInCalendarDays(sound?.applyAfterDate ?? "", sound?.latestApplyDate ?? ""),
+    );
+    expect(sound?.slackDays).toBe(9);
+    // The plan's minimum slack follows it, so deadline copy and F-203 alerts inherit 9, not the
+    // 14 days the Parks line has or the 30 the ungated sound figure would have claimed.
+    expect(runway35.verdictDetail.minSlackDays).toBe(9);
   });
 
   it("warns but never fabricates a blocker when the sequence is squeezed", () => {

@@ -371,6 +371,34 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(sound.applyAfterDate).toBe("2026-08-12");
   });
 
+  it("round-trips the published in-person filing instructions through storage", async () => {
+    const eventId = await insertEvent({
+      location_type: "park",
+      obstructs_public_way: null,
+      sapo_event_type: null,
+      street_event_size: null,
+      headcount: 150,
+      food_present: false,
+      food_vendor_count: null,
+      selling_anything: false,
+      amplified_sound: true,
+    });
+    const app = appWith();
+    const generated = await request(app).post(`/api/events/${eventId}/plan`);
+    const fetched = await request(app).get(`/api/events/${eventId}/plan`);
+
+    for (const body of [generated.body, fetched.body]) {
+      const sound = body.findings.find((finding: { ruleIds: string[] }) =>
+        finding.ruleIds.includes("NYPD-SOUND-001"),
+      );
+      // No URL is published for this permit, so the instructions are the whole filing route.
+      expect(sound.portalUrl).toBeNull();
+      expect(sound.portalInstructions).toBe(
+        "File at the precinct where the device will be used; application form PD 656-041A.",
+      );
+    }
+  });
+
   it("404s for an unknown event and for an event with no plan yet", async () => {
     const app = appWith();
     const unknownId = randomUUID();

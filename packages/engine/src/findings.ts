@@ -92,6 +92,7 @@ function buildFinding(
     feeDisplay: rule.feeDisplay,
     portalName: rule.portalName,
     portalUrl: rule.portalUrl,
+    portalInstructions: rule.portalInstructions,
     notes: ruleNotes(rule, dated.deadlineStatus),
     noteText: rule.noteText,
     deadlineUnknownFields: dated.unknownFields,
@@ -175,6 +176,10 @@ function applyDependencySequencing(
     sequenced.set(binding.gatedRuleId, {
       ...gated,
       applyAfterDate,
+      // Slack for a gated finding is the window it can actually be filed in, not the distance
+      // from today to its own deadline (F-102 AC 5: latest_apply − apply_after). Keeping the
+      // ungated figure overstates the buffer that deadline copy and F-203's alerts read.
+      slackDays: gatedWindowDays ?? gated.slackDays,
       deadlineStatus:
         isSqueezed && gated.deadlineStatus === "on_track"
           ? "deadline_approaching"

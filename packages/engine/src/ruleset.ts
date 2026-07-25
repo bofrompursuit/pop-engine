@@ -246,6 +246,9 @@ function parseRule(value: unknown, label: string): EngineRule {
     feeDisplay: fee === null ? null : optionalString(fee, "display"),
     portalName: portal === null ? null : optionalString(portal, "name"),
     portalUrl: portal === null ? null : optionalString(portal, "url"),
+    // A portal without a URL publishes its filing route here (precinct, form number); it is
+    // regulatory content and is carried like any other published field.
+    portalInstructions: portal === null ? null : optionalString(portal, "instructions"),
     noteText: optionalString(output, "note_text"),
     notes: optionalStringArray(output, "notes", `${label}.output.notes`),
     dedupeKey: optionalString(output, "dedupe_key"),

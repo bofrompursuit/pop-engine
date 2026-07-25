@@ -176,6 +176,50 @@ describe("tri-state evaluation", () => {
     expect(noiseAdvisory?.disposition).toBe("advisory");
   });
 
+  it("records only the answers that decided a settled `any` trigger", () => {
+    // FDNY-GENERATOR-001 is any(gasoline > 2.5, diesel > 10, battery > 20). Gasoline alone
+    // settles it; the unanswered diesel amount did not trigger anything and must not be
+    // recorded as if it had (AC 1).
+    const plan = evaluate(
+      {
+        ...parkIntake,
+        generator_present: true,
+        generator_gasoline_gallons: 5,
+        generator_diesel_gallons: null,
+        generator_kw: 0,
+      },
+      ruleset,
+      TODAY,
+      calendar,
+    );
+    const generator = plan.findings.find((finding) =>
+      finding.ruleIds.includes("FDNY-GENERATOR-001"),
+    );
+    expect(generator?.triggeredBy).toEqual([{ field: "generator_gasoline_gallons", value: 5 }]);
+  });
+
+  it("keeps every contribution when an `any` trigger is not settled", () => {
+    // No decisive child: gasoline is under the threshold and diesel is unanswered, so the finding
+    // is conditional and both answers are part of why.
+    const plan = evaluate(
+      {
+        ...parkIntake,
+        generator_present: true,
+        generator_gasoline_gallons: 1,
+        generator_diesel_gallons: null,
+        generator_kw: 0,
+      },
+      ruleset,
+      TODAY,
+      calendar,
+    );
+    const generator = plan.findings.find((finding) =>
+      finding.ruleIds.includes("FDNY-GENERATOR-001"),
+    );
+    expect(generator?.disposition).toBe("may_be_required");
+    expect(generator?.triggeredBy).toEqual([{ field: "generator_diesel_gallons", value: null }]);
+  });
+
   it("reads the ruleset's trigger fields for provenance tooling", () => {
     const rule = ruleset.rules.find((entry) => entry.id === "NYPD-SOUND-001");
     expect(triggerFields(rule?.trigger ?? { all: [] })).toEqual([
