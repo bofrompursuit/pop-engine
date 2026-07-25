@@ -445,9 +445,16 @@ describe("business-day arithmetic against the pinned calendar", () => {
     expect(degraded?.latestApplyDate).toBeNull();
     expect(degraded?.deadlineStatus).toBe("not_calculable");
     expect(degraded?.notes).toContain("confirm with agency");
-    // Excluded from verdict arithmetic: the same plan is INFEASIBLE only when the date is real.
+
+    // The agency published this window; only our ability to date it is missing. Excluding it from
+    // the arithmetic would let the plan read FEASIBLE while the window is in fact already closed,
+    // so the plan is CONDITIONAL and names the finding whose timeline it cannot compute.
     expect(withList.verdict).toBe("INFEASIBLE");
-    expect(withoutList.verdict).not.toBe("INFEASIBLE");
+    expect(withoutList.verdict).toBe("CONDITIONAL");
+    expect(withoutList.verdictDetail.unresolvedTimelines.map((entry) => entry.ruleIds)).toEqual([
+      ["SLA-ONEDAY-001"],
+      ["SLA-CATERING-001"],
+    ]);
   });
 
   it("still computes every finding that needs no business-day math", () => {
