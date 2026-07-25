@@ -7,11 +7,20 @@ import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan
 import { createPublicPageRouter } from "./public-page";
 import { createRsvpsRouter } from "./rsvps";
 
+/**
+ * What the loaded rules file says about itself (F-206). `snapshotDate` is the date the ruleset
+ * was published, not a date on which its facts were re-verified — the banner copy must never
+ * read "verified as of".
+ */
+export type RulesMeta = { rulesetVersion: string; snapshotDate: string };
+
 export type AppDependencies = EventsDependencies & {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
   planService?: PlanService;
   /** Same contract for F-202: the checklist routes register only when storage is supplied. */
   checklist?: ChecklistDependencies;
+  /** Absent in the scaffold's own tests; the rules-meta route registers only when it is supplied. */
+  rulesMeta?: RulesMeta;
 };
 
 // The Express app factory. Kept separate from the server bootstrap (index.ts) so tests
@@ -64,8 +73,19 @@ export function createApp(dependencies: AppDependencies): Express {
   if (dependencies.checklist !== undefined) {
     app.use("/api", createChecklistRouter(dependencies.checklist));
   }
+  if (dependencies.rulesMeta !== undefined) registerRulesRoutes(app, dependencies.rulesMeta);
 
   return app;
+}
+
+/**
+ * F-206: what the snapshot banner reads. The values come from the rules file the api loaded at
+ * boot, so the banner states the artifact rather than a copy of it.
+ */
+function registerRulesRoutes(app: Express, meta: RulesMeta): void {
+  app.get("/api/rules/meta", (_req, res) => {
+    res.json({ ruleset_version: meta.rulesetVersion, snapshot_date: meta.snapshotDate });
+  });
 }
 
 /**

@@ -339,7 +339,8 @@ export function IntakeForm({
         <section className="intake__saved" aria-live="polite">
           <p>
             Saved as revision {saved.revision_counter}.{" "}
-            <a href={`/intake/${saved.id}`}>Come back to this event</a> to edit it later.
+            <a href={`/intake/${saved.id}`}>Come back to this event</a> to edit it later, or{" "}
+            <a href={`/events/${saved.id}/plan`}>see its permit plan</a>.
           </p>
           <p>
             <a href={`/events/${saved.id}/promote`}>Promote public page</a>

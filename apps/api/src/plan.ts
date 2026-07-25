@@ -44,6 +44,14 @@ export type StoredPlan = {
   readonly eventId: string;
   readonly eventRevision: number;
   readonly rulesetVersion: string;
+  /**
+   * The publication date of the ruleset that produced this plan, pinned with the version at
+   * generation (F-206 AC 4). The two travel together: the banner states this date, never the live
+   * file's, because a pinned version beside the live file's date is a pair that never existed.
+   * Null on plans generated before migration 002 added the column, and left null — no derivation
+   * can witness which artifact those plans read.
+   */
+  readonly snapshotDate: string | null;
   readonly verdict: PermitPlan["verdict"];
   readonly verdictDetail: PermitPlan["verdictDetail"];
   readonly today: string;
@@ -233,7 +241,16 @@ export function createPlanService(
           ruleset.snapshotDate,
         );
         await client.query("COMMIT");
-        return { id, eventId, eventRevision, generatedAt, ...plan };
+        // The same value `insertPlan` just wrote, so the response a generation returns carries the
+        // pinned pair the stored row does rather than leaving the caller to re-read it.
+        return {
+          id,
+          eventId,
+          eventRevision,
+          generatedAt,
+          snapshotDate: ruleset.snapshotDate,
+          ...plan,
+        };
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -245,7 +262,8 @@ export function createPlanService(
     async latest(eventId) {
       await loadEvent(eventId);
       const { rows } = await pool.query<PlanRow>(
-        `SELECT id, event_revision, ruleset_version, verdict, verdict_detail, generated_at
+        `SELECT id, event_revision, ruleset_version, snapshot_date, verdict, verdict_detail,
+                generated_at
            FROM permit_plans WHERE event_id = $1 ORDER BY generated_at DESC, id DESC LIMIT 1`,
         [eventId],
       );
@@ -278,6 +296,10 @@ export function createPlanService(
         eventId,
         eventRevision: planRow.event_revision,
         rulesetVersion: planRow.ruleset_version,
+        // Read off the plan's own row, beside the version it is paired with. `date` comes back as
+        // a Date at local midnight, so the same calendar-component read every other date here
+        // uses recovers the stored day in any timezone.
+        snapshotDate: isoDate(planRow.snapshot_date),
         verdict: ENGINE_VERDICT[planRow.verdict],
         verdictDetail,
         today,
@@ -304,6 +326,8 @@ type PlanRow = {
   id: string;
   event_revision: number;
   ruleset_version: string;
+  /** Null on plans generated before migration 002 added the column. */
+  snapshot_date: Date | string | null;
   verdict: keyof typeof ENGINE_VERDICT;
   // `today` and the calendar id ride in verdict_detail: the plan must name the exact clock and
   // calendar it evaluated against to stay reproducible (AD-7), and the table has no column for them.
