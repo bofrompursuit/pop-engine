@@ -886,8 +886,14 @@ describe("verdictCopy on its own", () => {
   });
 });
 
-describe("a generated plan that cannot then be read back", () => {
-  it("reports the read failure rather than claiming the plan is there", async () => {
+describe("a generated plan whose own response cannot be read", () => {
+  /**
+   * The generation POST answers with the plan it stored, and that is what the page installs. The
+   * only case left needing a re-read is a POST that succeeded with a body this page cannot read: a
+   * plan row was still written, so reporting a failure would misstate what happened and POSTing
+   * again would write a second immutable row for one organizer action.
+   */
+  const stubUnreadableGeneration = (reread: () => Response) => {
     let generated = false;
     vi.stubGlobal(
       "fetch",
@@ -896,16 +902,44 @@ describe("a generated plan that cannot then be read back", () => {
         if (url.endsWith("/plan")) {
           if (init?.method === "POST") {
             generated = true;
-            return jsonResponse(201, plan());
+            // 201, so a plan was written — but the body omits `generatedAt`, which the page reads
+            // unconditionally, so it cannot be rendered.
+            const { generatedAt: _lost, ...unreadable } = plan();
+            return jsonResponse(201, unreadable);
           }
-          // Missing before generating, unreadable after it: the plan was written and then could
-          // not be read back.
-          return generated
-            ? jsonResponse(500, { error: "plan lookup failed" })
-            : jsonResponse(404, {});
+          return generated ? reread() : jsonResponse(404, {});
         }
         return jsonResponse(200, {
           event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
+      }),
+    );
+  };
+
+  it("installs the plan the generation returned, without reading it back", async () => {
+    // The POST answers with the complete plan it stored. Re-reading made the plan the organizer had
+    // just created conditional on a second request: a slow one left the old plan on screen, and a
+    // failed one replaced it with "could not be read" for a plan that exists — and in that state the
+    // button disappeared, so there was no way to retry without reloading the page.
+    let planGets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            return jsonResponse(201, plan({ eventRevision: 7, verdict: "FEASIBLE" }));
+          }
+          planGets += 1;
+          // Only the initial load may read; anything after the POST would be the redundant re-read.
+          return planGets > 1
+            ? jsonResponse(500, { error: "must not be called" })
+            : jsonResponse(404, {});
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 7 },
           warnings: [],
           plan_stale: false,
         });
@@ -917,8 +951,37 @@ describe("a generated plan that cannot then be read back", () => {
     await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
 
     await waitFor(() =>
+      expect(document.querySelector(".plan__verdict")?.textContent).toContain("On track"),
+    );
+    expect(document.querySelector(".plan__verdict")?.textContent).toContain("revision 7");
+    expect(planGets).toBe(1);
+    expect(screen.queryByRole("button", { name: "Generating plan…" })).toBeNull();
+  });
+
+  it("falls back to reading the plan it just wrote", async () => {
+    stubUnreadableGeneration(() => jsonResponse(200, plan()));
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+
+    // The plan exists and is shown, recovered by the one re-read that is genuinely necessary.
+    await waitFor(() =>
+      expect(document.querySelector(".plan__verdict")?.textContent).toContain("generated"),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reports the failure rather than claiming the plan is there", async () => {
+    stubUnreadableGeneration(() => jsonResponse(500, { error: "plan lookup failed" }));
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Generate the plan" }));
+
+    await waitFor(() =>
       expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toContain(
-        "plan lookup failed",
+        "The API returned a plan this page cannot read.",
       ),
     );
     // A plan that could not be read is not a plan that is missing, so generating is not offered

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { loadEvent, regeneratePlan, type LoadResult } from "../intake/events-api";
+import { loadEvent, type LoadResult } from "../intake/events-api";
 import {
+  generatePlan,
   loadPlan,
   loadRulesMeta,
   type PlanResponse,
@@ -119,31 +120,29 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     setRegenerating(true);
     setRegenerationFailure(null);
 
-    const generated = await regeneratePlan(apiBaseUrl, eventId);
+    const generated = await generatePlan(apiBaseUrl, eventId);
     if (active.current !== requested) return;
     if (!generated.ok) {
       setRegenerationFailure(generated.message);
+      // A POST that answered 2xx wrote a plan even when nothing readable came back, so this event no
+      // longer has "no plan" — leaving it `missing` would keep offering to generate and write a
+      // second immutable row for the one that exists.
+      if (generated.stored) setPlanState({ status: "unavailable", message: generated.message });
       setRegenerating(false);
       return;
     }
 
-    // The POST succeeded, so a plan now exists on the server. Which revision it will be compared
-    // against is a separate question, and one this page no longer knows the answer to: the event
-    // may have been edited again while the generation ran, so the revision read before it is not
-    // evidence about the plan that just replaced it. Unconfirmed until the re-read answers.
+    // The generation's own response IS the plan it stored, so it goes on screen here. Asking for
+    // the same plan again made the one the organizer had just created conditional on a second
+    // request that could be slow or fail; nothing about the plan is learned by re-reading it.
+    setPlanState({ status: "ready", plan: generated.plan });
+    setRegenerating(false);
+
+    // The revision this plan will be compared against is a separate question, and one this page no
+    // longer knows the answer to: the event may have been edited again while the generation ran, so
+    // the revision read before it is not evidence about the plan that just replaced it. Unconfirmed
+    // until the re-read answers, and the plan above does not wait for it.
     setEventState({ status: "loading" });
-
-    // Two requests, two independent facts, each applied when it lands. Awaiting them together let
-    // a slow or never-settling event GET withhold a plan the server had already generated, leaving
-    // the button stuck on "Generating plan…" with the plan unreachable — the ancillary check gating
-    // the thing the organizer clicked for.
-    void loadPlan(apiBaseUrl, eventId).then((result) => {
-      if (active.current !== requested) return;
-      setPlanState(planStateFrom(result));
-      // The button's label is about the plan, so it clears with the plan and not with the revision.
-      setRegenerating(false);
-    });
-
     void loadEvent(apiBaseUrl, eventId).then((result) => {
       if (active.current !== requested) return;
       setEventState(eventStateFrom(result));

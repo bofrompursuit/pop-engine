@@ -44,6 +44,16 @@ export type PlanResult =
 export type RulesMetaResult =
   { ok: true; meta: RulesMetaResponse } | { ok: false; message: string };
 
+export type PlanGenerationResult =
+  | { ok: true; plan: PlanResponse }
+  /**
+   * `stored` says whether a plan row exists despite the failure. A POST that answered 2xx wrote one
+   * even if nothing readable came back, and the caller has to stop describing the event as having no
+   * plan — offering to generate again would write a second immutable row for one organizer action
+   * (AD-7). A POST that never succeeded leaves the page's existing state alone.
+   */
+  | { ok: false; stored: boolean; message: string };
+
 const UNREACHABLE = "The API could not be reached.";
 
 async function readJson(response: Response): Promise<unknown> {
@@ -142,6 +152,52 @@ export async function loadPlan(apiBaseUrl: string, eventId: string): Promise<Pla
   const plan = readPlan(body);
   if (plan === null) return { ok: false, missing: false, message: UNREADABLE_PLAN };
   return { ok: true, plan };
+}
+
+/**
+ * Generate a plan for this event and return the plan that was stored.
+ *
+ * `POST /api/events/:id/plan` answers 201 with the complete plan it just wrote, so this installs
+ * that rather than throwing it away and asking for the same plan again. Re-reading made the plan
+ * the organizer had just created conditional on a second request: a slow one left the old plan on
+ * screen, and a failed one replaced it with "could not be read" for a plan that exists — and in
+ * that state the regenerate button disappears, so there was no way to retry without a reload.
+ *
+ * The GET survives for exactly one case: the POST succeeded but its body is not readable as a plan.
+ * A plan row was still written, so reporting a failure would be wrong about what happened, and
+ * POSTing again would write a second immutable row for one organizer action (AD-7). Re-reading is
+ * the only way to show what was created, so that is where a re-read is genuinely necessary.
+ */
+export async function generatePlan(
+  apiBaseUrl: string,
+  eventId: string,
+): Promise<PlanGenerationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/plan`, {
+      method: "POST",
+      ...CREDENTIALED,
+    });
+  } catch {
+    return { ok: false, stored: false, message: UNREACHABLE };
+  }
+
+  const body = await readJson(response);
+  if (!response.ok) {
+    return {
+      ok: false,
+      stored: false,
+      message: failureMessage(body, `The plan could not be generated (HTTP ${response.status}).`),
+    };
+  }
+
+  const plan = readPlan(body);
+  if (plan !== null) return { ok: true, plan };
+
+  const reread = await loadPlan(apiBaseUrl, eventId);
+  return reread.ok
+    ? { ok: true, plan: reread.plan }
+    : { ok: false, stored: true, message: UNREADABLE_PLAN };
 }
 
 /**
