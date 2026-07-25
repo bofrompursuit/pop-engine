@@ -358,11 +358,15 @@ describe("Scenario C — Prospect Park Community Day (dependency chain)", () => 
   });
 
   it("warns but never fabricates a blocker when the sequence is squeezed", () => {
-    // 25 days out: the Parks decision could land after the sound permit's own deadline. A strict
-    // issued-before-filed order is unconfirmed, so this raises a warning and never a missed window.
+    // 25 days out: the Parks decision lands 2026-08-12, one day after the sound permit's own
+    // 2026-08-11 deadline. A strict issued-before-filed order is unconfirmed, so this raises a
+    // warning and never a missed window — but the gate is a day past the deadline, so there is no
+    // date to wait for and none is published. The 35-day case above keeps its gate.
     const squeezed = plan({ ...intakeC, event_date: "2026-08-16" });
     const sound = squeezed.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
-    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    expect(sound?.latestApplyDate).toBe("2026-08-11");
+    expect(sound?.applyAfterDate).toBeNull();
+    expect(sound?.notes.join(" ")).toContain("leaves no window to file in");
     expect(sound?.deadlineStatus).toBe("deadline_approaching");
     expect(squeezed.verdict).toBe("FEASIBLE_AT_RISK");
   });

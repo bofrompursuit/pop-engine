@@ -264,7 +264,11 @@ describe("typed deadlines", () => {
     const plan = evaluate({ ...parkIntake, event_date: "2026-08-12" }, ruleset, TODAY, calendar);
     const sound = plan.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
 
-    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    // No actionable gate: F-202 would render 2026-08-12 as the start date and F-203 would fire
+    // `dependency_unlocked` there, five days after this permit's own deadline. The date stays in
+    // the note, where it explains the conflict instead of scheduling work.
+    expect(sound?.applyAfterDate).toBeNull();
+    expect(sound?.notes.join(" ")).toContain("2026-08-12");
     expect(sound?.latestApplyDate).toBe("2026-08-07");
     expect(sound?.slackDays).toBeNull();
     expect(sound?.deadlineStatus).not.toBe("published_deadline_missed");
@@ -277,6 +281,42 @@ describe("typed deadlines", () => {
       plan.findings.every((finding) => finding.slackDays === null || finding.slackDays >= 0),
       "no finding publishes a negative countdown",
     ).toBe(true);
+  });
+
+  it("does not call direct filing open once the gated permit's own deadline has passed", () => {
+    // Four days out: NYPD-SOUND-001 publishes five days, so its window is already closed and the
+    // gated window is negative too. The closed-sequence note is still right that the order is
+    // unconfirmed, but "filing directly may still be open" would contradict the rule's own
+    // deadline — the same overclaim class as the "not before" wording on #93.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-07-26" }, ruleset, TODAY, calendar);
+    const sound = plan.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    const notes = sound?.notes.join(" ") ?? "";
+
+    expect(sound?.deadlineStatus).toBe("published_deadline_missed");
+    expect(notes).toContain("leaves no window to file in");
+    expect(notes).not.toContain("filing directly may still be open");
+    expect(notes).toContain("confirm the order with the agency");
+    // The caveat is right in the neighbouring case, so its absence here is a condition rather
+    // than a deletion.
+    const stillOpen = evaluate(
+      { ...parkIntake, event_date: "2026-08-12" },
+      ruleset,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    expect(stillOpen?.notes.join(" ")).toContain("filing directly may still be open");
+  });
+
+  it("treats the first day past the Parks floor as on track", () => {
+    // 2026-08-13 is 22 days out: the immediate above-boundary case CONTRIBUTING.md:63 requires,
+    // completing 20 / 21 / 22. An off-by-one that only shifted the first day past the floor would
+    // pass the other two.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-13" }, ruleset, TODAY, calendar);
+    const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe("2026-07-23");
+    expect(parks?.slackDays).toBe(1);
+    expect(parks?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(plan.verdict).not.toBe("INFEASIBLE");
   });
 
   it("treats the day inside the Parks floor as missed", () => {

@@ -182,9 +182,20 @@ function applyDependencySequencing(
     // exists, and leaves the conflict to the note below. The finding keeps its own published date.
     const sequenceClosedWindow = gatedWindowDays !== null && gatedWindowDays < 0;
 
+    // Strict issued-before-filed sequencing is not confirmed, so the direct route stays open —
+    // but only while this finding's own published deadline is. Past it, saying so would assert a
+    // window the rule itself closed.
+    const directFilingOpen = gated.deadlineStatus !== "published_deadline_missed";
+
     sequenced.set(binding.gatedRuleId, {
       ...gated,
-      applyAfterDate,
+      // `apply_after_date` is an actionable gate: F-202 renders it as the start date and F-203
+      // schedules `dependency_unlocked` at it. When the upstream decision is expected after this
+      // finding's own deadline there is no such date — unlocking the task then would be unlocking
+      // it late — so the field is null and the note below carries the conflict instead. Both
+      // consumers read the field: a date means "wait until this date", null means there is no
+      // gate to wait for.
+      applyAfterDate: sequenceClosedWindow ? null : applyAfterDate,
       // Slack for a gated finding is the window it can actually be filed in, not the distance
       // from today to its own deadline (F-102 AC 5: latest_apply − apply_after). Keeping the
       // ungated figure overstates the buffer that deadline copy and F-203's alerts read.
@@ -203,8 +214,10 @@ function applyDependencySequencing(
             : sequenceClosedWindow
               ? `, which is after this permit's own ${gated.latestApplyDate ?? ""} deadline, so ` +
                 `the sequence leaves no window to file in. Strict issued-before-filed sequencing ` +
-                `is not confirmed by located primary text — filing directly may still be open, ` +
-                `so confirm the order with the agency`
+                `is not confirmed by located primary text` +
+                (directFilingOpen
+                  ? ` — filing directly may still be open, so confirm the order with the agency`
+                  : `, so confirm the order with the agency`)
               : `, leaving ${gatedWindowDays} days to file. Strict issued-before-filed sequencing ` +
                 `is not confirmed by located primary text — confirm the order with the agency`),
       ],
