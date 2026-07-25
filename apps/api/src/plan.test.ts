@@ -6,11 +6,17 @@ import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parseEngineRuleset, type EngineRuleset, type HolidayCalendar } from "@pop-engine/engine";
+import {
+  parseEngineRuleset,
+  parseIntakeContract,
+  type EngineRuleset,
+  type HolidayCalendar,
+  type IntakeContract,
+} from "@pop-engine/engine";
 import { createApp } from "./app";
 import { holidayCalendarWarning, pinnedCalendar, todayInJurisdiction } from "./calendar";
 import { calendarDateFrom, createPlanService } from "./plan";
-import { rulesFilePath } from "./ruleset";
+import { loadRuleset, rulesFilePath } from "./ruleset";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 const TODAY = "2026-07-22";
@@ -40,6 +46,7 @@ const scenarioAEvent = {
 describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
   let pool: Pool;
   let ruleset: EngineRuleset;
+  let intakeContract: IntakeContract;
 
   const insertEvent = async (overrides: Record<string, unknown> = {}): Promise<string> => {
     const row: Record<string, unknown> = { ...scenarioAEvent, ...overrides };
@@ -61,14 +68,21 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     holidays: [],
   });
 
+  // The app serves the intake routes alongside the plan routes, so it takes their
+  // dependencies too. These tests drive only the plan routes; the intake contract and
+  // the pool are the same ones the api boots with.
   const appWith = (resolveCalendar = fixtureCalendar) =>
     createApp({
+      database: pool,
+      intakeContract,
+      today: () => TODAY,
       planService: createPlanService(pool, ruleset, resolveCalendar, () => TODAY),
     });
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: databaseUrl });
     ruleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
+    intakeContract = parseIntakeContract((await loadRuleset()).document);
   });
 
   afterAll(async () => {
@@ -242,6 +256,14 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(todayInJurisdiction("US-NY-NYC", lateEvening)).toBe("2026-08-11");
     expect(todayInJurisdiction("US-NY-NYC", new Date("2026-08-12T14:00:00Z"))).toBe("2026-08-12");
     expect(() => todayInJurisdiction("US-XX-NOWHERE")).toThrow(/no local time zone is mapped/);
+  });
+
+  it("moves the rollover with the offset rather than fixing it", () => {
+    // The same boundary in January, when New York is UTC-5 rather than UTC-4. An intake
+    // date and a plan deadline both read the day from here, so a fixed offset would put
+    // one of the two on the wrong side of midnight for part of the year.
+    expect(todayInJurisdiction("US-NY-NYC", new Date("2026-01-12T04:30:00Z"))).toBe("2026-01-11");
+    expect(todayInJurisdiction("US-NY-NYC", new Date("2026-01-12T05:30:00Z"))).toBe("2026-01-12");
   });
 
   it("rejects a malformed event id without touching the database", async () => {
