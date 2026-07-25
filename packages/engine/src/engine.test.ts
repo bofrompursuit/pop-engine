@@ -52,10 +52,10 @@ function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRulese
       slack_warning_days: { value: 14 },
       business_day_math: { calendar: "test-calendar@2026" },
     },
+    // Only fields the rules below consume: the loader refuses a declared field nothing reads.
     intake_fields: [
       { field: "event_date", type: "date" },
       { field: "headcount", type: "integer" },
-      { field: "structure_types", type: "multi_enum", values: ["tent_canopy", "none"] },
     ],
     rules,
     advisories: [],
@@ -744,6 +744,53 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
     ).toThrow(/levels must not be empty/);
   });
 
+  it("refuses a declared field no rule, deadline, or scoping condition reads", () => {
+    // The reverse of the check boot already had. A trigger naming an undeclared field was refused;
+    // a declared field naming no trigger was invisible, which is how seven of them went unnoticed.
+    expect(() =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+          { field: "favourite_colour", type: "enum", values: ["blue"] },
+        ],
+        rules: [
+          {
+            id: "RULE-X",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      }),
+    ).toThrow(/"favourite_colour" is declared but no rule trigger, deadline, or scoping condition/);
+  });
+
+  it("counts deadline resolution and scoping as consuming a field", () => {
+    // plaza_level and plaza_multiple_blocks appear in no trigger but resolve SAPO-PLAZA-001's
+    // deadline; generator_present appears in no trigger but gates the quantity questions that
+    // rules do read. None of them belongs on the unconsumed list, and the published ruleset
+    // loading at all is the assertion.
+    expect(ruleset.intakeFields.map((field) => field.field)).toEqual(
+      expect.arrayContaining([
+        "plaza_level",
+        "plaza_multiple_blocks",
+        "generator_present",
+        "event_date",
+      ]),
+    );
+  });
+
   it("accepts the published ruleset unchanged", () => {
     expect(ruleset.rulesetVersion).toBe("nyc.v2.4");
     expect(ruleset.slackWarningDays).toBe(14);
@@ -768,12 +815,29 @@ describe("asked_when scoping", () => {
         ...extraFields,
         { field: "venue_note", type: "boolean", asked_when: askedWhen },
       ],
+      // The scoped field is what the rule reads; the others are consumed by scoping it.
       rules: [
         {
           id: "RULE-SCOPE",
           kind: "permit",
           trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
           output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+        {
+          // Consumes the fields the expressions under test scope against, so the registry stays
+          // constant while the expression varies. The loader refuses a field nothing reads.
+          id: "RULE-CONSUMER",
+          kind: "note",
+          trigger: {
+            any: [
+              { field: "headcount", op: "gte", value: 1_000_000 },
+              { field: "food_present", op: "bool", value: true },
+              { field: "sapo_event_type", op: "eq", value: "street_event" },
+            ],
+          },
+          output: { note_text: "reads the scoping fields" },
           verification: { status: "SOURCE_CONFIRMED" },
           source: { citation: "c", urls: ["https://example.test"] },
         },
