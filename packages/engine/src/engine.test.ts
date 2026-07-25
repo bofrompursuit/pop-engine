@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./t
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.3.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.4.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.3 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.4 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -745,7 +745,7 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.3");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.4");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
@@ -871,5 +871,164 @@ describe("asked_when scoping", () => {
 
   it("rejects a field scoped by itself", () => {
     expect(withScoping("venue_note")).toThrow(/scoping is cyclic: venue_note → venue_note/);
+  });
+});
+
+// nyc.v2.4 publishes two facts the engine used to hold in code. Both tests below are written so
+// they fail if the engine goes back to assuming: the level binding is proven by naming fields the
+// old constant never held, and the boundary by a threshold that declares none.
+describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)", () => {
+  const testCalendar: PublishedHolidayCalendar = { id: "test-calendar@2026", holidays: [] };
+  const plazaRuleset = (deadline: Record<string, unknown>, fields: unknown[] = []) =>
+    parseEngineRuleset({
+      ruleset_version: "test.v1",
+      jurisdiction: "US-NY-NYC",
+      snapshot_date: "2026-07-22",
+      config: {
+        slack_warning_days: { value: 14 },
+        business_day_math: { calendar: "test-calendar@2026" },
+      },
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "tier", type: "enum", values: ["gold", "silver"] },
+        { field: "spans_two_sites", type: "boolean" },
+        ...fields,
+      ],
+      rules: [
+        {
+          id: "RULE-LEVEL",
+          kind: "permit",
+          trigger: { all: [{ field: "tier", op: "in", value: ["gold", "silver"] }] },
+          output: { permit_name: "x", agency: "DOT", deadline },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ],
+      advisories: [],
+    });
+
+  const byLevel = {
+    type: "published_minimum_by_level",
+    level_field: "tier",
+    multi_block_field: "spans_two_sites",
+    levels: {
+      gold: { calendar_days: 30, multi_block_days: 60 },
+      silver: { calendar_days: 10, multi_block_days: 20 },
+    },
+  };
+
+  it("dates a by-level deadline from the fields the rule names, not from ones the engine knows", () => {
+    // Neither "tier" nor "spans_two_sites" is a field the engine could have known about: the
+    // published ruleset's only by-level deadline keys on plaza_level/plaza_multiple_blocks. The
+    // dates below can only come from reading the deadline's own declaration.
+    const dateFor = (intake: Record<string, unknown>) =>
+      evaluate(
+        { event_date: "2026-10-01", ...intake } as unknown as EventIntake,
+        plazaRuleset(byLevel),
+        TODAY,
+        testCalendar,
+      ).findings[0]?.latestApplyDate;
+
+    expect(dateFor({ tier: "gold", spans_two_sites: false })).toBe("2026-09-01"); // 30 days
+    expect(dateFor({ tier: "silver", spans_two_sites: false })).toBe("2026-09-21"); // 10 days
+    // The multi-block window is chosen by the named boolean, not by whichever boolean the
+    // registry happens to list first.
+    expect(dateFor({ tier: "gold", spans_two_sites: true })).toBe("2026-08-02"); // 60 days
+  });
+
+  it("refuses a by-level deadline that does not say which fields it keys on", () => {
+    const { level_field: levelField, multi_block_field: _ignored, ...unbound } = byLevel;
+    expect(() => plazaRuleset(unbound)).toThrow(/level_field/);
+    expect(() => plazaRuleset({ ...unbound, level_field: levelField })).toThrow(
+      /multi_block_field/,
+    );
+  });
+
+  it("refuses a binding that cannot carry the levels the rule publishes", () => {
+    // A field that never offers "gold" would silently date every gold event as unknown.
+    expect(() =>
+      plazaRuleset({ ...byLevel, level_field: "grade" }, [
+        { field: "grade", type: "enum", values: ["silver"] },
+      ]),
+    ).toThrow(/does not offer published level\(s\) gold/);
+    expect(() => plazaRuleset({ ...byLevel, level_field: "nope" })).toThrow(
+      /"nope" is not a declared intake field/,
+    );
+    // Choosing between a level's two windows is a yes/no question.
+    expect(() => plazaRuleset({ ...byLevel, multi_block_field: "tier" })).toThrow(
+      /is a enum field/,
+    );
+  });
+
+  it("leaves a threshold that declares no boundary exclusive of its own value", () => {
+    // DOB-TENT-001 declares boundary "conditional" for 400 sq ft; FDNY-GENERATOR-001's 2.5 gallons
+    // declares nothing and so excludes 2.5 exactly. If the engine went back to a rule-id list this
+    // synthetic rule would be off it and the assertion would still pass, so the published tent case
+    // below is the half that pins the behavior to the data.
+    const atThreshold = (extra: Record<string, unknown>) =>
+      evaluate(
+        { event_date: "2026-10-01", headcount: 400 } as unknown as EventIntake,
+        syntheticRuleset([
+          {
+            id: "RULE-THRESHOLD",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gt", value: 400, ...extra }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ]),
+        TODAY,
+        testCalendar,
+      );
+
+    expect(atThreshold({}).findings).toHaveLength(0);
+    expect(atThreshold({ boundary: "conditional" }).findings).toHaveLength(1);
+    expect(atThreshold({ boundary: "conditional" }).verdict).toBe("CONDITIONAL");
+  });
+
+  it("rejects a boundary it cannot honor rather than ignoring it", () => {
+    const withTrigger = (condition: Record<string, unknown>) => () =>
+      syntheticRuleset([
+        {
+          id: "RULE-THRESHOLD",
+          kind: "permit",
+          trigger: { all: [condition] },
+          output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ]);
+    expect(withTrigger({ field: "headcount", op: "gt", value: 400, boundary: "strict" })).toThrow(
+      /boundary has unsupported value "strict"/,
+    );
+    // "at the threshold" means nothing for an operator that has no threshold to sit on.
+    expect(
+      withTrigger({ field: "headcount", op: "eq", value: 400, boundary: "conditional" }),
+    ).toThrow(/boundary does not apply to the "eq" operator/);
+    expect(
+      withTrigger({
+        field: "structure_types",
+        op: "contains",
+        value: "tent_canopy",
+        boundary: "conditional",
+      }),
+    ).toThrow(/boundary does not apply to the "contains" operator/);
+    // "gte" already admits its threshold, so there is no excluded value for a boundary to reopen.
+    expect(
+      withTrigger({ field: "headcount", op: "gte", value: 400, boundary: "conditional" }),
+    ).toThrow(/boundary does not apply to the "gte" operator/);
+  });
+
+  it("will not load nyc.v2.3, which does not publish either fact", () => {
+    // The bump requires the fields rather than defaulting them: one code path, and a v2.3 artifact
+    // is refused at boot instead of being evaluated under v2.4 assumptions (AD-13).
+    const v23 = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    expect(() => parseEngineRuleset(v23)).toThrow(/level_field/);
   });
 });

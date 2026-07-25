@@ -5,7 +5,6 @@
 import { addCalendarDays, differenceInCalendarDays, subtractBusinessDays } from "./calendar";
 import type { ScopeResolver } from "./conditions";
 import { UNKNOWN_ANSWER } from "./conditions";
-import { LEVEL_DEADLINE_BINDING } from "./proposals";
 import type {
   Deadline,
   DeadlineBoundary,
@@ -120,7 +119,7 @@ function resolveLevelDays(
   deadline: Extract<Deadline, { type: "published_minimum_by_level" }>,
   context: DeadlineContext,
 ): LevelResolution {
-  const { levelField, multiBlockField } = LEVEL_DEADLINE_BINDING;
+  const { levelField, multiBlockField } = deadline;
   if (isUnanswered(levelField, context)) {
     return { kind: "unknown", field: levelField, display: levelRangeDisplay(deadline) };
   }

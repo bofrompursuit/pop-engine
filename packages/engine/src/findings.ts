@@ -239,7 +239,7 @@ export function resolveFindings(
   const unknownFields = new Set<string>();
 
   for (const rule of ruleset.rules) {
-    const evaluation = evaluateTrigger(rule.trigger, intake, scope, rule.id);
+    const evaluation = evaluateTrigger(rule.trigger, intake, scope);
     trace.push({ ruleId: rule.id, result: evaluation.result });
     if (evaluation.result === "false") continue;
     for (const field of evaluation.unknownFields) unknownFields.add(field);

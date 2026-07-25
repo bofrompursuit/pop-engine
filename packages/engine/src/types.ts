@@ -19,7 +19,17 @@ export type Condition = {
   readonly field: string;
   readonly op: ConditionOperator;
   readonly value: unknown;
+  /**
+   * Declared when an answer exactly on this threshold is unresolved rather than below it.
+   * DOB-TENT-001 publishes it for "more than 400 sq ft", whose own note says exactly 400 renders
+   * CONDITIONAL. Per condition, because it is a fact about that threshold: FDNY-GENERATOR-001's
+   * 2.5 gallons and DOB-STAGE-001's 2 feet exclude their exact values and say so by declaring
+   * nothing.
+   */
+  readonly boundary: ConditionBoundary | null;
 };
+
+export type ConditionBoundary = "conditional";
 
 export type TriggerNode =
   Condition | { readonly all: readonly TriggerNode[] } | { readonly any: readonly TriggerNode[] };
@@ -66,6 +76,13 @@ export type Deadline =
         Record<string, { readonly calendarDays: number; readonly multiBlockDays: number | null }>
       >;
       readonly unknownLevelBehavior: string | null;
+      /**
+       * The intake fields this deadline keys on, declared by the rule that publishes the levels.
+       * Before nyc.v2.4 the engine had to be told these names out of band, so a ruleset could not
+       * say which field a level deadline reads.
+       */
+      readonly levelField: string;
+      readonly multiBlockField: string;
     } & BoundedDeadline)
   | ({
       readonly type: "composite";

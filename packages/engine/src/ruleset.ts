@@ -7,6 +7,7 @@ import { parseAskedWhen } from "./conditions";
 import { EvaluationError } from "./types";
 import type {
   Condition,
+  ConditionBoundary,
   ConditionOperator,
   Deadline,
   DeadlineBoundary,
@@ -98,6 +99,36 @@ function optionalStringArray(container: JsonObject, key: string, label: string):
   return asArray(value, label).map((entry, index) => asString(entry, `${label}[${index}]`));
 }
 
+/**
+ * A threshold whose exact value is unresolved rather than below the line.
+ *
+ * Only an ordering comparison against a number can carry one: "exactly on the boundary" means
+ * nothing for an equality or a set membership, so a rule declaring it there is an authoring
+ * mistake rather than something to ignore. Published per condition because it is a fact about
+ * that threshold — FDNY-GENERATOR-001's 2.5 gallons and DOB-STAGE-001's 2 feet exclude their
+ * exact values, and say so by declaring nothing.
+ */
+function parseConditionBoundary(
+  node: JsonObject,
+  operator: ConditionOperator,
+  label: string,
+): ConditionBoundary | null {
+  const declared = node.boundary;
+  if (declared === undefined) return null;
+  if (declared !== "conditional") {
+    fail(`${label}.boundary has unsupported value "${String(declared)}"`);
+  }
+  // Only "gt" excludes its own threshold, so only "gt" has an excluded value to reopen. Under
+  // "gte" the exact value already matches, which is a different fact and not this one.
+  if (operator !== "gt") {
+    fail(`${label}.boundary does not apply to the "${operator}" operator`);
+  }
+  if (typeof node.value !== "number") {
+    fail(`${label}.boundary needs a numeric threshold to sit on`);
+  }
+  return declared;
+}
+
 function parseTrigger(value: unknown, label: string): TriggerNode {
   const node = asObject(value, label);
   const keys = ["all", "any", "field"].filter((key) => Object.hasOwn(node, key));
@@ -112,6 +143,7 @@ function parseTrigger(value: unknown, label: string): TriggerNode {
       field: asString(node.field, `${label}.field`),
       op: operator,
       value: node.value,
+      boundary: parseConditionBoundary(node, operator, label),
     } satisfies Condition;
   }
 
@@ -150,7 +182,56 @@ function parseBoundary(deadline: JsonObject, type: string, label: string): Deadl
   return declared;
 }
 
-function parseDeadline(value: unknown, label: string): Deadline | null {
+/**
+ * The intake fields a by-level deadline keys on, as the rule declares them.
+ *
+ * Published data since nyc.v2.4 rather than supplied out of band. Both halves are validated
+ * against the registry, because a binding naming a field the evaluator cannot read is a deadline
+ * it cannot date: the level field must offer every published level, and the multi-block field must
+ * be the boolean that chooses between a level's two windows.
+ */
+function parseLevelBinding(
+  deadline: JsonObject,
+  levels: Record<string, { calendarDays: number; multiBlockDays: number | null }>,
+  intakeFields: readonly IntakeFieldDefinition[],
+  label: string,
+): { levelField: string; multiBlockField: string } {
+  const levelField = requireDeclaredField(deadline, "level_field", intakeFields, label);
+  const missing = Object.keys(levels).filter((key) => levelField.values?.includes(key) !== true);
+  if (missing.length > 0) {
+    fail(
+      `${label}.level_field "${levelField.field}" does not offer published level(s) ` +
+        missing.join(", "),
+    );
+  }
+
+  const multiBlockField = requireDeclaredField(deadline, "multi_block_field", intakeFields, label);
+  if (multiBlockField.type !== "boolean") {
+    fail(
+      `${label}.multi_block_field "${multiBlockField.field}" is a ${multiBlockField.type} field; ` +
+        `choosing between a level's two windows needs a boolean`,
+    );
+  }
+  return { levelField: levelField.field, multiBlockField: multiBlockField.field };
+}
+
+function requireDeclaredField(
+  deadline: JsonObject,
+  key: string,
+  intakeFields: readonly IntakeFieldDefinition[],
+  label: string,
+): IntakeFieldDefinition {
+  const name = asString(deadline[key], `${label}.${key}`);
+  const declared = intakeFields.find((field) => field.field === name);
+  if (declared === undefined) fail(`${label}.${key} "${name}" is not a declared intake field`);
+  return declared;
+}
+
+function parseDeadline(
+  value: unknown,
+  label: string,
+  intakeFields: readonly IntakeFieldDefinition[],
+): Deadline | null {
   if (value === undefined || value === null) return null;
   const deadline = asObject(value, label);
   const type = asString(deadline.type, `${label}.type`);
@@ -191,6 +272,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
         qualification,
         boundary,
+        ...parseLevelBinding(deadline, parsedLevels, intakeFields, label),
       };
     }
     case "composite": {
@@ -236,7 +318,11 @@ function parseSource(value: unknown, label: string): RuleSource | null {
   };
 }
 
-function parseRule(value: unknown, label: string): EngineRule {
+function parseRule(
+  value: unknown,
+  label: string,
+  intakeFields: readonly IntakeFieldDefinition[],
+): EngineRule {
   const rule = asObject(value, label);
   const kind = asString(rule.kind, `${label}.kind`) as RuleKind;
   if (!RULE_KINDS.includes(kind)) fail(`${label}.kind has unsupported value "${kind}"`);
@@ -275,7 +361,7 @@ function parseRule(value: unknown, label: string): EngineRule {
     agency: optionalString(output, "agency"),
     publishedDisposition:
       publishedDisposition === null ? null : (PUBLISHED_DISPOSITIONS[publishedDisposition] ?? null),
-    deadline: parseDeadline(output.deadline, `${label}.output.deadline`),
+    deadline: parseDeadline(output.deadline, `${label}.output.deadline`, intakeFields),
     feeDisplay: fee === null ? null : optionalString(fee, "display"),
     portalName: portal === null ? null : optionalString(portal, "name"),
     portalUrl: portal === null ? null : optionalString(portal, "url"),
@@ -375,10 +461,10 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
     ),
   );
   const rules = asArray(ruleset.rules, "ruleset.rules").map((rule, index) =>
-    parseRule(rule, `ruleset.rules[${index}]`),
+    parseRule(rule, `ruleset.rules[${index}]`, intakeFields),
   );
   const advisories = asArray(ruleset.advisories, "ruleset.advisories").map((rule, index) =>
-    parseRule(rule, `ruleset.advisories[${index}]`),
+    parseRule(rule, `ruleset.advisories[${index}]`, intakeFields),
   );
 
   const declaredFields = new Set(intakeFields.map((field) => field.field));
