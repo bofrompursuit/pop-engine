@@ -88,7 +88,13 @@ function documentedInputs(scenario: string): {
   const body = line
     .replace("**Inputs:**", "")
     .replace(/\*\*/g, "")
-    .replace(/\(([^)]*)\)/g, (_whole, inner: string) => (inner.includes("=") ? `· ${inner}` : ""));
+    // Unwrapped, never deleted. Dropping a parenthetical that carries no `=` erased real inputs
+    // before either reader saw them: Scenario E states its generator as "(gasoline 5 gal, 50 kW)",
+    // and both are mapped fixture values, so the gallons or the kW could move to any other
+    // above-threshold number with every assertion still green. Unwrapping sends them to `prose`
+    // instead, where the silently-skips test pins them verbatim — so a changed number fails and
+    // someone decides, rather than the text vanishing on the way in.
+    .replace(/\(([^)]*)\)/g, (_whole, inner: string) => `· ${inner}`);
 
   const pairs = new Map<string, string>();
   const prose: string[] = [];
@@ -127,12 +133,58 @@ function asFixtureType(documented: string, fixtureValue: unknown): unknown {
  * decides whether it can now be compared rather than it quietly going unchecked.
  */
 const UNCOMPARED_PROSE: Readonly<Record<string, readonly string[]>> = {
-  A: ["brooklyn", "no structures", "no flame", "no generator", "no alcohol"],
-  B: ["manhattan", "private_venue", "no structures/flame/generator/alcohol"],
-  C: ["brooklyn", "park", "no food", "nothing else"],
-  D: ["queens", "street", "no public food service", "neighbors' own grills", "no alcohol"],
-  E: ["manhattan", "plaza", "battery none", "no alcohol"],
-  F: ["manhattan", "private_venue", "food catered", "nothing sold"],
+  A: [
+    "brooklyn",
+    "multi-block activation",
+    "35 days out",
+    "no structures",
+    "no flame",
+    "no generator",
+    "no alcohol",
+  ],
+  B: [
+    "manhattan",
+    "private_venue",
+    "21 days out",
+    "prepackaged snacks",
+    "free",
+    "the gallery itself",
+    "no structures/flame/generator/alcohol",
+  ],
+  C: ["brooklyn", "park", "56 days out", "no food", "nothing else"],
+  D: [
+    "queens",
+    "street",
+    "70 days out",
+    "no public food service",
+    "neighbors' own grills",
+    "no alcohol",
+  ],
+  // "gasoline 5 gal" and "50 kW" are `generator_gasoline_gallons` and `generator_kw`, both mapped
+  // fixture values. They are pinned here rather than parsed: reading them would mean mapping a
+  // phrase to a field, which is the prose interpretation this suite exists to remove. Pinned, a
+  // change to either number fails this test and someone decides — which is what the erasure they
+  // replace could not do.
+  E: [
+    "manhattan",
+    "plaza",
+    "135 days out",
+    "free sampling",
+    "20×20",
+    "gasoline 5 gal",
+    "50 kW",
+    "battery none",
+    "no alcohol",
+  ],
+  F: [
+    "manhattan",
+    "private_venue",
+    "rooftop",
+    "20 days out",
+    "invite-only",
+    "food catered",
+    "nothing sold",
+  ],
 };
 
 /**
@@ -158,6 +210,44 @@ function reachedIn(scenario: string): string[] {
 }
 
 /**
+ * The rules a scenario reaches only by being rescoped, keyed by the metadata name for it.
+ *
+ * `A-rescope` is a real scenario id in `exercised_by_scenarios`, and round 3 taught the reader to
+ * accept the name without ever evaluating it — which reads as coverage from outside while checking
+ * nothing, the same shape as the allowlist this suite refuses. So the variants are evaluated.
+ *
+ * They come from the engine's own `rescopeSuggestions` rather than from parsing the key's prose:
+ * the key documents A's three as size=medium, size=small and private venue, and those are exactly
+ * the three changes the engine proposes, so reading them off the plan tests the documented set
+ * without introducing a second interpretation of the document.
+ *
+ * "Reaches only by being rescoped" is the definition, because a rule the base scenario already
+ * reaches is named by the base scenario's own id.
+ */
+function rescopeReachedIn(scenario: string): string[] {
+  const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
+  if (fixture === undefined) throw new Error(`no intake fixture for Scenario ${scenario}`);
+  const submission = fixtureSubmission(fixture) as EventIntake;
+  const base = evaluate(submission, ruleset, FIXTURE_TODAY, calendar);
+  const baseReached = new Set(reachedIn(scenario));
+
+  const reached = new Set<string>();
+  for (const suggestion of base.verdictDetail.rescopeSuggestions) {
+    const variant = evaluate(
+      { ...submission, [suggestion.change.field]: suggestion.change.value } as EventIntake,
+      ruleset,
+      FIXTURE_TODAY,
+      calendar,
+    );
+    for (const entry of variant.verdictDetail.trace) {
+      if (entry.result !== "true" && entry.result !== "unknown") continue;
+      if (!baseReached.has(entry.ruleId)) reached.add(entry.ruleId);
+    }
+  }
+  return [...reached];
+}
+
+/**
  * Disagreements that exist today between two approved artifacts. Each is a decision someone owns,
  * not something a test may resolve: changing either side is a rules-owner or team change.
  */
@@ -167,6 +257,30 @@ const KNOWN_DISAGREEMENTS: readonly {
   kind: "reaches-but-key-omits" | "claims-scenario-it-cannot-reach" | "reaches-scenario-it-omits";
   issue: string;
 }[] = [
+  {
+    scenarios: ["A-rescope"],
+    ruleId: "ADV-VENUE-OCCUPANCY-001",
+    kind: "reaches-scenario-it-omits",
+    issue:
+      "#89: Scenario A's private-venue rescope newly reaches this advisory — the key's own rescope " +
+      "(c) says the venue-occupancy advisory remains — but its exercised_by_scenarios does not name " +
+      "A-rescope. Surfaced by evaluating the rescopes rather than only admitting the name.",
+  },
+  {
+    scenarios: ["A-rescope"],
+    ruleId: "DOB-ASSEMBLY-001",
+    kind: "reaches-scenario-it-omits",
+    issue:
+      "#89: same private-venue rescope, same omission. The rescope moves the event indoors, which " +
+      "is what reaches the assembly rule; whether a rescope-only rule should carry A-rescope at all " +
+      "is the product decision, so both are recorded rather than resolved here.",
+  },
+  {
+    scenarios: ["A-rescope"],
+    ruleId: "ADV-NOISE-CODE-001",
+    kind: "reaches-scenario-it-omits",
+    issue: "#89: same private-venue rescope, same omission.",
+  },
   {
     scenarios: ["F"],
     ruleId: "ADV-VENUE-OCCUPANCY-001",
@@ -385,6 +499,43 @@ describe("the fixture suite and the published ruleset agree", () => {
     expect(inert, `rules the key lists for ${scenario} that no intake answer reaches`).toEqual([]);
   });
 
+  it.each(["A"])(
+    "Scenario %s's documented rescopes agree with exercised_by_scenarios",
+    (scenario) => {
+      // The same bidirectional check as the scenarios below, run over the rescope variants. Admitting
+      // "A-rescope" as a valid name without this evaluates nothing about it: an unrelated rule could
+      // claim the rescope, or a rule the rescope reaches could drop the claim, and the union of names
+      // would still look right.
+      const name = `${scenario}-rescope`;
+      const reached = rescopeReachedIn(scenario);
+      expect(
+        reached.length,
+        `${name} reaches nothing, so this check would assert nothing`,
+      ).toBeGreaterThan(0);
+
+      const claims = new Map(
+        [...publishedRuleset.rules, ...publishedRuleset.advisories].map((rule) => [
+          rule.id,
+          rule.exercised_by_scenarios ?? [],
+        ]),
+      );
+
+      const claimsButCannotReach = [...claims]
+        .filter(([ruleId, listed]) => listed.includes(name) && !reached.includes(ruleId))
+        .map(([ruleId]) => ruleId)
+        .filter((ruleId) => !isKnown(name, ruleId, "claims-scenario-it-cannot-reach"));
+      expect(claimsButCannotReach, `rules claiming ${name} that no rescope reaches`).toEqual([]);
+
+      const reachesButOmits = metadataOmissions(name, reached, claims).filter(
+        (ruleId) => !isKnown(name, ruleId, "reaches-scenario-it-omits"),
+      );
+      expect(
+        reachesButOmits,
+        `rules ${name} reaches, fired or conditional, whose exercised_by_scenarios omits it`,
+      ).toEqual([]);
+    },
+  );
+
   it.each(scenarios)("Scenario %s agrees with exercised_by_scenarios", (scenario) => {
     const reached = reachedIn(scenario);
     const claims = new Map(
@@ -434,7 +585,10 @@ describe("the fixture suite and the published ruleset agree", () => {
     // list becomes a place where a real finding can hide behind an issue number.
     for (const entry of KNOWN_DISAGREEMENTS) {
       for (const scenario of entry.scenarios) {
-        const reached = reachedIn(scenario);
+        // A rescope id names variants of a scenario rather than a fixture of its own, so it is
+        // reached the same way the check that records it reaches it.
+        const rescopeOf = /^([A-Z])-rescope$/.exec(scenario)?.[1];
+        const reached = rescopeOf === undefined ? reachedIn(scenario) : rescopeReachedIn(rescopeOf);
         const claims =
           [...publishedRuleset.rules, ...publishedRuleset.advisories].find(
             (rule) => rule.id === entry.ruleId,
