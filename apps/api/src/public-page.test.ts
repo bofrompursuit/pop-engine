@@ -26,6 +26,11 @@ describe("mapUrlForVenue", () => {
       "https://maps.google.com/?q=Bushwick%20Lot%2C%20brooklyn%2C%20NYC",
     );
   });
+
+  it("returns null when there is no venue address", () => {
+    expect(mapUrlForVenue(null, "brooklyn")).toBeNull();
+    expect(mapUrlForVenue("   ", "brooklyn")).toBeNull();
+  });
 });
 
 describe.runIf(databaseUrl.length > 0)("F-301 public page endpoints (database)", () => {
@@ -65,6 +70,11 @@ describe.runIf(databaseUrl.length > 0)("F-301 public page endpoints (database)",
     expect(unpublished.status).toBe(404);
     expect(unpublished.body.error).toMatch(/not available/i);
 
+    await database.query("UPDATE events SET location_name = $2 WHERE id = $1", [
+      eventId,
+      "Bushwick Lot",
+    ]);
+
     const patched = await request(api).patch(`/api/events/${eventId}/public-page`).send({
       description: "A street night in Bushwick.",
       public_page_published: true,
@@ -73,6 +83,7 @@ describe.runIf(databaseUrl.length > 0)("F-301 public page endpoints (database)",
     expect(patched.body.public_page_published).toBe(true);
     expect(patched.body.description).toBe("A street night in Bushwick.");
     expect(patched.body.public_path).toBe(`/e/${eventId}`);
+    expect(patched.body.map_url).toContain("maps.google.com");
 
     const published = await request(api).get(`/e/${eventId}`);
     expect(published.status).toBe(200);
@@ -81,6 +92,11 @@ describe.runIf(databaseUrl.length > 0)("F-301 public page endpoints (database)",
     expect(published.body.rsvp_enabled).toBe(true);
     expect(published.body.map_url).toContain("maps.google.com");
     expect(JSON.stringify(published.body)).not.toMatch(/verdict|permit|checklist|document/i);
+
+    await database.query("UPDATE events SET location_name = NULL WHERE id = $1", [eventId]);
+    const noVenue = await request(api).get(`/e/${eventId}`);
+    expect(noVenue.status).toBe(200);
+    expect(noVenue.body.map_url).toBeNull();
   });
 
   it("shows an infeasible warning on the organizer view when the latest plan is infeasible", async () => {

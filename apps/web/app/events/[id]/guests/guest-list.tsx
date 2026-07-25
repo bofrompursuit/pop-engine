@@ -14,8 +14,10 @@ export function GuestListView({ eventId, apiBaseUrl }: GuestListProps) {
   const [list, setList] = useState<GuestList | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [cancellingIds, setCancellingIds] = useState<ReadonlySet<string>>(() => new Set());
-  // Drop stale reloads when overlapping cancels finish out of order.
+  // Request epoch vs last successfully applied reload — a failed newer cancel must not
+  // discard an older cancel that already refreshed the authoritative list.
   const listEpoch = useRef(0);
+  const appliedEpoch = useRef(0);
 
   useEffect(() => {
     if (!UUID.test(eventId)) {
@@ -71,7 +73,8 @@ export function GuestListView({ eventId, apiBaseUrl }: GuestListProps) {
       setFailure(result.message);
       return;
     }
-    if (epoch === listEpoch.current) {
+    if (epoch > appliedEpoch.current) {
+      appliedEpoch.current = epoch;
       setList(result.list);
     }
   };

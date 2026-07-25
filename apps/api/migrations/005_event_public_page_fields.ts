@@ -12,6 +12,10 @@ export const shorthands: ColumnDefinitions | undefined = undefined;
  * Numbered 005 so it runs after the already-merged 004_checklist_item_created_at.
  * (An earlier draft used 003; that name would fail node-pg-migrate's default
  * order check on databases that already applied 004.)
+ *
+ * Four-lane contract: these `events` columns need all-lane ack (OPEN-QUESTIONS B-3 /
+ * SPEC-CONFLICT #100). This migration is the proposed resolution, not a silent
+ * ratification of B-3.
  */
 export function up(pgm: MigrationBuilder): void {
   pgm.addColumns("events", {

@@ -92,11 +92,13 @@ export function EventPageView({ eventId, apiBaseUrl }: EventPageViewProps) {
       {event.description !== null && event.description.length > 0 && (
         <p className="event-page__lede">{event.description}</p>
       )}
-      <p>
-        <a className="event-page__map" href={event.map_url} target="_blank" rel="noreferrer">
-          Open map
-        </a>
-      </p>
+      {event.map_url !== null && (
+        <p>
+          <a className="event-page__map" href={event.map_url} target="_blank" rel="noreferrer">
+            Open map
+          </a>
+        </p>
+      )}
 
       {event.rsvp_enabled && (
         <form

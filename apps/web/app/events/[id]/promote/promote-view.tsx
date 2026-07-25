@@ -152,9 +152,20 @@ export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps
           type="button"
           className="promote__button promote__secondary"
           onClick={() => {
-            void navigator.clipboard.writeText(shareUrl).then(() => {
-              setStatusMessage("Link copied.");
-            });
+            void (async () => {
+              setFailure(null);
+              setStatusMessage(null);
+              if (typeof navigator.clipboard?.writeText !== "function") {
+                setFailure("Copy isn't available here — select the link above.");
+                return;
+              }
+              try {
+                await navigator.clipboard.writeText(shareUrl);
+                setStatusMessage("Link copied.");
+              } catch {
+                setFailure("Couldn't copy the link — select and copy it from above.");
+              }
+            })();
           }}
         >
           Copy link

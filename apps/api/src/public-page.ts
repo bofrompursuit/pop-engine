@@ -33,13 +33,17 @@ export type PublicEventPayload = {
   venue: string | null;
   borough: string;
   description: string | null;
-  map_url: string;
+  /** Null when intake has no venue — do not link a borough-only search (F-301 AC 5). */
+  map_url: string | null;
   rsvp_enabled: true;
 };
 
-/** Maps search link — no maps API (spec AC 5). */
-export function mapUrlForVenue(locationName: string | null, borough: string): string {
-  const query = [locationName, borough.replace(/_/g, " "), "NYC"].filter(Boolean).join(", ");
+/** Maps search link — no maps API (spec AC 5). Requires a venue address. */
+export function mapUrlForVenue(locationName: string | null, borough: string): string | null {
+  if (locationName === null || locationName.trim() === "") {
+    return null;
+  }
+  const query = [locationName.trim(), borough.replace(/_/g, " "), "NYC"].join(", ");
   return `https://maps.google.com/?q=${encodeURIComponent(query)}`;
 }
 
@@ -73,7 +77,7 @@ async function latestVerdict(database: Queryable, eventId: string): Promise<stri
     `SELECT verdict
        FROM permit_plans
       WHERE event_id = $1
-      ORDER BY generated_at DESC
+      ORDER BY generated_at DESC, id DESC
       LIMIT 1`,
     [eventId],
   );
@@ -107,7 +111,7 @@ export type OrganizerPublicPage = {
   description: string | null;
   public_page_published: boolean;
   public_path: string;
-  map_url: string;
+  map_url: string | null;
   infeasible_warning: boolean;
 };
 

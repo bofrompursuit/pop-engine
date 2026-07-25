@@ -67,4 +67,27 @@ describe("PromoteView", () => {
     render(<PromoteView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" />);
     expect(await screen.findByText(`${window.location.origin}/e/${EVENT_ID}`)).toBeDefined();
   });
+
+  it("surfaces a friendly message when clipboard write is unavailable", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(200, sample)),
+    );
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: undefined,
+    });
+    render(
+      <PromoteView
+        eventId={EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        webOrigin="https://web.example.com"
+      />,
+    );
+    expect(await screen.findByText(/Status: unpublished/i)).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(screen.getByRole("alert").textContent).toMatch(/select the link/i);
+  });
 });

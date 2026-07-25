@@ -56,6 +56,16 @@ describe("EventPageView", () => {
     });
   });
 
+  it("omits the map link when the API has no venue map URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(200, { ...publicEvent, venue: null, map_url: null })),
+    );
+    render(<EventPageView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" />);
+    expect(await screen.findByRole("heading", { name: "Demo Night" })).toBeDefined();
+    expect(screen.queryByRole("link", { name: "Open map" })).toBeNull();
+  });
+
   it("shows a friendly unavailable state when unpublished", async () => {
     vi.stubGlobal(
       "fetch",

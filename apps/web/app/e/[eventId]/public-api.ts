@@ -12,7 +12,7 @@ export type PublicEvent = {
   venue: string | null;
   borough: string;
   description: string | null;
-  map_url: string;
+  map_url: string | null;
   rsvp_enabled: boolean;
 };
 

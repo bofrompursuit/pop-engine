@@ -12,7 +12,7 @@ export type PromoteState = {
   description: string | null;
   public_page_published: boolean;
   public_path: string;
-  map_url: string;
+  map_url: string | null;
   infeasible_warning: boolean;
 };
 
