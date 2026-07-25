@@ -123,6 +123,51 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     expect(response.status).toBe(201);
   };
 
+  /** The published name of a rule, so a hand-built plan item states no permit fact of its own. */
+  const publishedName = (ruleId: string): string | null => {
+    const rule = ruleset.rules.find((candidate) => candidate.id === ruleId);
+    if (rule === undefined) throw new Error(`no published rule ${ruleId}`);
+    return rule.name;
+  };
+
+  /**
+   * A plan written directly, for shapes the six approved scenarios do not produce: a plan with no
+   * trackable line, and a dedupe-merged line carrying two rule ids. `generatedAt` is explicit so
+   * "the latest plan" is decided by the test rather than by insert timing.
+   */
+  const insertPlan = async (
+    eventId: string,
+    items: readonly { ruleIds: string[]; kind: string }[],
+    generatedAt: string,
+  ): Promise<string> => {
+    const planId = randomUUID();
+    await pool.query(
+      `INSERT INTO permit_plans
+         (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot,
+          generated_at)
+       VALUES ($1, $2, 1, $3, 'conditional', '{}'::jsonb, '{}'::jsonb, $4)`,
+      [planId, eventId, ruleset.rulesetVersion, generatedAt],
+    );
+    for (const item of items) {
+      await pool.query(
+        `INSERT INTO permit_plan_items
+           (id, plan_id, rule_ids, triggered_by, sources, kind, disposition, deadline_status,
+            verification_status, permit_name)
+         VALUES ($1, $2, $3, '[]'::jsonb, '[]'::jsonb, $4, $5, 'not_applicable',
+                 'SOURCE_CONFIRMED', $6)`,
+        [
+          randomUUID(),
+          planId,
+          item.ruleIds,
+          item.kind,
+          item.kind === "advisory" ? "advisory" : "required",
+          publishedName(item.ruleIds[0] as string),
+        ],
+      );
+    }
+    return planId;
+  };
+
   /** A scenario event with its plan and checklist already materialized. */
   const checklistFor = async (
     scenarioId: string,
@@ -261,20 +306,10 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // covers the spec's stale claim that Scenario B does), so the case is built directly from
       // a published advisory rule rather than asserted of a scenario that does not have it.
       const eventId = await createEvent(scenario("B"));
-      const planId = randomUUID();
-      await pool.query(
-        `INSERT INTO permit_plans
-           (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot)
-         VALUES ($1, $2, 1, $3, 'conditional', '{}'::jsonb, '{}'::jsonb)`,
-        [planId, eventId, ruleset.rulesetVersion],
-      );
-      await pool.query(
-        `INSERT INTO permit_plan_items
-           (id, plan_id, rule_ids, triggered_by, sources, kind, disposition, deadline_status,
-            verification_status, permit_name)
-         VALUES ($1, $2, ARRAY['ADV-VENUE-OCCUPANCY-001'], '[]'::jsonb, '[]'::jsonb, 'advisory',
-                 'advisory', 'not_applicable', 'SOURCE_CONFIRMED', 'Venue occupancy advisory')`,
-        [randomUUID(), planId],
+      await insertPlan(
+        eventId,
+        [{ ruleIds: ["ADV-VENUE-OCCUPANCY-001"], kind: "advisory" }],
+        "2026-07-22T10:00:00Z",
       );
 
       const response = await request(appWith(fakeStorage())).post(
@@ -288,6 +323,75 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(
         (response.body.contextItems as { ruleIds: string[] }[]).map((item) => item.ruleIds),
       ).toEqual([["ADV-VENUE-OCCUPANCY-001"]]);
+    });
+  });
+
+  // A finding that shares a `dedupe_key` merges into one line carrying every contributing rule id
+  // (engine `mergeFindings`). Today only DOB-TALL-STRUCTURE-001 publishes one, so no approved
+  // scenario produces a merged line — but issue #89 is live on whether DOB-TENT-001 should carry
+  // `dob-structure` too, and that change would turn two plan lines into one. These pin what the
+  // checklist does about it, so the answer is not decided by accident by whoever edits the key.
+  describe("requirement identity across plans", () => {
+    const MERGED = ["DOB-TENT-001", "DOB-TALL-STRUCTURE-001"];
+
+    it("matches a merged line whatever order the rule ids were written in", async () => {
+      const eventId = await createEvent(scenario("A"));
+      await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T10:00:00Z");
+      const api = appWith(fakeStorage());
+      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(first.status).toBe(201);
+
+      // The same two rules, merged in the other order: the same requirement, not a new one.
+      await insertPlan(
+        eventId,
+        [{ ruleIds: [...MERGED].reverse(), kind: "permit" }],
+        "2026-07-22T11:00:00Z",
+      );
+      const second = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      expect(second.status).toBe(200);
+      expect(second.body.planChanged).toBe(false);
+      const items = second.body.items as ChecklistItemView[];
+      expect(items).toHaveLength(1);
+      expect(items[0]?.id).toBe((first.body.items as ChecklistItemView[])[0]?.id);
+      expect(items[0]?.inLatestPlan).toBe(true);
+    });
+
+    it("keeps and strikes a merged line when a later plan splits it, appending both new lines", async () => {
+      const eventId = await createEvent(scenario("A"));
+      await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T10:00:00Z");
+      const api = appWith(fakeStorage());
+      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      const mergedItemId = (first.body.items as ChecklistItemView[])[0]?.id;
+      await request(api)
+        .patch(`/api/checklist-items/${mergedItemId}`)
+        .send({ status: "submitted", notes: "one filing covered both" });
+
+      // The dedupe key changes and the merged line becomes two.
+      await insertPlan(
+        eventId,
+        MERGED.map((ruleId) => ({ ruleIds: [ruleId], kind: "permit" })),
+        "2026-07-22T11:00:00Z",
+      );
+      const split = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      expect(split.status).toBe(201);
+      // Partial overlap is not a match: the organizer is told the plan changed rather than
+      // having "submitted" carried onto a line whose scope just changed.
+      expect(split.body.planChanged).toBe(true);
+      const items = split.body.items as ChecklistItemView[];
+      expect(items).toHaveLength(3);
+      const [kept, ...appended] = items;
+      expect(kept?.id).toBe(mergedItemId);
+      expect(kept?.inLatestPlan).toBe(false);
+      expect(kept?.status).toBe("submitted");
+      expect(kept?.notes).toBe("one filing covered both");
+      expect(appended.map((item) => item.ruleIds).sort()).toEqual(
+        MERGED.map((ruleId) => [ruleId]).sort(),
+      );
+      expect(appended.every((item) => item.inLatestPlan && item.status === "not_started")).toBe(
+        true,
+      );
     });
   });
 

@@ -89,10 +89,23 @@ type Queryable = {
 
 /**
  * A requirement's identity across plans. A regenerated plan writes new plan-item rows with new
- * uuids, so the stable identity of "the same requirement" is its contributing rule ids — the
- * same key `plan.ts` uses to zip findings back onto stored items.
+ * uuids, so the stable identity of "the same requirement" is the set of rule ids behind it —
+ * the same provenance `plan.ts` uses to zip findings back onto stored items.
+ *
+ * Identity is the WHOLE set, and partial overlap is deliberately not a match. Findings sharing a
+ * `dedupe_key` merge into one line carrying every contributing rule id, so changing a dedupe key
+ * (live on #89 for the two DOB structure rules) turns two lines into one or one into two. A
+ * merged line asserts something neither contributing line did on its own — both citations, both
+ * sources, a deadline resolved across both — so carrying a "submitted" over to it would claim
+ * the organizer filed for a requirement whose scope had just changed. Under whole-set matching
+ * the old items survive struck through with their status and documents, the new line is appended
+ * untouched, and `planChanged` is true: a visible review rather than a silent wrong answer.
+ *
+ * Sorted, because merge order follows the rule file's order and is not part of what a requirement
+ * IS. (`plan.ts` joins unsorted, which is correct there: it zips positionally against renderings
+ * written by the same evaluation, where order is guaranteed. Across two plans it is not.)
  */
-const requirementKey = (ruleIds: readonly string[]): string => ruleIds.join(",");
+const requirementKey = (ruleIds: readonly string[]): string => [...ruleIds].sort().join(",");
 
 type PlanItemRow = {
   id: string;
