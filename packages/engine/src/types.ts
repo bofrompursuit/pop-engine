@@ -24,38 +24,63 @@ export type Condition = {
 export type TriggerNode =
   Condition | { readonly all: readonly TriggerNode[] } | { readonly any: readonly TriggerNode[] };
 
-/** Every deadline can carry the published caveat that qualifies its number (P1-D). */
-type DeadlineQualification = { readonly qualification: string | null };
+/**
+ * The published caveat that qualifies a deadline's number, which any deadline type can carry.
+ */
+type DeadlineBound = {
+  readonly qualification: string | null;
+};
+
+/**
+ * Whether a published day count is an inclusive or exclusive bound, on the deadline types that
+ * express a single filing bound and date it by counting back from the event.
+ *
+ * `inclusive` (the default when a rule declares nothing) is "at least N days before" — filing on
+ * day N is valid. `exclusive` is "earlier than N days before" — day N is already too late, so the
+ * last valid filing day is one unit earlier. The difference decides whether an event exactly N
+ * days out is at risk or already missed, so it is published data rather than something the engine
+ * infers from the qualification prose.
+ *
+ * `composite` deliberately has no boundary. Its hard floor is a cliff with its own semantics — day
+ * N is already missed — so labelling it `inclusive`, whose contract is that day N is valid, would
+ * publish a claim the engine itself contradicts. Whether that cliff reading is right for
+ * PARKS-EVENT-001 is an open artifact question (issue #89), untouched here.
+ */
+export type DeadlineBoundary = "inclusive" | "exclusive";
+
+type BoundedDeadline = DeadlineBound & {
+  readonly boundary: DeadlineBoundary;
+};
 
 export type Deadline =
   | ({
       readonly type: "published_minimum";
       readonly calendarDays: number;
       readonly display: string | null;
-    } & DeadlineQualification)
+    } & BoundedDeadline)
   | ({
       readonly type: "published_minimum_by_level";
       readonly levels: Readonly<
         Record<string, { readonly calendarDays: number; readonly multiBlockDays: number | null }>
       >;
       readonly unknownLevelBehavior: string | null;
-    } & DeadlineQualification)
+    } & BoundedDeadline)
   | ({
       readonly type: "composite";
       readonly hardFloorDays: number;
       readonly processingRangeDays: readonly [number, number];
       readonly display: string | null;
-    } & DeadlineQualification)
+    } & DeadlineBound)
   | ({
       readonly type: "business_days_minimum";
       readonly businessDays: number;
       readonly display: string | null;
-    } & DeadlineQualification)
-  | ({ readonly type: "before_issuance"; readonly display: string | null } & DeadlineQualification)
+    } & BoundedDeadline)
+  | ({ readonly type: "before_issuance"; readonly display: string | null } & DeadlineBound)
   | ({
       readonly type: "research_required";
       readonly display: string | null;
-    } & DeadlineQualification);
+    } & DeadlineBound);
 
 export type VerificationStatus =
   "SOURCE_CONFIRMED" | "OFFICIAL_CONFLICT" | "RESEARCH_REQUIRED" | "COVERAGE_GAP" | "VERIFIED";
@@ -94,8 +119,30 @@ export type IntakeFieldDefinition = {
   readonly type: string;
   readonly values: readonly string[] | null;
   readonly askedWhen: string | null;
+  /** The parsed form of `askedWhen`, validated when the ruleset loads; null when unscoped. */
+  readonly askedWhenClauses: readonly AskedWhenClause[] | null;
   readonly nullable: boolean;
 };
+
+/** The minimum a parser needs to check an `asked_when` clause against a field. */
+export type ScopedField = {
+  readonly field: string;
+  readonly type: string;
+  readonly values: readonly string[] | null;
+};
+
+export type AskedWhenClause =
+  | { readonly kind: "in"; readonly field: string; readonly values: readonly string[] }
+  | {
+      readonly kind: "compare";
+      readonly field: string;
+      readonly op: "=" | "!=";
+      /** Typed to the field it compares: a boolean field yields a boolean, a numeric one a number. */
+      readonly value: string | number | boolean;
+    }
+  | { readonly kind: "at_least"; readonly field: string; readonly threshold: number }
+  | { readonly kind: "truthy"; readonly field: string }
+  | { readonly kind: "member"; readonly field: string; readonly member: string };
 
 export type EngineRule = {
   readonly id: string;

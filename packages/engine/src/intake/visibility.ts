@@ -5,28 +5,30 @@
 // answers. An unanswered trigger keeps its dependent question hidden — the organizer
 // answers the trigger first.
 
-import type { AskedWhenTerm, IntakeField, IntakeRegistry } from "./registry";
+import type { AskedWhenClause } from "../types";
+import type { IntakeField, IntakeRegistry } from "./registry";
 
 export type IntakeValue = string | number | boolean | readonly string[] | null;
 export type IntakeAnswers = Readonly<Record<string, IntakeValue | undefined>>;
 
-function termHolds(term: AskedWhenTerm, answer: IntakeValue): boolean {
-  switch (term.operator) {
-    case "equals":
-      return answer === term.value;
-    case "not_equals":
-      // On a multi-enum ("structure_types != none") the comparison is membership.
-      return Array.isArray(answer)
-        ? !answer.includes(term.value)
-        : answer !== null && answer !== term.value;
+function termHolds(term: AskedWhenClause, answer: IntakeValue): boolean {
+  switch (term.kind) {
+    case "compare":
+      // On a multi-enum ("structure_types != none") the comparison is membership: a list holding
+      // only "none" is not "some structure other than none", it is no structure at all.
+      if (Array.isArray(answer)) {
+        const holdsMember = answer.includes(String(term.value));
+        return term.op === "=" ? holdsMember : !holdsMember;
+      }
+      return term.op === "=" ? answer === term.value : answer !== null && answer !== term.value;
     case "in":
       return typeof answer === "string" && term.values.includes(answer);
     case "at_least":
-      return typeof answer === "number" && answer >= term.value;
-    case "is_true":
+      return typeof answer === "number" && answer >= term.threshold;
+    case "truthy":
       return answer === true;
-    case "selected":
-      return Array.isArray(answer) && answer.includes(term.value);
+    case "member":
+      return Array.isArray(answer) && answer.includes(term.member);
   }
 }
 

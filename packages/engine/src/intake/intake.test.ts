@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseIntakeContract } from "./registry";
-import { askedFields } from "./visibility";
+import { askedFields, askedFieldNames as askedNamesIn } from "./visibility";
 import { isIntakeUnchanged, mergeIntakeEdit, validateIntake } from "./validate";
 import {
   FIXTURE_TODAY,
@@ -16,7 +16,7 @@ import {
 
 const publishedRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.2.json", import.meta.url)),
+    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.3.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -94,26 +94,55 @@ describe("intake contract derives from the published registry", () => {
     }
   });
 
-  it("resolves each asked_when form to the operator it means", () => {
+  it("resolves each asked_when form to the clause it means", () => {
+    // These are the engine's clauses, not a second vocabulary: the questionnaire and the rules
+    // engine parse `asked_when` with one parser, so they cannot drift apart on what a
+    // question depends on.
     expect(fieldNamed("obstructs_public_way").askedWhen).toEqual([
-      { operator: "in", field: "location_type", values: ["street", "sidewalk", "plaza"] },
+      { kind: "in", field: "location_type", values: ["street", "sidewalk", "plaza"] },
     ]);
     expect(fieldNamed("sapo_event_type").askedWhen).toEqual([
-      { operator: "not_equals", field: "obstructs_public_way", value: "no" },
+      { kind: "compare", field: "obstructs_public_way", op: "!=", value: "no" },
     ]);
     expect(fieldNamed("plaza_level").askedWhen).toEqual([
-      { operator: "equals", field: "sapo_event_type", value: "plaza_event" },
+      { kind: "compare", field: "sapo_event_type", op: "=", value: "plaza_event" },
     ]);
     expect(fieldNamed("food_vendor_count").askedWhen).toEqual([
-      { operator: "is_true", field: "food_present" },
+      { kind: "truthy", field: "food_present" },
     ]);
     expect(fieldNamed("tent_area_sqft").askedWhen).toEqual([
-      { operator: "selected", field: "structure_types", value: "tent_canopy" },
+      { kind: "member", field: "structure_types", member: "tent_canopy" },
     ]);
     expect(fieldNamed("venue_has_assembly_approval").askedWhen).toEqual([
-      { operator: "equals", field: "location_type", value: "private_venue" },
-      { operator: "at_least", field: "headcount", value: 75 },
+      { kind: "compare", field: "location_type", op: "=", value: "private_venue" },
+      { kind: "at_least", field: "headcount", threshold: 75 },
     ]);
+  });
+
+  it("types a comparison operand the same way the engine does", () => {
+    // The bug this sharing removes: the questionnaire kept "true"/"75" as strings while the
+    // engine typed them, so a field the engine had in scope was a question the user never saw.
+    const contract = parseIntakeContract(
+      rulesetWith([
+        { field: "food_present", type: "boolean" },
+        { field: "headcount", type: "integer" },
+        { field: "alcohol", type: "boolean", asked_when: "food_present = true AND headcount = 75" },
+      ]),
+    );
+    const alcohol = contract.fields.find((field) => field.field === "alcohol");
+    expect(alcohol?.askedWhen).toEqual([
+      { kind: "compare", field: "food_present", op: "=", value: true },
+      { kind: "compare", field: "headcount", op: "=", value: 75 },
+    ]);
+    // and the questionnaire actually asks it, rather than comparing a string to a boolean
+    // (this file's own askedFieldNames helper is bound to the published contract, so the
+    // synthetic registry is queried through the visibility function directly)
+    expect(askedNamesIn(contract.fields, { food_present: true, headcount: 75 })).toContain(
+      "alcohol",
+    );
+    expect(askedNamesIn(contract.fields, { food_present: false, headcount: 75 })).not.toContain(
+      "alcohol",
+    );
   });
 
   it("carries the registry's published notes as help text", () => {

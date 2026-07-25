@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./t
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.2.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.3.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.2 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.3 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -334,6 +334,90 @@ describe("typed deadlines", () => {
   });
 });
 
+describe("published bound inclusivity", () => {
+  const rooftop = (eventDate: string): EventIntake => ({
+    ...parkIntake,
+    location_type: "private_venue",
+    headcount: 90,
+    amplified_sound: false,
+    event_date: eventDate,
+  });
+  const assemblyIn = (eventDate: string) =>
+    evaluate(rooftop(eventDate), ruleset, TODAY, calendar).findings.find((finding) =>
+      finding.ruleIds.includes("DOB-ASSEMBLY-001"),
+    );
+
+  it("treats an exclusive published bound as closed on the boundary day itself", () => {
+    // DOB-ASSEMBLY-001 publishes boundary "exclusive" for its 10-day TPA window, because the DOB
+    // code note it already carried says the application "must be submitted earlier than 10 days
+    // before the event". Exactly 10 days out is therefore already too late.
+    const onTheBoundary = assemblyIn("2026-08-01"); // TODAY is 2026-07-22: exactly 10 days out
+    expect(onTheBoundary?.latestApplyDate).toBe("2026-07-21");
+    expect(onTheBoundary?.deadlineStatus).toBe("published_deadline_missed");
+  });
+
+  it("stays missed inside the strict window", () => {
+    // Below the boundary: nine days out is further inside a window that closed at day 10, so it
+    // is missed for the same reason and not merely at-risk. AGENTS.md wants below/at/above pinned
+    // rather than the middle case inferred from the other two.
+    const insideTheWindow = assemblyIn("2026-07-31");
+    expect(insideTheWindow?.latestApplyDate).toBe("2026-07-20");
+    expect(insideTheWindow?.deadlineStatus).toBe("published_deadline_missed");
+    expect(insideTheWindow?.slackDays).toBe(-2);
+  });
+
+  it("keeps the day before the exclusive bound valid", () => {
+    const dayBefore = assemblyIn("2026-08-02"); // eleven days out: the last valid filing day
+    expect(dayBefore?.latestApplyDate).toBe("2026-07-22");
+    expect(dayBefore?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(dayBefore?.slackDays).toBe(0);
+  });
+
+  it("leaves inclusive bounds alone, so 'at least N days' still includes day N", () => {
+    // NYPD-SOUND-001 publishes "file at least 5 days before use" and declares no boundary, so the
+    // default keeps day 5 valid. A blanket exclusive reading would wrongly close it.
+    const sound = evaluate(
+      { ...parkIntake, event_date: "2026-07-27" },
+      ruleset,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    expect(sound?.latestApplyDate).toBe("2026-07-22");
+    expect(sound?.deadlineStatus).not.toBe("published_deadline_missed");
+  });
+
+  it("rejects an unsupported or misplaced boundary rather than ignoring it", () => {
+    const withDeadline = (deadline: Record<string, unknown>) => () =>
+      syntheticRuleset([
+        {
+          id: "RULE-BOUND",
+          kind: "permit",
+          trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+          output: { permit_name: "x", agency: "DOB", deadline },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ]);
+    expect(
+      withDeadline({ type: "published_minimum", calendar_days: 10, boundary: "loose" }),
+    ).toThrow(/boundary has unsupported value "loose"/);
+    // Only the types dated by counting back from the event carry a boundary. Declaring one
+    // anywhere else is an authoring mistake, and a composite's hard floor in particular has its
+    // own cliff semantics that an "inclusive" label would contradict on the wire.
+    expect(withDeadline({ type: "research_required", boundary: "exclusive" })).toThrow(
+      /boundary does not apply to a "research_required" deadline/,
+    );
+    expect(
+      withDeadline({
+        type: "composite",
+        hard_floor_days: 21,
+        processing_range_days: [21, 30],
+        boundary: "inclusive",
+      }),
+    ).toThrow(/boundary does not apply to a "composite" deadline/);
+  });
+});
+
 describe("business-day arithmetic against the pinned calendar", () => {
   it("skips weekends when counting backward", () => {
     expect(subtractBusinessDays("2026-08-11", 15, calendar)).toBe("2026-07-21");
@@ -380,9 +464,16 @@ describe("business-day arithmetic against the pinned calendar", () => {
     expect(degraded?.latestApplyDate).toBeNull();
     expect(degraded?.deadlineStatus).toBe("not_calculable");
     expect(degraded?.notes).toContain("confirm with agency");
-    // Excluded from verdict arithmetic: the same plan is INFEASIBLE only when the date is real.
+
+    // The agency published this window; only our ability to date it is missing. Excluding it from
+    // the arithmetic would let the plan read FEASIBLE while the window is in fact already closed,
+    // so the plan is CONDITIONAL and names the finding whose timeline it cannot compute.
     expect(withList.verdict).toBe("INFEASIBLE");
-    expect(withoutList.verdict).not.toBe("INFEASIBLE");
+    expect(withoutList.verdict).toBe("CONDITIONAL");
+    expect(withoutList.verdictDetail.unresolvedTimelines.map((entry) => entry.ruleIds)).toEqual([
+      ["SLA-ONEDAY-001"],
+      ["SLA-CATERING-001"],
+    ]);
   });
 
   it("still computes every finding that needs no business-day math", () => {
@@ -522,65 +613,131 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.2");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.3");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
 });
 
 describe("asked_when scoping", () => {
-  it("rejects a clause that names neither a declared field nor a declared value", () => {
-    const badScope = parseEngineRuleset({
+  /** A registry where `venue_note` is scoped by the expression under test. */
+  const scopingRuleset = (askedWhen: string, extraFields: Record<string, unknown>[] = []) =>
+    ({
       ...rawRuleset,
       intake_fields: [
         { field: "event_date", type: "date" },
-        { field: "headcount", type: "integer", asked_when: "the_vibes_are_right" },
+        { field: "headcount", type: "integer" },
+        { field: "food_present", type: "boolean" },
+        {
+          field: "sapo_event_type",
+          type: "enum",
+          values: ["street_event", "block_party", "unknown"],
+        },
+        ...extraFields,
+        { field: "venue_note", type: "boolean", asked_when: askedWhen },
       ],
       rules: [
         {
           id: "RULE-SCOPE",
           kind: "permit",
-          trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+          trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
           output: { permit_name: "x", agency: "DOB" },
           verification: { status: "SOURCE_CONFIRMED" },
           source: { citation: "c", urls: ["https://example.test"] },
         },
       ],
       advisories: [],
-    });
-    expect(() =>
-      evaluate({ event_date: "2026-12-04", headcount: 5 }, badScope, TODAY, {
-        id: badScope.calendarId,
-        holidays: [],
-      }),
-    ).toThrow(/names no declared field or value/);
+    }) as Record<string, unknown>;
+
+  const withScoping =
+    (askedWhen: string, extraFields: Record<string, unknown>[] = []) =>
+    () =>
+      parseEngineRuleset(scopingRuleset(askedWhen, extraFields));
+
+  it("accepts the shapes the published registry actually uses", () => {
+    expect(withScoping("headcount gte 75")).not.toThrow();
+    expect(withScoping("sapo_event_type = street_event")).not.toThrow();
+    expect(withScoping("sapo_event_type != unknown")).not.toThrow();
+    expect(withScoping("sapo_event_type in street_event/block_party")).not.toThrow();
+    expect(withScoping("food_present")).not.toThrow();
+    expect(withScoping("food_present AND headcount gte 75")).not.toThrow();
   });
 
-  it("rejects a cyclic asked_when chain", () => {
-    const cyclic = parseEngineRuleset({
-      ...rawRuleset,
-      intake_fields: [
-        { field: "event_date", type: "date" },
+  it("rejects a mistyped enum operand at load, not silently at evaluation", () => {
+    // The whole failure is silence: "street_evet" matches no intake ever, so venue_note and every
+    // rule scoped by it leave scope and their requirements vanish with no error anywhere.
+    expect(withScoping("sapo_event_type = street_evet")).toThrow(
+      /compares "sapo_event_type" against "street_evet", which it does not declare/,
+    );
+    expect(withScoping("sapo_event_type != blockparty")).toThrow(/does not declare/);
+    expect(withScoping("sapo_event_type in street_event/blok_party")).toThrow(
+      /"blok_party", which is not a declared value of it/,
+    );
+    expect(withScoping("sapo_event_type = street_evet")).toThrow(/unusable asked_when/);
+  });
+
+  it("rejects a non-numeric threshold at load", () => {
+    expect(withScoping("headcount gte seventy_five")).toThrow(
+      /compares "headcount" against a non-numeric threshold "seventy_five"/,
+    );
+  });
+
+  it("rejects operators the field's type cannot support", () => {
+    expect(withScoping("sapo_event_type gte 3")).toThrow(/is a enum field, with "gte"/);
+    expect(withScoping("headcount in 75/100")).toThrow(/declares no values to match against/);
+    expect(withScoping("headcount")).toThrow(
+      /reads "headcount" as a flag, but it is a integer field/,
+    );
+    expect(withScoping("food_present = maybe")).toThrow(/compares boolean "food_present"/);
+  });
+
+  it("scopes a typed comparison correctly at evaluation, not just at parse", () => {
+    // The operand is written as text but the intake answer is a boolean or a number, so a
+    // comparison kept as a string would never match: every equality false, every inequality true,
+    // and the scoped field plus its requirements silently gone. Parsing is not enough to prove
+    // this — the clause has to actually decide scope.
+    const fires = (askedWhen: string, intake: Record<string, unknown>): boolean => {
+      const ruleset = parseEngineRuleset(scopingRuleset(askedWhen));
+      const plan = evaluate(
+        { event_date: "2026-12-04", venue_note: true, ...intake } as EventIntake,
+        ruleset,
+        TODAY,
+        { id: ruleset.calendarId, holidays: [] },
+      );
+      return plan.findings.some((finding) => finding.ruleIds.includes("RULE-SCOPE"));
+    };
+
+    // boolean-typed operand
+    expect(fires("food_present = true", { food_present: true })).toBe(true);
+    expect(fires("food_present = true", { food_present: false })).toBe(false);
+    expect(fires("food_present != true", { food_present: false })).toBe(true);
+
+    // number-typed operand
+    expect(fires("headcount = 75", { headcount: 75 })).toBe(true);
+    expect(fires("headcount = 75", { headcount: 76 })).toBe(false);
+    expect(fires("headcount != 75", { headcount: 76 })).toBe(true);
+
+    // an enum operand stays a string, which is what the published registry uses
+    expect(fires("sapo_event_type = street_event", { sapo_event_type: "street_event" })).toBe(true);
+    expect(fires("sapo_event_type = street_event", { sapo_event_type: "block_party" })).toBe(false);
+  });
+
+  it("rejects a clause that names neither a declared field nor a declared value", () => {
+    expect(withScoping("the_vibes_are_right")).toThrow(/names no declared field or value/);
+  });
+
+  it("rejects a cyclic scoping chain when the ruleset loads", () => {
+    // Each clause parses on its own, so a cycle only surfaced when evaluation first resolved one
+    // of the fields — every plan request failing instead of the artifact being refused at boot.
+    expect(
+      withScoping("left", [
         { field: "left", type: "boolean", asked_when: "right" },
         { field: "right", type: "boolean", asked_when: "left" },
-      ],
-      rules: [
-        {
-          id: "RULE-CYCLE",
-          kind: "permit",
-          trigger: { all: [{ field: "left", op: "bool", value: true }] },
-          output: { permit_name: "x", agency: "DOB" },
-          verification: { status: "SOURCE_CONFIRMED" },
-          source: { citation: "c", urls: ["https://example.test"] },
-        },
-      ],
-      advisories: [],
-    });
-    expect(() =>
-      evaluate({ event_date: "2026-12-04", left: true, right: true }, cyclic, TODAY, {
-        id: cyclic.calendarId,
-        holidays: [],
-      }),
-    ).toThrow(/cyclic/);
+      ]),
+    ).toThrow(/scoping is cyclic: left → right → left/);
+  });
+
+  it("rejects a field scoped by itself", () => {
+    expect(withScoping("venue_note")).toThrow(/scoping is cyclic: venue_note → venue_note/);
   });
 });

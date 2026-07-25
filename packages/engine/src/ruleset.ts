@@ -3,11 +3,13 @@
 // Anything malformed throws — an evaluation input the engine cannot read is an error,
 // never a quiet "no requirement" (AC 5).
 
+import { parseAskedWhen } from "./conditions";
 import { EvaluationError } from "./types";
 import type {
   Condition,
   ConditionOperator,
   Deadline,
+  DeadlineBoundary,
   Disposition,
   EngineRule,
   EngineRuleset,
@@ -122,6 +124,31 @@ function parseTrigger(value: unknown, label: string): TriggerNode {
   return combinator === "all" ? { all: parsed } : { any: parsed };
 }
 
+/** Deadline types that express a single filing bound, so an exclusive boundary has a meaning. */
+const BOUNDED_DEADLINE_TYPES = new Set([
+  "published_minimum",
+  "published_minimum_by_level",
+  "business_days_minimum",
+]);
+
+/**
+ * Whether the published number is an inclusive or exclusive bound. Absent means inclusive, which
+ * is what every rule that says "at least N days" means. Only the types that date a deadline by
+ * counting back from the event carry one; declaring a boundary on any other type is a ruleset
+ * error rather than something to ignore quietly.
+ */
+function parseBoundary(deadline: JsonObject, type: string, label: string): DeadlineBoundary {
+  const declared = deadline.boundary;
+  if (declared === undefined) return "inclusive";
+  if (declared !== "inclusive" && declared !== "exclusive") {
+    fail(`${label}.boundary has unsupported value "${String(declared)}"`);
+  }
+  if (!BOUNDED_DEADLINE_TYPES.has(type)) {
+    fail(`${label}.boundary does not apply to a "${type}" deadline`);
+  }
+  return declared;
+}
+
 function parseDeadline(value: unknown, label: string): Deadline | null {
   if (value === undefined || value === null) return null;
   const deadline = asObject(value, label);
@@ -130,6 +157,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
   // The published caveat on the number itself (which instrument applies, calendar vs business
   // days). Dropping it presents a computed date as more definitive than its source is.
   const qualification = optionalString(deadline, "qualification");
+  const boundary = parseBoundary(deadline, type, label);
 
   switch (type) {
     case "published_minimum":
@@ -138,6 +166,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         calendarDays: asNumber(deadline.calendar_days, `${label}.calendar_days`),
         display,
         qualification,
+        boundary,
       };
     case "published_minimum_by_level": {
       const levels = asObject(deadline.levels, `${label}.levels`);
@@ -160,6 +189,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         levels: parsedLevels,
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
         qualification,
+        boundary,
       };
     }
     case "composite": {
@@ -182,6 +212,7 @@ function parseDeadline(value: unknown, label: string): Deadline | null {
         businessDays: asNumber(deadline.business_days, `${label}.business_days`),
         display,
         qualification,
+        boundary,
       };
     case "before_issuance":
       return { type, display, qualification };
@@ -271,8 +302,62 @@ function parseIntakeField(value: unknown, label: string): IntakeFieldDefinition 
             asString(entry, `${label}.values[${index}]`),
           ),
     askedWhen: optionalString(definition, "asked_when"),
+    // Parsed below, once every field is known: a clause can name any declared field or value.
+    askedWhenClauses: null,
     nullable: definition.nullable === true,
   };
+}
+
+/**
+ * Validate every `asked_when` expression while the ruleset loads, so a malformed one aborts boot
+ * instead of quietly putting a field out of scope. A scoping typo is silent by nature: the clause
+ * reads false, the field and every rule depending on it drop out, and the plan omits requirements
+ * with no error at all.
+ */
+function withParsedScoping(
+  fields: readonly IntakeFieldDefinition[],
+): readonly IntakeFieldDefinition[] {
+  const parsed = fields.map((field) => {
+    if (field.askedWhen === null) return field;
+    try {
+      return { ...field, askedWhenClauses: parseAskedWhen(field.askedWhen, fields) };
+    } catch (error) {
+      return fail(
+        `intake field "${field.field}" has an unusable asked_when: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  });
+  rejectScopingCycles(parsed);
+  return parsed;
+}
+
+/**
+ * A scoping cycle parses one clause at a time perfectly well, so it only surfaces when evaluation
+ * first resolves one of the fields involved — by which point the api has started and every plan
+ * request fails instead of the artifact being refused. The graph is walked here so a cyclic
+ * ruleset never boots.
+ */
+function rejectScopingCycles(fields: readonly IntakeFieldDefinition[]): void {
+  const dependencies = new Map(
+    fields.map((field) => [
+      field.field,
+      (field.askedWhenClauses ?? []).map((clause) => clause.field),
+    ]),
+  );
+  const settled = new Set<string>();
+
+  const walk = (field: string, path: readonly string[]): void => {
+    if (settled.has(field)) return;
+    const cycleAt = path.indexOf(field);
+    if (cycleAt !== -1) {
+      fail(`asked_when scoping is cyclic: ${[...path.slice(cycleAt), field].join(" → ")}`);
+    }
+    for (const dependency of dependencies.get(field) ?? []) walk(dependency, [...path, field]);
+    settled.add(field);
+  };
+
+  for (const field of dependencies.keys()) walk(field, []);
 }
 
 /** Narrow parsed ruleset JSON into the engine's typed view. */
@@ -282,8 +367,10 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
   const slackWarning = asObject(config.slack_warning_days, "ruleset.config.slack_warning_days");
   const businessDayMath = asObject(config.business_day_math, "ruleset.config.business_day_math");
 
-  const intakeFields = asArray(ruleset.intake_fields, "ruleset.intake_fields").map((field, index) =>
-    parseIntakeField(field, `ruleset.intake_fields[${index}]`),
+  const intakeFields = withParsedScoping(
+    asArray(ruleset.intake_fields, "ruleset.intake_fields").map((field, index) =>
+      parseIntakeField(field, `ruleset.intake_fields[${index}]`),
+    ),
   );
   const rules = asArray(ruleset.rules, "ruleset.rules").map((rule, index) =>
     parseRule(rule, `ruleset.rules[${index}]`),

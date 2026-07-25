@@ -94,7 +94,7 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     const response = await request(appWith()).post(`/api/events/${eventId}/plan`);
 
     expect(response.status).toBe(201);
-    expect(response.body.rulesetVersion).toBe("nyc.v2.2");
+    expect(response.body.rulesetVersion).toBe("nyc.v2.3");
     expect(response.body.eventRevision).toBe(1);
     expect(response.body.verdict).toBe("INFEASIBLE");
     expect(response.body.findings.map((finding: { ruleIds: string[] }) => finding.ruleIds)).toEqual(
@@ -310,11 +310,13 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
         (entry: { ruleIds: string[] }) => entry.ruleIds,
       ),
     ).toContainEqual(["SLA-ONEDAY-001"]);
-    // Everything that needs no business-day math still carries its real date.
+    // Everything that needs no business-day math still carries its real date. DOB-ASSEMBLY-001
+    // publishes an exclusive 10-day bound ("earlier than 10 days before the event"), so for an
+    // event on 2026-08-26 the last valid filing day is the 15th, not the 16th.
     const assembly = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
       finding.ruleIds.includes("DOB-ASSEMBLY-001"),
     );
-    expect(assembly.latestApplyDate).toBe("2026-08-16");
+    expect(assembly.latestApplyDate).toBe("2026-08-15");
 
     // With a published list the same finding dates for real, which is what the fixtures exercise.
     const computed = await request(appWith()).post(`/api/events/${eventId}/plan`);

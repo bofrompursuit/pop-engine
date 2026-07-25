@@ -6,8 +6,10 @@
 import { BOUNDARY_CONDITIONAL_RULES } from "./proposals";
 import { EvaluationError } from "./types";
 import type {
+  AskedWhenClause,
   Condition,
   EngineRuleset,
+  ScopedField,
   EventIntake,
   IntakeValue,
   TriggeredBy,
@@ -36,6 +38,142 @@ export type ScopeResolver = { isInScope: (field: string) => boolean };
  * conjunctions; anything outside the grammar throws rather than being ignored, because silently
  * treating a field as in-scope would change which findings fire.
  */
+/**
+ * The registry's `asked_when` grammar, parsed once rather than re-read per evaluation.
+ *
+ * Parsing prose at evaluation time is how a typo becomes silence: `headcount gte seventy_five`
+ * makes `Number(operand)` NaN, the clause reads false, the field and every rule depending on it
+ * fall out of scope, and the plan omits requirements with no error anywhere. So the grammar is
+ * validated when the ruleset is loaded and evaluation only walks the parsed result.
+ */
+export function parseAskedWhen(
+  expression: string,
+  fields: readonly ScopedField[],
+): AskedWhenClause[] {
+  return expression.split(" AND ").map((clause) => parseAskedWhenClause(clause.trim(), fields));
+}
+
+/**
+ * Every operand is checked against the field it names, not just the field's existence. A mistyped
+ * enum — `sapo_event_type = street_evet` — parses fine and then matches no intake ever, so the
+ * field and everything scoped by it silently leaves scope and requirements vanish with no error.
+ * That is the same silent-omission failure a non-numeric threshold caused, so it fails the same
+ * way: at load, naming the clause.
+ *
+ * The operator/type table is deliberately strict. A published expression this rejects is a loud
+ * boot failure someone fixes; one it wrongly accepts is a plan that quietly omits permits.
+ */
+function declaredValuesOf(field: string, fields: readonly ScopedField[]): readonly string[] | null {
+  return fields.find((entry) => entry.field === field)?.values ?? null;
+}
+
+function fieldTypeOf(field: string, fields: readonly ScopedField[]): string {
+  return fields.find((entry) => entry.field === field)?.type ?? "";
+}
+
+const NUMERIC_FIELD_TYPES = new Set(["integer", "number"]);
+
+/** The operand as the field's own runtime type, so evaluation's strict comparison can match. */
+function typedOperand(
+  operand: string,
+  type: string,
+  declaredValues: readonly string[] | null,
+): string | number | boolean {
+  if (declaredValues !== null) return operand;
+  if (NUMERIC_FIELD_TYPES.has(type)) return Number(operand);
+  if (type === "boolean") return operand === "true";
+  return operand;
+}
+
+function rejectClause(clause: string, reason: string): never {
+  throw new EvaluationError(`asked_when clause "${clause}" ${reason}`);
+}
+
+function parseAskedWhenClause(clause: string, fields: readonly ScopedField[]): AskedWhenClause {
+  const declared = new Set(fields.map((field) => field.field));
+
+  const inMatch = /^(\S+) in (\S+)$/.exec(clause);
+  if (inMatch?.[1] !== undefined && inMatch[2] !== undefined && declared.has(inMatch[1])) {
+    const field = inMatch[1];
+    const values = inMatch[2].split("/");
+    const allowed = declaredValuesOf(field, fields);
+    if (allowed === null) {
+      rejectClause(clause, `uses "in" on "${field}", which declares no values to match against`);
+    }
+    const undeclared = values.filter((value) => !allowed.includes(value));
+    if (undeclared.length > 0) {
+      rejectClause(
+        clause,
+        `matches "${field}" against ${undeclared.map((value) => `"${value}"`).join(", ")}, ` +
+          `which ${undeclared.length === 1 ? "is not a" : "are not"} declared value${undeclared.length === 1 ? "" : "s"} of it`,
+      );
+    }
+    return { kind: "in", field, values };
+  }
+
+  const comparison = /^(\S+) (=|!=|gte) (\S+)$/.exec(clause);
+  if (comparison?.[1] !== undefined && declared.has(comparison[1])) {
+    const field = comparison[1];
+    const operand = comparison[3] ?? "";
+    const type = fieldTypeOf(field, fields);
+
+    if (comparison[2] === "gte") {
+      if (!NUMERIC_FIELD_TYPES.has(type)) {
+        rejectClause(clause, `orders "${field}", which is a ${type} field, with "gte"`);
+      }
+      const threshold = Number(operand);
+      if (!Number.isFinite(threshold)) {
+        rejectClause(clause, `compares "${field}" against a non-numeric threshold "${operand}"`);
+      }
+      return { kind: "at_least", field, threshold };
+    }
+
+    const allowed = declaredValuesOf(field, fields);
+    if (allowed !== null && !allowed.includes(operand)) {
+      rejectClause(clause, `compares "${field}" against "${operand}", which it does not declare`);
+    }
+    if (allowed === null && NUMERIC_FIELD_TYPES.has(type) && !Number.isFinite(Number(operand))) {
+      rejectClause(clause, `compares numeric "${field}" against non-numeric "${operand}"`);
+    }
+    if (allowed === null && type === "boolean" && operand !== "true" && operand !== "false") {
+      rejectClause(clause, `compares boolean "${field}" against "${operand}"`);
+    }
+    // The operand is typed at load, not left as the text it was written as. An intake answer is a
+    // boolean or a number, and evaluation compares strictly, so keeping "true" or "75" as strings
+    // would make every equality false and every inequality true — the scoped field and everything
+    // depending on it silently leaving scope, which is the failure this validation exists to stop.
+    return {
+      kind: "compare",
+      field,
+      op: comparison[2] === "=" ? "=" : "!=",
+      value: typedOperand(operand, type, allowed),
+    };
+  }
+
+  // A bare token is either a boolean field ("food_present") or a declared member of a
+  // multi-select field ("tent_canopy" means structure_types includes tent_canopy).
+  if (declared.has(clause)) {
+    const type = fieldTypeOf(clause, fields);
+    if (type !== "boolean") {
+      rejectClause(clause, `reads "${clause}" as a flag, but it is a ${type} field`);
+    }
+    return { kind: "truthy", field: clause };
+  }
+  const owners = fields.filter((field) => field.values?.includes(clause) === true);
+  if (owners.length === 0) {
+    rejectClause(clause, "names no declared field or value");
+  }
+  // Two fields declaring the same option leave the clause ambiguous, and picking the first would
+  // silently scope on whichever the registry happened to list earlier.
+  if (owners.length > 1) {
+    rejectClause(
+      clause,
+      `is a value of more than one field (${owners.map((field) => field.field).join(", ")})`,
+    );
+  }
+  return { kind: "member", field: (owners[0] as ScopedField).field, member: clause };
+}
+
 export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset): ScopeResolver {
   const definitions = new Map(ruleset.intakeFields.map((field) => [field.field, field]));
   const cache = new Map<string, boolean>();
@@ -46,30 +184,30 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
     return intake[field] ?? null;
   };
 
-  const evaluateClause = (clause: string): boolean => {
-    const inMatch = /^(\S+) in (\S+)$/.exec(clause);
-    if (inMatch?.[1] !== undefined && inMatch[2] !== undefined && definitions.has(inMatch[1])) {
-      const value = valueOf(inMatch[1]);
-      return inMatch[2].split("/").includes(String(value));
+  const evaluateClause = (clause: AskedWhenClause): boolean => {
+    const value = valueOf(clause.field);
+    switch (clause.kind) {
+      case "in":
+        return clause.values.includes(String(value));
+      case "compare":
+        // On a multi-select ("structure_types != none") the comparison is membership. Comparing
+        // the array itself would read ["none"] as "not none" and put the dependent question in
+        // scope when nothing is selected; the questionnaire already read it as membership, and
+        // the two must not disagree about which questions an event is asked.
+        if (Array.isArray(value)) {
+          const holdsMember = value.includes(String(clause.value));
+          return clause.op === "=" ? holdsMember : !holdsMember;
+        }
+        return clause.op === "="
+          ? value === clause.value
+          : value !== null && value !== clause.value;
+      case "at_least":
+        return typeof value === "number" && value >= clause.threshold;
+      case "truthy":
+        return value === true;
+      case "member":
+        return Array.isArray(value) ? value.includes(clause.member) : value === clause.member;
     }
-
-    const comparison = /^(\S+) (=|!=|gte) (\S+)$/.exec(clause);
-    if (comparison?.[1] !== undefined && definitions.has(comparison[1])) {
-      const value = valueOf(comparison[1]);
-      const operand = comparison[3] ?? "";
-      if (comparison[2] === "gte") return typeof value === "number" && value >= Number(operand);
-      if (comparison[2] === "=") return value === operand;
-      return value !== null && value !== operand;
-    }
-
-    // A bare token is either a boolean field ("food_present") or a declared member of a
-    // multi-select field ("tent_canopy" means structure_types includes tent_canopy).
-    if (definitions.has(clause)) return valueOf(clause) === true;
-    const owner = ruleset.intakeFields.find((field) => field.values?.includes(clause) === true);
-    if (owner === undefined)
-      throw new EvaluationError(`asked_when clause "${clause}" names no declared field or value`);
-    const value = valueOf(owner.field);
-    return Array.isArray(value) ? value.includes(clause) : value === clause;
   };
 
   function isInScope(field: string): boolean {
@@ -79,7 +217,7 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
     const definition = definitions.get(field);
     if (definition === undefined)
       throw new EvaluationError(`intake field "${field}" is not declared by the ruleset`);
-    if (definition.askedWhen === null) {
+    if (definition.askedWhenClauses === null) {
       cache.set(field, true);
       return true;
     }
@@ -87,9 +225,7 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
 
     resolving.add(field);
     try {
-      const inScope = definition.askedWhen
-        .split(" AND ")
-        .every((clause) => evaluateClause(clause.trim()));
+      const inScope = definition.askedWhenClauses.every(evaluateClause);
       cache.set(field, inScope);
       return inScope;
     } finally {
