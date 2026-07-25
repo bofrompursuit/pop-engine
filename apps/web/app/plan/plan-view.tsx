@@ -55,6 +55,45 @@ const eventStateFrom = (result: LoadResult): EventState =>
     ? { status: "found", revision: result.loaded.event.revision_counter }
     : { status: "unavailable" };
 
+/**
+ * Why regenerating this plan is refused, or null when it is safe to offer.
+ *
+ * Regeneration evaluates whatever ruleset the SERVICE has loaded, not the one the plan pinned. So
+ * offering it while the service sits behind the plan's version replaces a plan built from newer
+ * rules with one built from superseded ones — a destructive downgrade of the plan's regulatory
+ * basis, presented as the same routine button that fixes a stale plan. Nothing warns the organizer
+ * afterwards, because the new plan is internally consistent; only its basis got worse.
+ *
+ * Reachable, not hypothetical: plans are immutable snapshots pinned at generation (AD-7), and
+ * RULES_FILE skew between deployments (#89) is the condition that puts a service behind a stored
+ * plan. An unorderable pair — an unparseable version, or a second jurisdiction — is refused for the
+ * same reason: nothing establishes that regenerating would not move the plan backwards.
+ *
+ * A live version that cannot be read is refused too. It is the same claim either way — that the
+ * service is at or ahead of the pinned version — and an unreadable `/api/rules/meta` does not
+ * establish it. The cost is that a stale plan cannot be regenerated until that endpoint answers;
+ * the plan on screen is stale but its regulatory basis is sound, and the page already says it is
+ * stale. Stale-but-sound is the better of the two to leave an organizer holding.
+ */
+function regenerationRefusal(
+  pinnedVersion: string,
+  liveVersion: string | null,
+  standing: ReturnType<typeof compareToPinned> | null,
+): string | null {
+  if (standing === "same" || standing === "newer") return null;
+  return (
+    `This plan was generated from ruleset ${pinnedVersion}. ` +
+    (liveVersion === null
+      ? "The ruleset the service is currently running could not be read, so it cannot be confirmed to be that version or newer. "
+      : `The service is currently running ${liveVersion}, which is not that version or newer. `) +
+    "Regenerating would rebuild your plan from the service's rules, so it is unavailable until the " +
+    "service is back on " +
+    pinnedVersion +
+    " or newer. This is the service being behind, not a problem with your event, and the plan below " +
+    "is still the one those rules produced."
+  );
+}
+
 export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
   const [planState, setPlanState] = useState<PlanState>({ status: "loading" });
   const [eventState, setEventState] = useState<EventState>({ status: "loading" });
@@ -168,9 +207,16 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
   // The banner tells the organizer a newer ruleset exists, so the page has to offer the action it
   // names. Regeneration also needs an event to generate from: an event that cannot be read is not
   // one this page may create an immutable plan row for.
-  const canGenerate =
+  const wouldOffer =
     eventState.status === "found" &&
     (planState.status === "missing" || isStale || standing === "newer");
+  // No pinned plan means nothing to downgrade: a first plan is always safe to generate, whatever
+  // the service is running. Everything else defers to the ruleset check.
+  const refusal =
+    plan === null
+      ? null
+      : regenerationRefusal(plan.rulesetVersion, meta?.ruleset_version ?? null, standing);
+  const canGenerate = wouldOffer && refusal === null;
 
   return (
     <main className="plan">
@@ -219,6 +265,17 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
           {eventState.status === "loading"
             ? "Checking whether this plan still matches the event; whether it is current is unconfirmed until then."
             : "The event could not be read, so whether this plan is still current is unconfirmed."}
+        </p>
+      )}
+
+      {/* Said only where it took an action away — when the page would otherwise be offering
+          regeneration. Greying out a button, or dropping it silently, leaves an organizer to
+          conclude their event is the problem; this says the service is behind and names both
+          versions, so waiting is an informed choice rather than a guess. (The banner states how the
+          two rulesets stand; this states what it means for the action.) */}
+      {wouldOffer && refusal !== null && (
+        <p className="plan__refused" role="status">
+          {refusal}
         </p>
       )}
 

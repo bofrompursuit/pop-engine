@@ -1096,6 +1096,113 @@ describe("ordering the live ruleset against the pinned one", () => {
   });
 });
 
+describe("regenerating while the service is behind the plan's ruleset", () => {
+  /** A stale plan — the event has been edited — pinned to `pinned`, with the service on `live`. */
+  const stubBehind = (pinned: string, live: string | null) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/rules/meta")) {
+          return live === null
+            ? jsonResponse(503, { error: "rules file unreadable" })
+            : jsonResponse(200, { ruleset_version: live, snapshot_date: "2026-07-24" });
+        }
+        if (url.endsWith("/plan")) {
+          return jsonResponse(200, plan({ rulesetVersion: pinned, eventRevision: 1 }));
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 4 },
+          warnings: [],
+          plan_stale: true,
+        });
+      }),
+    );
+
+  it("refuses regeneration when the service has been rolled back behind the plan", async () => {
+    // The event has been edited, so staleness would offer the button. Regeneration evaluates the
+    // SERVICE's ruleset, so taking that offer would rebuild a v2.3 plan from v2.2 — a silent
+    // downgrade of the plan's regulatory basis, dressed as the routine fix for a stale plan.
+    stubBehind("nyc.v2.3", "nyc.v2.2");
+    renderPlan();
+
+    // The staleness warning still stands: the plan really is stale.
+    expect((await screen.findByRole("alert")).textContent).toContain("now at revision 4");
+    expect(screen.queryByRole("button", { name: "Regenerate the plan" })).toBeNull();
+  });
+
+  it("says it is the service that is behind, naming both versions", async () => {
+    stubBehind("nyc.v2.3", "nyc.v2.2");
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    // Greying out a button, or dropping it, leaves an organizer to conclude their event is at fault.
+    const refused = document.querySelector(".plan__refused");
+    expect(refused?.textContent).toContain("generated from ruleset nyc.v2.3");
+    expect(refused?.textContent).toContain("service is currently running nyc.v2.2");
+    expect(refused?.textContent).toContain("not a problem with your event");
+  });
+
+  it("refuses a version it cannot order, for the same reason", async () => {
+    // Nothing establishes that regenerating onto an unorderable artifact would not move the plan
+    // backwards, and "we cannot tell" is not permission to overwrite a regulatory basis.
+    stubBehind("nyc.v2.3", "nyc-hotfix");
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(screen.queryByRole("button", { name: "Regenerate the plan" })).toBeNull();
+    expect(document.querySelector(".plan__refused")?.textContent).toContain("nyc-hotfix");
+  });
+
+  it("refuses when the service's ruleset cannot be read at all", async () => {
+    // The claim being made is that the service is at or ahead of the pinned version. An unreadable
+    // /api/rules/meta does not establish it, and the cost of waiting is a stale-but-sound plan.
+    stubBehind("nyc.v2.3", null);
+    renderPlan();
+    await screen.findByRole("complementary", { name: "Rules snapshot" });
+
+    expect(screen.queryByRole("button", { name: "Regenerate the plan" })).toBeNull();
+    expect(document.querySelector(".plan__refused")?.textContent).toContain("could not be read");
+  });
+
+  it("still regenerates a stale plan when the service is level with it", async () => {
+    stubBehind(publishedRuleset.ruleset_version, publishedRuleset.ruleset_version);
+    renderPlan();
+
+    expect(await screen.findByRole("button", { name: "Regenerate the plan" })).toBeDefined();
+    expect(document.querySelector(".plan__refused")).toBeNull();
+  });
+
+  it("still regenerates onto a newer ruleset, which is what the banner promises", async () => {
+    stubBehind("nyc.v2.1", publishedRuleset.ruleset_version);
+    renderPlan();
+
+    expect(await screen.findByRole("button", { name: "Regenerate the plan" })).toBeDefined();
+    expect(document.querySelector(".plan__refused")).toBeNull();
+  });
+
+  it("still generates a first plan whatever the service is running", async () => {
+    // Nothing is pinned yet, so there is no regulatory basis to downgrade.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/rules/meta")) {
+          return jsonResponse(200, { ruleset_version: "nyc-hotfix", snapshot_date: "2026-07-25" });
+        }
+        if (url.endsWith("/plan")) return jsonResponse(404, {});
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: 1 },
+          warnings: [],
+          plan_stale: false,
+        });
+      }),
+    );
+    renderPlan();
+
+    expect(await screen.findByRole("button", { name: "Generate the plan" })).toBeDefined();
+    expect(document.querySelector(".plan__refused")).toBeNull();
+  });
+});
+
 describe("a plan the event has moved past", () => {
   /** The event endpoint's answer, which is where the current revision comes from. */
   const stubWithEvent = (planBody: unknown, revisionCounter: number | null, planStatus = 200) => {
