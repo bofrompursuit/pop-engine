@@ -108,12 +108,52 @@ function optionalStringArray(container: JsonObject, key: string, label: string):
  * that threshold — FDNY-GENERATOR-001's 2.5 gallons and DOB-STAGE-001's 2 feet exclude their
  * exact values, and say so by declaring nothing.
  */
+/**
+ * What a published ruleset from before nyc.v2.4 relied on the engine to supply.
+ *
+ * These are not defaults. A version reaches this table only by having already shipped without
+ * publishing the facts: from nyc.v2.4 on every ruleset declares them itself and fails to load
+ * otherwise, so the table can never cover a version that had the option to publish. It exists
+ * because a plan pins its `ruleset_version` and `intake_snapshot` in order to be re-evaluated
+ * later (AD-7 "history is reproducible even after rules change", AD-13 version coexistence,
+ * DOCUMENTATION-GOVERNANCE §9 "verify historical replay"). Refusing the artifact would make
+ * every plan generated before this bump unreproducible; guessing the facts from the artifact
+ * would be the inference the bump exists to delete. Recording what the engine of that era
+ * actually did is neither.
+ *
+ * Closed set. A new entry is only ever wrong: a new ruleset can publish.
+ *
+ * nyc.v1 is deliberately absent — it predates the corrected subset and its own artifact is not
+ * known to parse under this engine at all, so listing it would assert a replay guarantee that
+ * has not been demonstrated.
+ */
+type PrePublicationFacts = {
+  readonly levelBinding: { readonly levelField: string; readonly multiBlockField: string };
+  /** Thresholds whose exact value these versions treated as unresolved, by rule and field. */
+  readonly conditionalThresholds: readonly { readonly ruleId: string; readonly field: string }[];
+};
+
+const PRE_PUBLICATION_FACTS: ReadonlyMap<string, PrePublicationFacts> = new Map(
+  ["nyc.v2.1", "nyc.v2.2", "nyc.v2.3"].map((version) => [
+    version,
+    {
+      levelBinding: { levelField: "plaza_level", multiBlockField: "plaza_multiple_blocks" },
+      conditionalThresholds: [{ ruleId: "DOB-TENT-001", field: "tent_area_sqft" }],
+    },
+  ]),
+);
+
 function parseConditionBoundary(
   node: JsonObject,
   operator: ConditionOperator,
   label: string,
+  legacyConditionalFields: readonly string[],
 ): ConditionBoundary | null {
-  const declared = node.boundary;
+  const declared =
+    node.boundary ??
+    (legacyConditionalFields.includes(asString(node.field, `${label}.field`))
+      ? "conditional"
+      : undefined);
   if (declared === undefined) return null;
   if (declared !== "conditional") {
     fail(`${label}.boundary has unsupported value "${String(declared)}"`);
@@ -129,7 +169,11 @@ function parseConditionBoundary(
   return declared;
 }
 
-function parseTrigger(value: unknown, label: string): TriggerNode {
+function parseTrigger(
+  value: unknown,
+  label: string,
+  legacyConditionalFields: readonly string[],
+): TriggerNode {
   const node = asObject(value, label);
   const keys = ["all", "any", "field"].filter((key) => Object.hasOwn(node, key));
   if (keys.length !== 1) fail(`${label} must contain exactly one of all, any, or field`);
@@ -143,7 +187,7 @@ function parseTrigger(value: unknown, label: string): TriggerNode {
       field: asString(node.field, `${label}.field`),
       op: operator,
       value: node.value,
-      boundary: parseConditionBoundary(node, operator, label),
+      boundary: parseConditionBoundary(node, operator, label, legacyConditionalFields),
     } satisfies Condition;
   }
 
@@ -151,7 +195,7 @@ function parseTrigger(value: unknown, label: string): TriggerNode {
   const children = asArray(node[combinator], `${label}.${combinator}`);
   if (children.length === 0) fail(`${label}.${combinator} must not be empty`);
   const parsed = children.map((child, index) =>
-    parseTrigger(child, `${label}.${combinator}[${index}]`),
+    parseTrigger(child, `${label}.${combinator}[${index}]`, legacyConditionalFields),
   );
   return combinator === "all" ? { all: parsed } : { any: parsed };
 }
@@ -195,8 +239,28 @@ function parseLevelBinding(
   levels: Record<string, { calendarDays: number; multiBlockDays: number | null }>,
   intakeFields: readonly IntakeFieldDefinition[],
   label: string,
+  legacy: PrePublicationFacts | null,
 ): { levelField: string; multiBlockField: string } {
-  const levelField = requireDeclaredField(deadline, "level_field", intakeFields, label);
+  const declared = (key: "level_field" | "multi_block_field", fallback: string): string =>
+    deadline[key] === undefined && legacy !== null
+      ? fallback
+      : asString(deadline[key], `${label}.${key}`);
+
+  const levelField = requireDeclaredField(
+    declared("level_field", legacy?.levelBinding.levelField ?? ""),
+    intakeFields,
+    `${label}.level_field`,
+  );
+  // The resolver reads the answer as a single level (`deadline.levels[answer]`), so a field that
+  // can answer with several has no level to resolve. It would take the unresolvable path, which
+  // reports NOT_CALCULABLE without naming a blocking fact, and a plan can read FEASIBLE around an
+  // undated permit. Rejecting the artifact is the loud half of the same check.
+  if (levelField.type !== "enum") {
+    fail(
+      `${label}.level_field "${levelField.field}" is a ${levelField.type} field; ` +
+        `a level deadline resolves one level per plan, so it needs an enum`,
+    );
+  }
   const missing = Object.keys(levels).filter((key) => levelField.values?.includes(key) !== true);
   if (missing.length > 0) {
     fail(
@@ -205,25 +269,56 @@ function parseLevelBinding(
     );
   }
 
-  const multiBlockField = requireDeclaredField(deadline, "multi_block_field", intakeFields, label);
+  const multiBlockField = requireDeclaredField(
+    declared("multi_block_field", legacy?.levelBinding.multiBlockField ?? ""),
+    intakeFields,
+    `${label}.multi_block_field`,
+  );
   if (multiBlockField.type !== "boolean") {
     fail(
       `${label}.multi_block_field "${multiBlockField.field}" is a ${multiBlockField.type} field; ` +
         `choosing between a level's two windows needs a boolean`,
     );
   }
+  // Same rule again, on the other half: the resolver must be able to honour every level the rule
+  // publishes. An out-of-scope field is not unanswered — `isUnanswered` reports false for it — so
+  // the flag reads as "no" and the shorter single-block window is applied silently, which can
+  // present an already-missed multi-block deadline as on track. That is the exact failure the
+  // resolver guards against for an *unanswered* flag; scoping is the way around that guard.
+  const unreachable = Object.entries(levels)
+    .filter(([, entry]) => entry.multiBlockDays !== null)
+    .map(([level]) => level)
+    .filter((level) => !scopeAdmits(multiBlockField, levelField.field, level));
+  if (unreachable.length > 0) {
+    fail(
+      `${label}.multi_block_field "${multiBlockField.field}" is not asked for level(s) ` +
+        `${unreachable.join(", ")}, which publish a multi-block window`,
+    );
+  }
   return { levelField: levelField.field, multiBlockField: multiBlockField.field };
 }
 
+/** Whether `field`'s asked-when scoping still asks it when `levelField` answers `level`. */
+function scopeAdmits(field: IntakeFieldDefinition, levelField: string, level: string): boolean {
+  const clauses = (field.askedWhenClauses ?? []).filter((clause) => clause.field === levelField);
+  return clauses.every((clause) => {
+    if (clause.kind === "in") return clause.values.includes(level);
+    if (clause.kind === "compare") {
+      return clause.op === "=" ? clause.value === level : clause.value !== level;
+    }
+    // Any other clause kind against an enum level field is an authoring mistake rather than a
+    // scoping this can reason about. Refusing is the safe direction.
+    return false;
+  });
+}
+
 function requireDeclaredField(
-  deadline: JsonObject,
-  key: string,
+  name: string,
   intakeFields: readonly IntakeFieldDefinition[],
   label: string,
 ): IntakeFieldDefinition {
-  const name = asString(deadline[key], `${label}.${key}`);
   const declared = intakeFields.find((field) => field.field === name);
-  if (declared === undefined) fail(`${label}.${key} "${name}" is not a declared intake field`);
+  if (declared === undefined) fail(`${label} "${name}" is not a declared intake field`);
   return declared;
 }
 
@@ -231,6 +326,7 @@ function parseDeadline(
   value: unknown,
   label: string,
   intakeFields: readonly IntakeFieldDefinition[],
+  legacy: PrePublicationFacts | null,
 ): Deadline | null {
   if (value === undefined || value === null) return null;
   const deadline = asObject(value, label);
@@ -272,7 +368,7 @@ function parseDeadline(
         unknownLevelBehavior: optionalString(deadline, "unknown_level_behavior"),
         qualification,
         boundary,
-        ...parseLevelBinding(deadline, parsedLevels, intakeFields, label),
+        ...parseLevelBinding(deadline, parsedLevels, intakeFields, label, legacy),
       };
     }
     case "composite": {
@@ -322,8 +418,13 @@ function parseRule(
   value: unknown,
   label: string,
   intakeFields: readonly IntakeFieldDefinition[],
+  legacy: PrePublicationFacts | null,
 ): EngineRule {
   const rule = asObject(value, label);
+  const ruleId = asString(rule.id, `${label}.id`);
+  const legacyConditionalFields = (legacy?.conditionalThresholds ?? [])
+    .filter((threshold) => threshold.ruleId === ruleId)
+    .map((threshold) => threshold.field);
   const kind = asString(rule.kind, `${label}.kind`) as RuleKind;
   if (!RULE_KINDS.includes(kind)) fail(`${label}.kind has unsupported value "${kind}"`);
 
@@ -352,7 +453,7 @@ function parseRule(
   return {
     id: asString(rule.id, `${label}.id`),
     kind,
-    trigger: parseTrigger(rule.trigger, `${label}.trigger`),
+    trigger: parseTrigger(rule.trigger, `${label}.trigger`, legacyConditionalFields),
     name:
       optionalString(output, "permit_name") ??
       optionalString(output, "requirement_name") ??
@@ -361,7 +462,7 @@ function parseRule(
     agency: optionalString(output, "agency"),
     publishedDisposition:
       publishedDisposition === null ? null : (PUBLISHED_DISPOSITIONS[publishedDisposition] ?? null),
-    deadline: parseDeadline(output.deadline, `${label}.output.deadline`, intakeFields),
+    deadline: parseDeadline(output.deadline, `${label}.output.deadline`, intakeFields, legacy),
     feeDisplay: fee === null ? null : optionalString(fee, "display"),
     portalName: portal === null ? null : optionalString(portal, "name"),
     portalUrl: portal === null ? null : optionalString(portal, "url"),
@@ -460,11 +561,15 @@ export function parseEngineRuleset(value: unknown): EngineRuleset {
       parseIntakeField(field, `ruleset.intake_fields[${index}]`),
     ),
   );
+  // Looked up before any rule is parsed: a superseded artifact is read under the semantics of
+  // its own version, not normalized into this one.
+  const legacy =
+    PRE_PUBLICATION_FACTS.get(asString(ruleset.ruleset_version, "ruleset.ruleset_version")) ?? null;
   const rules = asArray(ruleset.rules, "ruleset.rules").map((rule, index) =>
-    parseRule(rule, `ruleset.rules[${index}]`, intakeFields),
+    parseRule(rule, `ruleset.rules[${index}]`, intakeFields, legacy),
   );
   const advisories = asArray(ruleset.advisories, "ruleset.advisories").map((rule, index) =>
-    parseRule(rule, `ruleset.advisories[${index}]`, intakeFields),
+    parseRule(rule, `ruleset.advisories[${index}]`, intakeFields, legacy),
   );
 
   const declaredFields = new Set(intakeFields.map((field) => field.field));

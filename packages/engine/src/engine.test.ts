@@ -958,6 +958,49 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
     expect(() => plazaRuleset({ ...byLevel, multi_block_field: "tier" })).toThrow(
       /is a enum field/,
     );
+    // A field that can answer with several levels has no level for the resolver to look up. It
+    // takes the unresolvable path, which reports NOT_CALCULABLE without naming a blocking fact,
+    // so the plan can read FEASIBLE around an undated permit instead of failing loudly.
+    expect(() =>
+      plazaRuleset({ ...byLevel, level_field: "tiers" }, [
+        { field: "tiers", type: "multi_enum", values: ["gold", "silver"] },
+      ]),
+    ).toThrow(/is a multi_enum field; a level deadline resolves one level per plan/);
+  });
+
+  it("refuses a multi-block field the resolver cannot read at every level that needs it", () => {
+    // Both published levels carry a multi-block window, so a flag scoped away from either one is
+    // unreachable there. Out of scope is not unanswered: the resolver's unanswered guard does not
+    // fire, the flag reads as "no", and the shorter single-block window is applied silently — an
+    // already-missed multi-block deadline reported as on track.
+    expect(() =>
+      plazaRuleset({ ...byLevel, multi_block_field: "gold_only_flag" }, [
+        { field: "gold_only_flag", type: "boolean", asked_when: "tier = gold" },
+      ]),
+    ).toThrow(/is not asked for level\(s\) silver, which publish a multi-block window/);
+
+    // In scope for every such level is fine, whether the scoping names them or ignores them.
+    expect(() =>
+      plazaRuleset({ ...byLevel, multi_block_field: "either_flag" }, [
+        { field: "either_flag", type: "boolean", asked_when: "tier in gold/silver" },
+      ]),
+    ).not.toThrow();
+
+    // And a level publishing no multi-block window puts no scoping demand on the flag: silver
+    // here has a single window, so the gold-only flag is reachable everywhere it is consulted.
+    expect(() =>
+      plazaRuleset(
+        {
+          ...byLevel,
+          levels: {
+            gold: { calendar_days: 30, multi_block_days: 60 },
+            silver: { calendar_days: 10 },
+          },
+          multi_block_field: "gold_only_flag",
+        },
+        [{ field: "gold_only_flag", type: "boolean", asked_when: "tier = gold" }],
+      ),
+    ).not.toThrow();
   });
 
   it("leaves a threshold that declares no boundary exclusive of its own value", () => {
@@ -1020,15 +1063,75 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
     ).toThrow(/boundary does not apply to the "gte" operator/);
   });
 
-  it("will not load nyc.v2.3, which does not publish either fact", () => {
-    // The bump requires the fields rather than defaulting them: one code path, and a v2.3 artifact
-    // is refused at boot instead of being evaluated under v2.4 assumptions (AD-13).
+  it("still reads nyc.v2.3 under nyc.v2.3 semantics, so its plans replay", () => {
+    // A plan pins ruleset_version and intake_snapshot in order to be re-evaluated later: AD-7
+    // says history stays reproducible after rules change, AD-13 has two versions coexisting, and
+    // governance §9 requires replay to be verified after a regulatory publish. v2.3 published
+    // neither fact, so it is read under the engine facts of its own era rather than normalized
+    // into v2.4 — same verdict, same findings, same dates as when the plan was generated.
+    const v23 = parseEngineRuleset(
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+          "utf8",
+        ),
+      ),
+    );
+    expect(v23.rulesetVersion).toBe("nyc.v2.3");
+
+    const replays = (intake: EventIntake) => {
+      const before = evaluate(intake, v23, TODAY, calendar);
+      const after = evaluate(intake, ruleset, TODAY, calendar);
+      return {
+        verdictMatches: before.verdict === after.verdict,
+        findingsMatch: JSON.stringify(before.findings) === JSON.stringify(after.findings),
+        verdict: before.verdict,
+      };
+    };
+
+    // The by-level deadline: a dated plaza permit is the case the binding decides, and the one a
+    // missing binding would silently turn into NOT_CALCULABLE.
+    const datedPlaza = replays({
+      ...parkIntake,
+      location_type: "plaza",
+      obstructs_public_way: "yes",
+      sapo_event_type: "plaza_event",
+      plaza_level: "b",
+      plaza_multiple_blocks: true,
+      amplified_sound: false,
+    } as EventIntake);
+    expect(datedPlaza).toMatchObject({ verdictMatches: true, findingsMatch: true });
+
+    // The exact boundary: DOB-TENT-001 at exactly 400 sq ft. This half fails silently rather than
+    // loudly — v2.3 read the threshold as unresolved there, and a v2.4-only reading would make the
+    // rule simply not fire, changing the verdict of a stored plan with no error anywhere.
+    const tentOnBoundary = replays({
+      ...parkIntake,
+      location_type: "private_venue",
+      amplified_sound: false,
+      structure_types: ["tent_canopy"],
+      tent_area_sqft: 400,
+      tent_days_in_place: 3,
+    } as EventIntake);
+    expect(tentOnBoundary).toMatchObject({ verdictMatches: true, findingsMatch: true });
+    expect(tentOnBoundary.verdict).toBe("CONDITIONAL");
+
+    // And the scenario intake, so the guarantee is not only asserted on the two changed rules.
+    expect(replays(parkIntake)).toMatchObject({ verdictMatches: true, findingsMatch: true });
+  });
+
+  it("requires the binding of any version that could have published it", () => {
+    // The compatibility record is closed, not a default: a version not in it must declare the
+    // fields. Without this the record would be the live constant the bump deleted, reachable by
+    // any artifact that simply omits them.
     const v23 = JSON.parse(
       readFileSync(
         fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
         "utf8",
       ),
     );
-    expect(() => parseEngineRuleset(v23)).toThrow(/level_field/);
+    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.5" })).toThrow(
+      /level_field/,
+    );
   });
 });
