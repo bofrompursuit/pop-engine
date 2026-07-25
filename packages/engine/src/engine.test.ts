@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./t
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.3.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.4.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.3 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.4 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -52,10 +52,10 @@ function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRulese
       slack_warning_days: { value: 14 },
       business_day_math: { calendar: "test-calendar@2026" },
     },
+    // Only fields the rules below consume: the loader refuses a declared field nothing reads.
     intake_fields: [
       { field: "event_date", type: "date" },
       { field: "headcount", type: "integer" },
-      { field: "structure_types", type: "multi_enum", values: ["tent_canopy", "none"] },
     ],
     rules,
     advisories: [],
@@ -241,9 +241,90 @@ describe("typed deadlines", () => {
     expect(plan.verdict).toBe("FEASIBLE_AT_RISK");
   });
 
-  it("treats the Parks hard floor as a cliff on the day it closes", () => {
+  it("keeps the Parks floor day itself inside the window", () => {
+    // 2026-08-12 is exactly 21 days from the fixture clock, and PARKS-EVENT-001 publishes "apply
+    // at least 21 days ahead (applications inside 21 days are not accepted)" — so the floor day is
+    // the last valid filing day, with zero slack, not a miss. This test previously asserted the
+    // opposite, citing an F-102 sentence that has since been corrected against the published rule.
     const plan = evaluate({ ...parkIntake, event_date: "2026-08-12" }, ruleset, TODAY, calendar);
     const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe(TODAY);
+    expect(parks?.slackDays).toBe(0);
+    expect(parks?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(plan.verdict).not.toBe("INFEASIBLE");
+  });
+
+  it("publishes no negative countdown when the sequence closes the window", () => {
+    // The exact case making the floor day feasible exposed: parkIntake has amplified sound, so
+    // once Parks is no longer missed the NYPD pursuit is gated on a decision expected 2026-08-12
+    // while its own deadline is 2026-08-07. That window closed before it opened, which is not a
+    // countdown — and because the sequence is unconfirmed it is not a miss either, since filing
+    // directly is still possible. Reporting -5 would put "apply within -5 days" into deadline copy
+    // and F-203's alerts.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-12" }, ruleset, TODAY, calendar);
+    const sound = plan.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+
+    // No actionable gate: F-202 would render 2026-08-12 as the start date and F-203 would fire
+    // `dependency_unlocked` there, five days after this permit's own deadline. The date stays in
+    // the note, where it explains the conflict instead of scheduling work.
+    expect(sound?.applyAfterDate).toBeNull();
+    expect(sound?.notes.join(" ")).toContain("2026-08-12");
+    expect(sound?.latestApplyDate).toBe("2026-08-07");
+    expect(sound?.slackDays).toBeNull();
+    expect(sound?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(sound?.notes.join(" ")).toContain("leaves no window to file in");
+    expect(sound?.notes.join(" ")).not.toContain("-5");
+
+    // Nothing negative reaches the plan-level figure that copy and alerts read.
+    expect(plan.verdictDetail.minSlackDays).toBe(0);
+    expect(
+      plan.findings.every((finding) => finding.slackDays === null || finding.slackDays >= 0),
+      "no finding publishes a negative countdown",
+    ).toBe(true);
+  });
+
+  it("does not call direct filing open once the gated permit's own deadline has passed", () => {
+    // Four days out: NYPD-SOUND-001 publishes five days, so its window is already closed and the
+    // gated window is negative too. The closed-sequence note is still right that the order is
+    // unconfirmed, but "filing directly may still be open" would contradict the rule's own
+    // deadline — the same overclaim class as the "not before" wording on #93.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-07-26" }, ruleset, TODAY, calendar);
+    const sound = plan.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    const notes = sound?.notes.join(" ") ?? "";
+
+    expect(sound?.deadlineStatus).toBe("published_deadline_missed");
+    expect(notes).toContain("leaves no window to file in");
+    expect(notes).not.toContain("filing directly may still be open");
+    expect(notes).toContain("confirm the order with the agency");
+    // The caveat is right in the neighbouring case, so its absence here is a condition rather
+    // than a deletion.
+    const stillOpen = evaluate(
+      { ...parkIntake, event_date: "2026-08-12" },
+      ruleset,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    expect(stillOpen?.notes.join(" ")).toContain("filing directly may still be open");
+  });
+
+  it("treats the first day past the Parks floor as on track", () => {
+    // 2026-08-13 is 22 days out: the immediate above-boundary case CONTRIBUTING.md:63 requires,
+    // completing 20 / 21 / 22. An off-by-one that only shifted the first day past the floor would
+    // pass the other two.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-13" }, ruleset, TODAY, calendar);
+    const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe("2026-07-23");
+    expect(parks?.slackDays).toBe(1);
+    expect(parks?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(plan.verdict).not.toBe("INFEASIBLE");
+  });
+
+  it("treats the day inside the Parks floor as missed", () => {
+    // 2026-08-11 is 20 days out: inside the floor, which the rule says is not accepted. Pinning
+    // both sides keeps the cliff located rather than only pinning where it is not.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-11" }, ruleset, TODAY, calendar);
+    const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe("2026-07-21");
     expect(parks?.deadlineStatus).toBe("published_deadline_missed");
     expect(plan.verdict).toBe("INFEASIBLE");
   });
@@ -373,6 +454,55 @@ describe("published bound inclusivity", () => {
     expect(dayBefore?.slackDays).toBe(0);
   });
 
+  it("honors a boundary on a composite floor rather than only accepting one", () => {
+    // Accepting the field without acting on it would be the same contradiction in the other
+    // direction, so this checks the date moves: an exclusive floor makes the floor day itself too
+    // late, exactly as it does for the other dated variants.
+    const floorDate = (boundary?: string) => {
+      const ruleset = parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+        ],
+        rules: [
+          {
+            id: "RULE-FLOOR",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+            output: {
+              permit_name: "x",
+              agency: "DOB",
+              deadline: {
+                type: "composite",
+                hard_floor_days: 21,
+                processing_range_days: [21, 30],
+                ...(boundary === undefined ? {} : { boundary }),
+              },
+            },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
+      return evaluate({ event_date: "2026-12-04", headcount: 5 } as EventIntake, ruleset, TODAY, {
+        id: ruleset.calendarId,
+        holidays: [],
+      }).findings[0]?.latestApplyDate;
+    };
+
+    expect(floorDate()).toBe("2026-11-13"); // absent means inclusive: the floor day is valid
+    expect(floorDate("inclusive")).toBe("2026-11-13");
+    expect(floorDate("exclusive")).toBe("2026-11-12"); // day 21 too late, so day 22 is the last
+  });
+
   it("leaves inclusive bounds alone, so 'at least N days' still includes day N", () => {
     // NYPD-SOUND-001 publishes "file at least 5 days before use" and declares no boundary, so the
     // default keeps day 5 valid. A blanket exclusive reading would wrongly close it.
@@ -407,6 +537,8 @@ describe("published bound inclusivity", () => {
     expect(withDeadline({ type: "research_required", boundary: "exclusive" })).toThrow(
       /boundary does not apply to a "research_required" deadline/,
     );
+    // composite is no longer excluded: its floor day is valid, which is what inclusive means, so
+    // it takes a boundary like every other dated variant.
     expect(
       withDeadline({
         type: "composite",
@@ -414,7 +546,7 @@ describe("published bound inclusivity", () => {
         processing_range_days: [21, 30],
         boundary: "inclusive",
       }),
-    ).toThrow(/boundary does not apply to a "composite" deadline/);
+    ).not.toThrow();
   });
 });
 
@@ -612,8 +744,115 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
     ).toThrow(/levels must not be empty/);
   });
 
+  it("refuses a declared field no rule, deadline, or scoping condition reads", () => {
+    // The reverse of the check boot already had. A trigger naming an undeclared field was refused;
+    // a declared field naming no trigger was invisible, which is how seven of them went unnoticed.
+    expect(() =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "headcount", type: "integer" },
+          { field: "favourite_colour", type: "enum", values: ["blue"] },
+        ],
+        rules: [
+          {
+            id: "RULE-X",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      }),
+    ).toThrow(/"favourite_colour" is declared but no rule trigger, deadline, or scoping condition/);
+  });
+
+  it("counts a level field as consumed only when a by-level deadline keys on it", () => {
+    // The bug the derivation fixes. Naming the field as consumed unconditionally let a ruleset
+    // declare it while publishing no by-level deadline and still pass the orphan check.
+    const withLevelField =
+      (deadline: Record<string, unknown> | undefined, extra: unknown[] = []) =>
+      () =>
+        parseEngineRuleset({
+          ruleset_version: "test.v1",
+          jurisdiction: "US-NY-NYC",
+          snapshot_date: "2026-07-22",
+          config: {
+            slack_warning_days: { value: 14 },
+            business_day_math: { calendar: "test-calendar@2026" },
+          },
+          intake_fields: [
+            { field: "event_date", type: "date" },
+            { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
+            { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+            {
+              field: "spans_blocks",
+              type: "boolean",
+              asked_when: "venue_kind = plaza",
+            },
+            ...extra,
+          ],
+          rules: [
+            {
+              id: "RULE-LEVEL",
+              kind: "permit",
+              trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
+              output: { permit_name: "x", agency: "DOB", ...(deadline ? { deadline } : {}) },
+              verification: { status: "SOURCE_CONFIRMED" },
+              source: { citation: "c", urls: ["https://example.test"] },
+            },
+          ],
+          advisories: [],
+        });
+
+    const byLevel = {
+      type: "published_minimum_by_level",
+      level_field: "tier",
+      multi_block_field: "spans_blocks",
+      levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
+    };
+
+    // No by-level deadline: nothing keys on `tier`, and the flag has nothing to qualify.
+    expect(withLevelField(undefined)).toThrow(/"tier" is declared but no rule trigger, deadline/);
+
+    // A by-level deadline consumes exactly the two fields its binding names.
+    expect(withLevelField(byLevel)).not.toThrow();
+
+    // And only those. A level-shaped field the binding does not name is still an orphan, which is
+    // what stops the guard from waving through any enum that happens to cover the level keys.
+    expect(
+      withLevelField({ ...byLevel, level_field: "grade" }, [
+        { field: "grade", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+      ]),
+    ).toThrow(/"tier" is declared but no rule trigger, deadline/);
+  });
+
+  it("counts deadline resolution and scoping as consuming a field", () => {
+    // plaza_level and plaza_multiple_blocks appear in no trigger but resolve SAPO-PLAZA-001's
+    // deadline; generator_present appears in no trigger but gates the quantity questions that
+    // rules do read. None of them belongs on the unconsumed list, and the published ruleset
+    // loading at all is the assertion.
+    expect(ruleset.intakeFields.map((field) => field.field)).toEqual(
+      expect.arrayContaining([
+        "plaza_level",
+        "plaza_multiple_blocks",
+        "generator_present",
+        "event_date",
+      ]),
+    );
+  });
+
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.3");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.4");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
@@ -636,12 +875,29 @@ describe("asked_when scoping", () => {
         ...extraFields,
         { field: "venue_note", type: "boolean", asked_when: askedWhen },
       ],
+      // The scoped field is what the rule reads; the others are consumed by scoping it.
       rules: [
         {
           id: "RULE-SCOPE",
           kind: "permit",
           trigger: { all: [{ field: "venue_note", op: "bool", value: true }] },
           output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+        {
+          // Consumes the fields the expressions under test scope against, so the registry stays
+          // constant while the expression varies. The loader refuses a field nothing reads.
+          id: "RULE-CONSUMER",
+          kind: "note",
+          trigger: {
+            any: [
+              { field: "headcount", op: "gte", value: 1_000_000 },
+              { field: "food_present", op: "bool", value: true },
+              { field: "sapo_event_type", op: "eq", value: "street_event" },
+            ],
+          },
+          output: { note_text: "reads the scoping fields" },
           verification: { status: "SOURCE_CONFIRMED" },
           source: { citation: "c", urls: ["https://example.test"] },
         },
@@ -739,5 +995,441 @@ describe("asked_when scoping", () => {
 
   it("rejects a field scoped by itself", () => {
     expect(withScoping("venue_note")).toThrow(/scoping is cyclic: venue_note → venue_note/);
+  });
+});
+
+// nyc.v2.4 publishes two facts the engine used to hold in code. Both tests below are written so
+// they fail if the engine goes back to assuming: the level binding is proven by naming fields the
+// old constant never held, and the boundary by a threshold that declares none.
+describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)", () => {
+  const testCalendar: PublishedHolidayCalendar = { id: "test-calendar@2026", holidays: [] };
+  // The default flag lives in the parameter default rather than the base list, so a case that
+  // binds the deadline to a different boolean does not also leave `spans_two_sites` declared and
+  // unread — which the orphan guard now refuses, correctly.
+  const plazaRuleset = (
+    deadline: Record<string, unknown>,
+    fields: unknown[] = [{ field: "spans_two_sites", type: "boolean" }],
+  ) =>
+    parseEngineRuleset({
+      ruleset_version: "test.v1",
+      jurisdiction: "US-NY-NYC",
+      snapshot_date: "2026-07-22",
+      config: {
+        slack_warning_days: { value: 14 },
+        business_day_math: { calendar: "test-calendar@2026" },
+      },
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "tier", type: "enum", values: ["gold", "silver"] },
+        ...fields,
+      ],
+      rules: [
+        {
+          id: "RULE-LEVEL",
+          kind: "permit",
+          trigger: { all: [{ field: "tier", op: "in", value: ["gold", "silver"] }] },
+          output: { permit_name: "x", agency: "DOT", deadline },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ],
+      advisories: [],
+    });
+
+  const byLevel = {
+    type: "published_minimum_by_level",
+    level_field: "tier",
+    multi_block_field: "spans_two_sites",
+    levels: {
+      gold: { calendar_days: 30, multi_block_days: 60 },
+      silver: { calendar_days: 10, multi_block_days: 20 },
+    },
+  };
+
+  it("dates a by-level deadline from the fields the rule names, not from ones the engine knows", () => {
+    // Neither "tier" nor "spans_two_sites" is a field the engine could have known about: the
+    // published ruleset's only by-level deadline keys on plaza_level/plaza_multiple_blocks. The
+    // dates below can only come from reading the deadline's own declaration.
+    const dateFor = (intake: Record<string, unknown>) =>
+      evaluate(
+        { event_date: "2026-10-01", ...intake } as unknown as EventIntake,
+        plazaRuleset(byLevel),
+        TODAY,
+        testCalendar,
+      ).findings[0]?.latestApplyDate;
+
+    expect(dateFor({ tier: "gold", spans_two_sites: false })).toBe("2026-09-01"); // 30 days
+    expect(dateFor({ tier: "silver", spans_two_sites: false })).toBe("2026-09-21"); // 10 days
+    // The multi-block window is chosen by the named boolean, not by whichever boolean the
+    // registry happens to list first.
+    expect(dateFor({ tier: "gold", spans_two_sites: true })).toBe("2026-08-02"); // 60 days
+  });
+
+  it("refuses a by-level deadline that does not say which fields it keys on", () => {
+    const { level_field: levelField, multi_block_field: _ignored, ...unbound } = byLevel;
+    expect(() => plazaRuleset(unbound)).toThrow(/level_field/);
+    expect(() => plazaRuleset({ ...unbound, level_field: levelField })).toThrow(
+      /multi_block_field/,
+    );
+  });
+
+  it("refuses a binding that cannot carry the levels the rule publishes", () => {
+    // A field that never offers "gold" would silently date every gold event as unknown.
+    expect(() =>
+      plazaRuleset({ ...byLevel, level_field: "grade" }, [
+        { field: "grade", type: "enum", values: ["silver"] },
+      ]),
+    ).toThrow(/does not offer published level\(s\) gold/);
+    expect(() => plazaRuleset({ ...byLevel, level_field: "nope" })).toThrow(
+      /"nope" is not a declared intake field/,
+    );
+    // Choosing between a level's two windows is a yes/no question.
+    expect(() => plazaRuleset({ ...byLevel, multi_block_field: "tier" })).toThrow(
+      /is a enum field/,
+    );
+    // A field that can answer with several levels has no level for the resolver to look up. It
+    // takes the unresolvable path, which reports NOT_CALCULABLE without naming a blocking fact,
+    // so the plan can read FEASIBLE around an undated permit instead of failing loudly.
+    expect(() =>
+      plazaRuleset({ ...byLevel, level_field: "tiers" }, [
+        { field: "tiers", type: "multi_enum", values: ["gold", "silver"] },
+      ]),
+    ).toThrow(/is a multi_enum field; a level deadline resolves one level per plan/);
+  });
+
+  it("refuses a multi-block field the resolver cannot read at every level that needs it", () => {
+    // Both published levels carry a multi-block window, so a flag scoped away from either one is
+    // unreachable there. Out of scope is not unanswered: the resolver's unanswered guard does not
+    // fire, the flag reads as "no", and the shorter single-block window is applied silently — an
+    // already-missed multi-block deadline reported as on track.
+    expect(() =>
+      plazaRuleset({ ...byLevel, multi_block_field: "gold_only_flag" }, [
+        { field: "gold_only_flag", type: "boolean", asked_when: "tier = gold" },
+      ]),
+    ).toThrow(/is not asked for level\(s\) silver, which publish a multi-block window/);
+
+    // In scope for every such level is fine, whether the scoping names them or ignores them.
+    expect(() =>
+      plazaRuleset({ ...byLevel, multi_block_field: "either_flag" }, [
+        { field: "either_flag", type: "boolean", asked_when: "tier in gold/silver" },
+      ]),
+    ).not.toThrow();
+
+    // And a level publishing no multi-block window puts no scoping demand on the flag: silver
+    // here has a single window, so the gold-only flag is reachable everywhere it is consulted.
+    expect(() =>
+      plazaRuleset(
+        {
+          ...byLevel,
+          levels: {
+            gold: { calendar_days: 30, multi_block_days: 60 },
+            silver: { calendar_days: 10 },
+          },
+          multi_block_field: "gold_only_flag",
+        },
+        [{ field: "gold_only_flag", type: "boolean", asked_when: "tier = gold" }],
+      ),
+    ).not.toThrow();
+  });
+
+  it("leaves a threshold that declares no boundary exclusive of its own value", () => {
+    // DOB-TENT-001 declares boundary "conditional" for 400 sq ft; FDNY-GENERATOR-001's 2.5 gallons
+    // declares nothing and so excludes 2.5 exactly. If the engine went back to a rule-id list this
+    // synthetic rule would be off it and the assertion would still pass, so the published tent case
+    // below is the half that pins the behavior to the data.
+    const atThreshold = (extra: Record<string, unknown>) =>
+      evaluate(
+        { event_date: "2026-10-01", headcount: 400 } as unknown as EventIntake,
+        syntheticRuleset([
+          {
+            id: "RULE-THRESHOLD",
+            kind: "permit",
+            trigger: { all: [{ field: "headcount", op: "gt", value: 400, ...extra }] },
+            output: { permit_name: "x", agency: "DOB" },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ]),
+        TODAY,
+        testCalendar,
+      );
+
+    expect(atThreshold({}).findings).toHaveLength(0);
+    expect(atThreshold({ boundary: "conditional" }).findings).toHaveLength(1);
+    expect(atThreshold({ boundary: "conditional" }).verdict).toBe("CONDITIONAL");
+  });
+
+  it("rejects a boundary it cannot honor rather than ignoring it", () => {
+    const withTrigger = (condition: Record<string, unknown>) => () =>
+      syntheticRuleset([
+        {
+          id: "RULE-THRESHOLD",
+          kind: "permit",
+          trigger: { all: [condition] },
+          output: { permit_name: "x", agency: "DOB" },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ]);
+    expect(withTrigger({ field: "headcount", op: "gt", value: 400, boundary: "strict" })).toThrow(
+      /boundary has unsupported value "strict"/,
+    );
+    // "at the threshold" means nothing for an operator that has no threshold to sit on.
+    expect(
+      withTrigger({ field: "headcount", op: "eq", value: 400, boundary: "conditional" }),
+    ).toThrow(/boundary does not apply to the "eq" operator/);
+    expect(
+      withTrigger({
+        field: "structure_types",
+        op: "contains",
+        value: "tent_canopy",
+        boundary: "conditional",
+      }),
+    ).toThrow(/boundary does not apply to the "contains" operator/);
+    // "gte" already admits its threshold, so there is no excluded value for a boundary to reopen.
+    expect(
+      withTrigger({ field: "headcount", op: "gte", value: 400, boundary: "conditional" }),
+    ).toThrow(/boundary does not apply to the "gte" operator/);
+  });
+
+  it("still reads nyc.v2.3 under nyc.v2.3 semantics, so its plans replay", () => {
+    // A plan pins ruleset_version and intake_snapshot in order to be re-evaluated later: AD-7
+    // says history stays reproducible after rules change, AD-13 has two versions coexisting, and
+    // governance §9 requires replay to be verified after a regulatory publish. v2.3 published
+    // neither fact, so it is read under the engine facts of its own era rather than normalized
+    // into v2.4 — same verdict, same findings, same dates as when the plan was generated.
+    const v23 = parseEngineRuleset(
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+          "utf8",
+        ),
+      ),
+    );
+    expect(v23.rulesetVersion).toBe("nyc.v2.3");
+
+    const replays = (intake: EventIntake) => {
+      const before = evaluate(intake, v23, TODAY, calendar);
+      const after = evaluate(intake, ruleset, TODAY, calendar);
+      return {
+        verdictMatches: before.verdict === after.verdict,
+        findingsMatch: JSON.stringify(before.findings) === JSON.stringify(after.findings),
+        verdict: before.verdict,
+      };
+    };
+
+    // The by-level deadline: a dated plaza permit is the case the binding decides, and the one a
+    // missing binding would silently turn into NOT_CALCULABLE.
+    const datedPlaza = replays({
+      ...parkIntake,
+      location_type: "plaza",
+      obstructs_public_way: "yes",
+      sapo_event_type: "plaza_event",
+      plaza_level: "b",
+      plaza_multiple_blocks: true,
+      amplified_sound: false,
+    } as EventIntake);
+    expect(datedPlaza).toMatchObject({ verdictMatches: true, findingsMatch: true });
+
+    // The exact boundary: DOB-TENT-001 at exactly 400 sq ft. This half fails silently rather than
+    // loudly — v2.3 read the threshold as unresolved there, and a v2.4-only reading would make the
+    // rule simply not fire, changing the verdict of a stored plan with no error anywhere.
+    const tentOnBoundary = replays({
+      ...parkIntake,
+      location_type: "private_venue",
+      amplified_sound: false,
+      structure_types: ["tent_canopy"],
+      tent_area_sqft: 400,
+      tent_days_in_place: 3,
+    } as EventIntake);
+    expect(tentOnBoundary).toMatchObject({ verdictMatches: true, findingsMatch: true });
+    expect(tentOnBoundary.verdict).toBe("CONDITIONAL");
+
+    // And the scenario intake, so the guarantee is not only asserted on the two changed rules.
+    expect(replays(parkIntake)).toMatchObject({ verdictMatches: true, findingsMatch: true });
+  });
+
+  it("never dates a level deadline from a field the plan was not asked", () => {
+    // Both halves of the binding, both reached by scoping the parser cannot disprove: "tier in
+    // gold/silver AND enabled" is accepted because every clause naming the level field admits both
+    // levels, and `enabled = false` still puts the field out of scope. Out of scope is not
+    // unanswered, so the old guard passed and the resolver read the flag as "no".
+    const scoped = (extra: unknown[], deadlineOverrides: Record<string, unknown> = {}) =>
+      parseEngineRuleset({
+        ruleset_version: "test.v1",
+        jurisdiction: "US-NY-NYC",
+        snapshot_date: "2026-07-22",
+        config: {
+          slack_warning_days: { value: 14 },
+          business_day_math: { calendar: "test-calendar@2026" },
+        },
+        intake_fields: [
+          { field: "event_date", type: "date" },
+          { field: "enabled", type: "boolean" },
+          { field: "tier", type: "enum", values: ["gold", "silver"] },
+          ...extra,
+        ],
+        rules: [
+          {
+            id: "RULE-LEVEL",
+            kind: "permit",
+            // Fires whatever `enabled` says, so scope is the only thing under test.
+            trigger: { all: [{ field: "enabled", op: "in", value: [true, false] }] },
+            output: {
+              permit_name: "x",
+              agency: "DOT",
+              deadline: {
+                type: "published_minimum_by_level",
+                level_field: "tier",
+                multi_block_field: "spans",
+                levels: {
+                  gold: { calendar_days: 30, multi_block_days: 60 },
+                  silver: { calendar_days: 10, multi_block_days: 20 },
+                },
+                ...deadlineOverrides,
+              },
+            },
+            verification: { status: "SOURCE_CONFIRMED" },
+            source: { citation: "c", urls: ["https://example.test"] },
+          },
+        ],
+        advisories: [],
+      });
+
+    const plan = (
+      ruleset: ReturnType<typeof parseEngineRuleset>,
+      intake: Record<string, unknown>,
+    ) =>
+      evaluate({ event_date: "2026-10-01", ...intake } as unknown as EventIntake, ruleset, TODAY, {
+        id: "test-calendar@2026",
+        holidays: [],
+      });
+
+    // The multi-block flag, unreachable through a clause that names no level.
+    const flagScoped = scoped([
+      { field: "spans", type: "boolean", asked_when: "tier in gold/silver AND enabled" },
+    ]);
+    const unreachableFlag = plan(flagScoped, { tier: "gold", enabled: false });
+    const flagFinding = unreachableFlag.findings[0];
+    // The shorter single-block window would have dated it 2026-09-01. It is not dated at all.
+    expect(flagFinding?.latestApplyDate).toBeNull();
+    expect(flagFinding?.deadlineStatus).toBe("not_calculable");
+    expect(flagFinding?.timelineUnresolvedReason).toContain("never asked spans");
+    expect(unreachableFlag.verdict).toBe("CONDITIONAL");
+    // Same ruleset, flag reachable: the deadline dates normally, so this is a scoping result and
+    // not the binding being broken.
+    expect(
+      plan(flagScoped, { tier: "gold", enabled: true, spans: true }).findings[0]?.latestApplyDate,
+    ).toBe("2026-08-02");
+
+    // The level field itself, scoped behind something the trigger does not imply.
+    const levelScoped = parseEngineRuleset({
+      ruleset_version: "test.v1",
+      jurisdiction: "US-NY-NYC",
+      snapshot_date: "2026-07-22",
+      config: {
+        slack_warning_days: { value: 14 },
+        business_day_math: { calendar: "test-calendar@2026" },
+      },
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "enabled", type: "boolean" },
+        { field: "tier", type: "enum", values: ["gold", "silver"], asked_when: "enabled" },
+        { field: "spans", type: "boolean", asked_when: "enabled" },
+      ],
+      rules: [
+        {
+          id: "RULE-LEVEL",
+          kind: "permit",
+          trigger: { all: [{ field: "enabled", op: "in", value: [true, false] }] },
+          output: {
+            permit_name: "x",
+            agency: "DOT",
+            deadline: {
+              type: "published_minimum_by_level",
+              level_field: "tier",
+              multi_block_field: "spans",
+              levels: {
+                gold: { calendar_days: 30, multi_block_days: 60 },
+                silver: { calendar_days: 10, multi_block_days: 20 },
+              },
+            },
+          },
+          verification: { status: "SOURCE_CONFIRMED" },
+          source: { citation: "c", urls: ["https://example.test"] },
+        },
+      ],
+      advisories: [],
+    });
+    const unreachableLevel = plan(levelScoped, { enabled: false });
+    expect(unreachableLevel.findings[0]?.deadlineStatus).toBe("not_calculable");
+    expect(unreachableLevel.findings[0]?.timelineUnresolvedReason).toContain("never asked tier");
+    // The hole this closes: a required permit with no date inside a FEASIBLE plan.
+    expect(unreachableLevel.findings[0]?.disposition).toBe("required");
+    expect(unreachableLevel.verdict).toBe("CONDITIONAL");
+
+    // An unresolved timeline is not a missing fact: nobody can answer an unasked question, so the
+    // verdict must not offer it as a branch. It also must not recurse trying.
+    expect(unreachableLevel.verdictDetail.missingFacts).toHaveLength(0);
+    expect(unreachableLevel.verdictDetail.unresolvedTimelines).toHaveLength(1);
+  });
+
+  it("reproduces a v2.3 plaza finding in the shape v2.3 serialised it", () => {
+    // The replay test above compares two findings from the same parser, so a key both sides gained
+    // together is invisible to it. This compares against a finding serialised by the engine on
+    // main, before any of this existed: `__fixtures__/plaza-finding-nyc.v2.3.json`, generated by
+    // running that engine against the v2.3 artifact and this intake. AD-7 replay is reproducing the
+    // historical artifact, so a shape change is a replay failure even when every value matches —
+    // and `buildFinding` snapshots `rule.deadline` verbatim, so anything the parser hangs on the
+    // deadline lands in the stored plan.
+    const historical = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL("./__fixtures__/plaza-finding-nyc.v2.3.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    const v23 = parseEngineRuleset(
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+          "utf8",
+        ),
+      ),
+    );
+    const plaza = evaluate(
+      {
+        ...parkIntake,
+        location_type: "plaza",
+        obstructs_public_way: "yes",
+        sapo_event_type: "plaza_event",
+        plaza_level: "b",
+        plaza_multiple_blocks: true,
+        amplified_sound: false,
+      } as EventIntake,
+      v23,
+      TODAY,
+      calendar,
+    ).findings.find((finding) => finding.ruleIds.includes("SAPO-PLAZA-001"));
+
+    expect(plaza).toEqual(historical);
+    // Named explicitly, because equality above would also pass if the fixture were regenerated
+    // from the new parser by mistake.
+    expect(Object.keys(plaza?.deadline ?? {})).not.toContain("levelField");
+    expect(Object.keys(plaza?.deadline ?? {})).not.toContain("multiBlockField");
+  });
+
+  it("requires the binding of any version that could have published it", () => {
+    // The compatibility record is closed, not a default: a version not in it must declare the
+    // fields. Without this the record would be the live constant the bump deleted, reachable by
+    // any artifact that simply omits them.
+    const v23 = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL("./__fixtures__/nyc-rules.v2.3.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.5" })).toThrow(
+      /level_field/,
+    );
   });
 });

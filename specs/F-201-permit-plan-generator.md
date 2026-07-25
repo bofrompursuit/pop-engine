@@ -1,8 +1,8 @@
 # F-201 · Permit Plan Generator
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
-**Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.3 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
-**Updated:** 2026-07-22 for the nyc.v2.3 baseline.
+**Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.4 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
+**Updated:** 2026-07-22 against nyc.v2.1; retargeted to nyc.v2.4 on 2026-07-25.
 
 ## User Story
 
@@ -11,7 +11,7 @@ As an independent organizer, I get the complete list of requirements my specific
 ## Inputs
 
 - An `events` row (F-101 fields) + its `revision_counter`.
-- `rules/nyc-rules.v2.3.json` (authoritative, loaded in-memory at boot; AD-2/AD-9).
+- `rules/nyc-rules.v2.4.json` (authoritative, loaded in-memory at boot; AD-2/AD-9).
 - `today` and the pinned holiday calendar (injected; the engine never reads the clock; AD-6/AD-11).
 
 ## Outputs

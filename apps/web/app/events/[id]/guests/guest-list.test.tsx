@@ -79,6 +79,72 @@ describe("GuestListView", () => {
     expect(screen.getByRole("alert").textContent).toMatch(/not valid/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("keeps the newer cancel reload when overlapping cancels finish out of order", async () => {
+    const user = userEvent.setup();
+    const rsvpB = {
+      id: "33333333-3333-4333-8333-333333333333",
+      event_id: EVENT_ID,
+      name: "Grace Hopper",
+      email: "grace@example.com",
+      phone: null,
+      status: "confirmed",
+      created_at: "2026-07-25T12:01:00.000Z",
+    };
+    const twoGuests = {
+      ...listBody,
+      confirmed_count: 2,
+      rsvps: [listBody.rsvps[0], rsvpB],
+    };
+
+    let resolveFirstReload: ((value: Response) => void) | undefined;
+    const firstReload = new Promise<Response>((resolve) => {
+      resolveFirstReload = resolve;
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, twoGuests))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { rsvp: { ...listBody.rsvps[0], status: "cancelled" } }),
+      )
+      .mockImplementationOnce(async () => firstReload)
+      .mockResolvedValueOnce(jsonResponse(200, { rsvp: { ...rsvpB, status: "cancelled" } }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...twoGuests,
+          confirmed_count: 0,
+          rsvps: [
+            { ...listBody.rsvps[0], status: "cancelled" },
+            { ...rsvpB, status: "cancelled" },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GuestListView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" />);
+    expect(await screen.findByText("2 of 5 confirmed")).toBeDefined();
+
+    const buttons = screen.getAllByRole("button", { name: "Cancel RSVP" });
+    await user.click(buttons[0]!);
+    await user.click(buttons[1]!);
+
+    await waitFor(() => {
+      expect(screen.getByText("0 of 5 confirmed")).toBeDefined();
+    });
+
+    resolveFirstReload?.(
+      jsonResponse(200, {
+        ...twoGuests,
+        confirmed_count: 1,
+        rsvps: [{ ...listBody.rsvps[0], status: "cancelled" }, rsvpB],
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("0 of 5 confirmed")).toBeDefined();
+    });
+    expect(screen.queryByText("1 of 5 confirmed")).toBeNull();
+  });
 });
 
 describe("GuestsPage", () => {

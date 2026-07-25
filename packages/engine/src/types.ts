@@ -13,13 +13,26 @@ export type EventIntake = Readonly<Record<string, IntakeValue>>;
 
 export type Tristate = "true" | "false" | "unknown";
 
+/** The intake field every backward deadline is computed from. */
+export const EVENT_DATE_FIELD = "event_date";
+
 export type ConditionOperator = "eq" | "in" | "gt" | "gte" | "bool" | "contains" | "contains_any";
 
 export type Condition = {
   readonly field: string;
   readonly op: ConditionOperator;
   readonly value: unknown;
+  /**
+   * Declared when an answer exactly on this threshold is unresolved rather than below it.
+   * DOB-TENT-001 publishes it for "more than 400 sq ft", whose own note says exactly 400 renders
+   * CONDITIONAL. Per condition, because it is a fact about that threshold: FDNY-GENERATOR-001's
+   * 2.5 gallons and DOB-STAGE-001's 2 feet exclude their exact values and say so by declaring
+   * nothing.
+   */
+  readonly boundary: ConditionBoundary | null;
 };
+
+export type ConditionBoundary = "conditional";
 
 export type TriggerNode =
   Condition | { readonly all: readonly TriggerNode[] } | { readonly any: readonly TriggerNode[] };
@@ -41,10 +54,12 @@ type DeadlineBound = {
  * days out is at risk or already missed, so it is published data rather than something the engine
  * infers from the qualification prose.
  *
- * `composite` deliberately has no boundary. Its hard floor is a cliff with its own semantics — day
- * N is already missed — so labelling it `inclusive`, whose contract is that day N is valid, would
- * publish a claim the engine itself contradicts. Whether that cliff reading is right for
- * PARKS-EVENT-001 is an open artifact question (issue #89), untouched here.
+ * Every dated variant carries one, `composite` included. It was excluded on the grounds that its
+ * hard floor meant something different — day N already missed — but that reading came from an
+ * F-102 sentence the published rule contradicted, and correcting it removed the difference: on the
+ * floor, latest_apply_date equals today, which is the last valid day, exactly what an inclusive
+ * bound means. With no difference left to describe there is no special case to keep, and a future
+ * composite publishing "earlier than" can say so like any other rule.
  */
 export type DeadlineBoundary = "inclusive" | "exclusive";
 
@@ -70,7 +85,7 @@ export type Deadline =
       readonly hardFloorDays: number;
       readonly processingRangeDays: readonly [number, number];
       readonly display: string | null;
-    } & DeadlineBound)
+    } & BoundedDeadline)
   | ({
       readonly type: "business_days_minimum";
       readonly businessDays: number;
@@ -144,6 +159,20 @@ export type AskedWhenClause =
   | { readonly kind: "truthy"; readonly field: string }
   | { readonly kind: "member"; readonly field: string; readonly member: string };
 
+/**
+ * The intake fields a by-level deadline keys on.
+ *
+ * Held on the rule rather than on the deadline, because it is how the engine resolves the
+ * deadline and not part of what the deadline publishes. A finding snapshots `rule.deadline`
+ * verbatim, and a snapshot is only replayable if its shape is the shape the artifact published:
+ * nyc.v2.1–v2.3 declared no binding, so a legacy plan's stored deadline has no such keys and must
+ * not grow them when it is re-evaluated (AD-7).
+ */
+export type LevelBinding = {
+  readonly levelField: string;
+  readonly multiBlockField: string;
+};
+
 export type EngineRule = {
   readonly id: string;
   readonly kind: RuleKind;
@@ -152,6 +181,8 @@ export type EngineRule = {
   readonly agency: string | null;
   readonly publishedDisposition: Disposition | null;
   readonly deadline: Deadline | null;
+  /** Non-null exactly when `deadline` is a by-level deadline. */
+  readonly levelBinding: LevelBinding | null;
   readonly feeDisplay: string | null;
   readonly portalName: string | null;
   readonly portalUrl: string | null;

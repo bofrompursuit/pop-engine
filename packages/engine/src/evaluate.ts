@@ -6,10 +6,8 @@
 
 import { differenceInCalendarDays } from "./calendar";
 import { computeVerdict } from "./verdict";
-import { EvaluationError } from "./types";
+import { EVENT_DATE_FIELD, EvaluationError } from "./types";
 import type { EngineRuleset, EventIntake, HolidayCalendar, PermitPlan } from "./types";
-
-const EVENT_DATE_FIELD = "event_date";
 
 export function evaluate(
   intake: EventIntake,

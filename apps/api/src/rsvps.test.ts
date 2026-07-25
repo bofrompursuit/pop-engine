@@ -99,7 +99,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(created.body.confirmed_count).toBe(1);
     expect(created.body.headcount).toBe(headcount);
 
-    const listed = await request(api).get(`/api/events/${eventId}/rsvps`);
+    const listed = await request(api).get(`/api/events/${eventId}/guests`);
     expect(listed.status).toBe(200);
     expect(listed.body.confirmed_count).toBe(1);
     expect(listed.body.headcount ?? listed.body.event.headcount).toBe(5);
@@ -150,7 +150,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
     expect(first.status).toBe(201);
 
     const cancelled = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .patch(`/api/events/${eventId}/guests/${first.body.rsvp.id}`)
       .send({ status: "cancelled" });
     expect(cancelled.status).toBe(200);
     expect(cancelled.body.rsvp.status).toBe("cancelled");
@@ -220,7 +220,7 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
       .send({ name: "A", email: "a@example.com" });
     expect(first.status).toBe(201);
     await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${first.body.rsvp.id}`)
+      .patch(`/api/events/${eventId}/guests/${first.body.rsvp.id}`)
       .send({ status: "cancelled" });
 
     const seat = await request(api)
@@ -238,13 +238,13 @@ describe.runIf(databaseUrl.length > 0)("F-302 RSVP endpoints (database)", () => 
   it("rejects a cancel with an unsupported status and an unknown RSVP id", async () => {
     const { id: eventId } = await createEvent({ headcount: 2 });
     const badStatus = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .patch(`/api/events/${eventId}/guests/${randomUUID()}`)
       .send({ status: "confirmed" });
     expect(badStatus.status).toBe(400);
     expect(badStatus.body.error).toMatch(/cancelled/i);
 
     const missing = await request(api)
-      .patch(`/api/events/${eventId}/rsvps/${randomUUID()}`)
+      .patch(`/api/events/${eventId}/guests/${randomUUID()}`)
       .send({ status: "cancelled" });
     expect(missing.status).toBe(404);
   });

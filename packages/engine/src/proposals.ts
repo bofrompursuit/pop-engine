@@ -8,7 +8,10 @@
 // either a vocabulary mapping or a quotation of published rule text.
 //
 // Recorded on issue #4 (comment "Two undecided contracts F-201 will hit") for §1 and §2.
-// §3–§5 were found while deriving the six scenarios and are new.
+// §3, §6 and §7 were found while deriving the six scenarios and are new. §4 and §5 are gone:
+// nyc.v2.4 publishes both as rule data — the by-level deadline names the fields it keys on, and
+// the tent condition declares that its exact threshold is unresolved — so neither is an
+// engine-side assertion any more. Five contracts remain: §1, §2, §3, §6, §7.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Disposition, RuleKind } from "./types";
@@ -65,46 +68,6 @@ export const UNKNOWN_TRIGGER_DISPOSITION: Disposition = "may_be_required";
  * FEASIBLE-AT-RISK.
  */
 export const MISSED_MAY_BE_REQUIRED_IS_CONDITIONAL = true;
-
-/**
- * §4 — Exact-boundary conditionality, per rule.
- *
- * The answer key requires `tent_area_sqft = 400` against DOB-TENT-001's `gt 400` to render
- * CONDITIONAL, while `generator_gasoline_gallons = 2.5` against FDNY-GENERATOR-001's
- * `gt 2.5`, `stage_height_ft = 2.0`, and `battery_system_kwh = 20` must render nothing.
- * So this cannot be an operator-level rule — it is per rule, and the only place it is
- * stated is DOB-TENT-001's own `output.notes[0]`, quoted below. Reading prose notes at
- * runtime would be worse than naming the rule here.
- *
- * Effect: the listed condition returns `unknown` (not `false`) when the answer sits exactly
- * on the threshold, so the finding renders MAY_BE_REQUIRED with the published note.
- */
-export const BOUNDARY_CONDITIONAL_RULES: readonly {
-  readonly ruleId: string;
-  readonly field: string;
-  readonly threshold: number;
-  readonly publishedNote: string;
-}[] = [
-  {
-    ruleId: "DOB-TENT-001",
-    field: "tent_area_sqft",
-    threshold: 400,
-    publishedNote:
-      "Exactly 400 sq ft (e.g. 20x20) sits ON the published 'more than 400' boundary → engine renders CONDITIONAL, not REQUIRED, with 'confirm footprint calculation with DOB'.",
-  },
-];
-
-/**
- * §5 — Deadline-to-intake bindings.
- *
- * A `published_minimum_by_level` deadline publishes level keys (a/b/c/d) and a
- * `multi_block_days` variant but never names the intake fields that resolve them.
- * SAPO-PLAZA-001 is the only such rule today.
- */
-export const LEVEL_DEADLINE_BINDING = {
-  levelField: "plaza_level",
-  multiBlockField: "plaza_multiple_blocks",
-} as const;
 
 /**
  * §7 — Dependency sequencing bindings.

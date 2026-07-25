@@ -347,6 +347,9 @@ export function createRsvpsRouter(dependencies: RsvpsDependencies): Router {
   const { database, today } = dependencies;
   const router = Router();
 
+  // Public create stays on /rsvps so Access can bypass that path for attendees.
+  // Organizer list/cancel live on /guests — same path family as RSVP would open PII
+  // when Cloudflare Access matches on path, not method (DEPLOY.md §5).
   router.post(
     "/events/:id/rsvps",
     handle(async (req, res) => {
@@ -356,7 +359,7 @@ export function createRsvpsRouter(dependencies: RsvpsDependencies): Router {
   );
 
   router.get(
-    "/events/:id/rsvps",
+    "/events/:id/guests",
     handle(async (req, res) => {
       const result = await listRsvps(database, req.params.id ?? "");
       res.status(result.status).json(result.body);
@@ -364,7 +367,7 @@ export function createRsvpsRouter(dependencies: RsvpsDependencies): Router {
   );
 
   router.patch(
-    "/events/:id/rsvps/:rsvpId",
+    "/events/:id/guests/:rsvpId",
     handle(async (req, res) => {
       const body = req.body;
       const status =

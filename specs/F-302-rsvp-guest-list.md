@@ -8,8 +8,8 @@ As an attendee who found the event page, I RSVP with name and email in seconds; 
 
 ## Inputs / Outputs
 
-- `POST /api/events/:id/rsvps` (public, from the event page): name, email, optional phone → `rsvps` row.
-- Organizer view: guest list with count vs. F-101 headcount.
+- `POST /api/events/:id/rsvps` (public, from the event page): name, email, optional phone → `rsvps` row. Requires `public_page_published` (F-301).
+- Organizer view: `GET /api/events/:id/guests` + cancel via `PATCH /api/events/:id/guests/:rsvpId` (separate from the public RSVP path so Access bypass cannot open guest PII); count vs. F-101 headcount.
 
 ## Acceptance Criteria
 
