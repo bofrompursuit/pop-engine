@@ -4,7 +4,12 @@
 import { createScopeResolver, evaluateTrigger } from "./conditions";
 import { CONFIRM_WITH_AGENCY, computeDeadline } from "./deadlines";
 import type { DeadlineContext, PlanContext } from "./deadlines";
-import { DEFAULT_DISPOSITION_BY_RULE_KIND, UNKNOWN_TRIGGER_DISPOSITION } from "./proposals";
+import { addCalendarDays, differenceInCalendarDays } from "./calendar";
+import {
+  DEFAULT_DISPOSITION_BY_RULE_KIND,
+  DEPENDENCY_SEQUENCING_BINDINGS,
+  UNKNOWN_TRIGGER_DISPOSITION,
+} from "./proposals";
 import type {
   EngineRule,
   EngineRuleset,
@@ -80,8 +85,7 @@ function buildFinding(
     deadline: rule.deadline,
     deadlineDisplay: dated.deadlineDisplay,
     latestApplyDate: dated.latestApplyDate,
-    // Dependency sequencing (Parks → NYPD) is F-102's lane; nyc.v2.2 publishes no
-    // machine-readable link from the dependency rule to the finding it gates.
+    // Filled by the dependency pass below when a gating binding applies.
     applyAfterDate: null,
     deadlineStatus: dated.deadlineStatus,
     slackDays: dated.slackDays,
@@ -130,6 +134,67 @@ function dedupe(findings: readonly { finding: Finding; dedupeKey: string | null 
   return merged;
 }
 
+/**
+ * Dependency sequencing (ARCHITECTURE "Typed deadlines": apply_after = upstream apply date +
+ * processing range; slack for gated items = latest_apply − apply_after).
+ *
+ * The gated finding's window opens when the upstream decision could come back — the earliest end
+ * of the upstream's own published processing range, counted from today, since applying now is the
+ * best case available to the organizer. The upstream rule publishes that range; nothing here is
+ * invented. The strictness of the ordering is RESEARCH_REQUIRED on the dependency rule, so this
+ * dates when pursuit can realistically begin rather than asserting that filing earlier is barred.
+ */
+function applyDependencySequencing(
+  findings: readonly Finding[],
+  context: DeadlineContext,
+): Finding[] {
+  const byRuleId = new Map(findings.map((finding) => [finding.ruleIds[0] ?? "", finding]));
+  const sequenced = new Map<string, Finding>();
+
+  for (const binding of DEPENDENCY_SEQUENCING_BINDINGS) {
+    const dependency = byRuleId.get(binding.dependencyRuleId);
+    const upstream = byRuleId.get(binding.upstreamRuleId);
+    const gated = byRuleId.get(binding.gatedRuleId);
+    if (dependency === undefined || upstream === undefined || gated === undefined) continue;
+    if (upstream.deadline?.type !== "composite") continue;
+
+    const [earliestDecisionDays, latestDecisionDays] = upstream.deadline.processingRangeDays;
+    const applyAfterDate = addCalendarDays(context.today, earliestDecisionDays);
+    // Window width: between the earliest upstream decision and the gated item's own deadline
+    // (F-102 AC 5). Narrow or negative means the sequence is a squeeze.
+    const gatedWindowDays =
+      gated.latestApplyDate === null
+        ? null
+        : differenceInCalendarDays(applyAfterDate, gated.latestApplyDate);
+
+    // The sequencing may tighten the rendering but may never close a window on its own: the
+    // dependency rule's verification block says a strict issued-before-filed order is NOT
+    // confirmed by located primary text. Reporting PUBLISHED_DEADLINE_MISSED off an unconfirmed
+    // sequence would invent a blocker the sources do not support, so the worst it can do is warn.
+    const isSqueezed = gatedWindowDays !== null && gatedWindowDays < context.slackWarningDays;
+    sequenced.set(binding.gatedRuleId, {
+      ...gated,
+      applyAfterDate,
+      deadlineStatus:
+        isSqueezed && gated.deadlineStatus === "on_track"
+          ? "deadline_approaching"
+          : gated.deadlineStatus,
+      notes: [
+        ...gated.notes,
+        `sequenced after ${binding.upstreamRuleId} per ${binding.dependencyRuleId}: earliest ` +
+          `pursuit ${applyAfterDate}, once the ${earliestDecisionDays}–${latestDecisionDays} day ` +
+          `decision window opens` +
+          (gatedWindowDays === null
+            ? ""
+            : `, leaving ${gatedWindowDays} days to file. Strict issued-before-filed sequencing ` +
+              `is not confirmed by located primary text — confirm the order with the agency`),
+      ],
+    });
+  }
+
+  return findings.map((finding) => sequenced.get(finding.ruleIds[0] ?? "") ?? finding);
+}
+
 export function resolveFindings(
   intake: EventIntake,
   ruleset: EngineRuleset,
@@ -152,5 +217,9 @@ export function resolveFindings(
     triggered.push({ finding, dedupeKey: rule.dedupeKey });
   }
 
-  return { findings: dedupe(triggered), trace, unknownFields: [...unknownFields] };
+  return {
+    findings: applyDependencySequencing(dedupe(triggered), deadlineContext),
+    trace,
+    unknownFields: [...unknownFields],
+  };
 }

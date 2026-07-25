@@ -309,6 +309,31 @@ describe("Scenario C — Prospect Park Community Day (dependency chain)", () => 
     );
     expect(dependency?.name).toContain("Parks amplified-sound permission");
   });
+
+  it("dates the Parks-to-NYPD sequence: apply now, decide, then pursue the sound permit", () => {
+    const sound = plan(intakeC).findings.find((finding) =>
+      finding.ruleIds.includes("NYPD-SOUND-001"),
+    );
+    // Parks publishes 21–30 days of processing, so the earliest the sound permit can be pursued
+    // is 21 days from today; its own 5-day deadline is 2026-09-11, leaving a 30-day window.
+    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    expect(sound?.latestApplyDate).toBe("2026-09-11");
+    expect(sound?.deadlineStatus).toBe("on_track");
+    expect(sound?.notes.join(" ")).toContain("earliest pursuit 2026-08-12");
+    expect(sound?.notes.join(" ")).toContain("21–30 day decision window");
+    // The order itself is not confirmed by located primary text, so the note says so.
+    expect(sound?.notes.join(" ")).toContain("not confirmed by located primary text");
+  });
+
+  it("warns but never fabricates a blocker when the sequence is squeezed", () => {
+    // 25 days out: the Parks decision could land after the sound permit's own deadline. A strict
+    // issued-before-filed order is unconfirmed, so this raises a warning and never a missed window.
+    const squeezed = plan({ ...intakeC, event_date: "2026-08-16" });
+    const sound = squeezed.findings.find((finding) => finding.ruleIds.includes("NYPD-SOUND-001"));
+    expect(sound?.applyAfterDate).toBe("2026-08-12");
+    expect(sound?.deadlineStatus).toBe("deadline_approaching");
+    expect(squeezed.verdict).toBe("FEASIBLE_AT_RISK");
+  });
 });
 
 describe("Scenario D — Queens Block Party (tight but feasible)", () => {

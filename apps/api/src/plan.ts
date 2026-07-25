@@ -13,6 +13,18 @@ import type {
   PermitPlan,
 } from "@pop-engine/engine";
 
+/**
+ * A stored plan whose items no longer match what was written. F-201 AC 5: a partial plan is never
+ * presented as complete, so a read that cannot rebuild every finding fails instead of returning
+ * the survivors with the original verdict — which would look like a complete, cheaper plan.
+ */
+export class PlanIntegrityError extends Error {
+  constructor(planId: string, detail: string) {
+    super(`stored plan ${planId} is incomplete: ${detail}`);
+    this.name = "PlanIntegrityError";
+  }
+}
+
 export class EventNotFoundError extends Error {
   constructor(eventId: string) {
     super(`event ${eventId} not found`);
@@ -240,6 +252,12 @@ export function createPlanService(
         ...verdictDetail
       } = planRow.verdict_detail;
       const byRuleIds = new Map(itemRows.map((row) => [renderingKey(row.rule_ids), row]));
+      if (itemRows.length !== renderings.length) {
+        throw new PlanIntegrityError(
+          planRow.id,
+          `${renderings.length} findings were written, ${itemRows.length} are stored`,
+        );
+      }
       return {
         id: planRow.id,
         eventId,
@@ -252,9 +270,15 @@ export function createPlanService(
         generatedAt: planRow.generated_at.toISOString(),
         // Ordered by the engine's finding order, which the renderings preserve: plan items
         // carry uuid primary keys, so the table itself has no stable order to read back.
-        findings: renderings.flatMap((rendering) => {
+        findings: renderings.map((rendering) => {
           const row = byRuleIds.get(renderingKey(rendering.rule_ids));
-          return row === undefined ? [] : [findingFromRow(row, rendering)];
+          if (row === undefined) {
+            throw new PlanIntegrityError(
+              planRow.id,
+              `no stored item for finding ${renderingKey(rendering.rule_ids)}`,
+            );
+          }
+          return findingFromRow(row, rendering);
         }),
       };
     },

@@ -318,6 +318,59 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(fetched.body.findings[0].latestApplyDate).toBe("2026-07-12");
   });
 
+  it("fails the read rather than serving a plan whose items went missing (AC 5)", async () => {
+    const eventId = await insertEvent();
+    const app = appWith();
+    const generated = await request(app).post(`/api/events/${eventId}/plan`);
+    expect(generated.body.findings).toHaveLength(5);
+
+    // Simulate a lost child row. The insert is transactional, so this cannot happen during normal
+    // generation, but nothing in the schema enforces the item count afterwards.
+    await pool.query(
+      `DELETE FROM permit_plan_items WHERE plan_id = $1 AND rule_ids = ARRAY['NYPD-SOUND-001']::text[]`,
+      [generated.body.id],
+    );
+
+    const fetched = await request(app).get(`/api/events/${eventId}/plan`);
+    expect(fetched.status).toBe(500);
+    expect(fetched.body.error).toBe("plan lookup failed");
+    expect(fetched.body.detail).toContain("is incomplete");
+    // The surviving four findings are not served as if they were the whole plan.
+    expect(fetched.body.findings).toBeUndefined();
+  });
+
+  it("persists the dependency-gated apply-after date for the Parks to NYPD sequence", async () => {
+    const eventId = await insertEvent({
+      location_type: "park",
+      obstructs_public_way: null,
+      sapo_event_type: null,
+      street_event_size: null,
+      headcount: 150,
+      event_date: "2026-09-16",
+      food_present: false,
+      food_vendor_count: null,
+      selling_anything: false,
+      amplified_sound: true,
+    });
+    const app = appWith();
+    await request(app).post(`/api/events/${eventId}/plan`);
+
+    const { rows } = await pool.query<{ apply_after_date: Date | string | null }>(
+      `SELECT item.apply_after_date FROM permit_plan_items item
+         JOIN permit_plans plan ON plan.id = item.plan_id
+        WHERE plan.event_id = $1 AND item.rule_ids = ARRAY['NYPD-SOUND-001']::text[]`,
+      [eventId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(calendarDateFrom(rows[0]!.apply_after_date as Date)).toBe("2026-08-12");
+
+    const fetched = await request(app).get(`/api/events/${eventId}/plan`);
+    const sound = fetched.body.findings.find((finding: { ruleIds: string[] }) =>
+      finding.ruleIds.includes("NYPD-SOUND-001"),
+    );
+    expect(sound.applyAfterDate).toBe("2026-08-12");
+  });
+
   it("404s for an unknown event and for an event with no plan yet", async () => {
     const app = appWith();
     const unknownId = randomUUID();

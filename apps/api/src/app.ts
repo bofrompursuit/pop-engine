@@ -1,7 +1,7 @@
 import express, { type Express, type Response } from "express";
 import { describeEngine } from "@pop-engine/engine";
 import { EvaluationError } from "@pop-engine/engine";
-import { EventNotFoundError, type PlanService } from "./plan";
+import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 
 export type AppDependencies = {
   /** Absent in the scaffold's own tests; the plan routes register only when it is supplied. */
@@ -62,9 +62,9 @@ function rejectMalformedId(id: string, res: Response): boolean {
   return true;
 }
 
-/** Only the engine's own messages are safe to echo; anything else could carry driver detail. */
+/** Only our own messages are safe to echo; anything else could carry driver detail. */
 function respondWithFailure(res: Response, error: unknown, summary: string): void {
-  if (error instanceof EvaluationError) {
+  if (error instanceof EvaluationError || error instanceof PlanIntegrityError) {
     res.status(500).json({ error: summary, detail: error.message });
     return;
   }

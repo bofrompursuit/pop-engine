@@ -151,6 +151,14 @@ type ConditionalEvaluation = {
   readonly findings: readonly Finding[];
   readonly window: WindowVerdict;
   readonly verdict: Verdict;
+  /**
+   * The finding whose closed window explains an INFEASIBLE verdict. Usually the base window's,
+   * but when the verdict is INFEASIBLE only because every branch of an unknown misses, the base
+   * window has none: an unknown-triggered finding is downgraded to may_be_required and so never
+   * blocks. Carrying the branch blocker out keeps the "published deadline missed" copy and the
+   * rescope suggestions working instead of returning an unexplained INFEASIBLE.
+   */
+  readonly blockingFinding: Finding | null;
   readonly missingFacts: readonly MissingFact[];
   readonly unresolvedTimelines: readonly UnresolvedTimeline[];
 };
@@ -180,6 +188,7 @@ function evaluateConditional(
 
   const missingFacts: MissingFact[] = [];
   const pathVerdicts: Verdict[] = [];
+  const branchBlockers: Finding[] = [];
   let diverges = false;
   let hasNonEnumerableUnknown = false;
 
@@ -212,21 +221,45 @@ function evaluateConditional(
     const signatures = branches.map((branch) => branchSignature(branch.verdict, branch.findings));
     if (new Set(signatures).size > 1) diverges = true;
     pathVerdicts.push(...branches.map((branch) => branch.verdict));
+    branchBlockers.push(
+      ...branches
+        .map((branch) => branch.blockingFinding)
+        .filter((finding): finding is Finding => finding !== null),
+    );
   }
+
+  const verdict = resolveVerdict({
+    window,
+    pathVerdicts,
+    diverges,
+    hasNonEnumerableUnknown,
+    hasUnresolvedTimeline: unresolvedTimelines.length > 0,
+  });
 
   return {
     findings: resolved.findings,
     window,
-    verdict: resolveVerdict({
-      window,
-      pathVerdicts,
-      diverges,
-      hasNonEnumerableUnknown,
-      hasUnresolvedTimeline: unresolvedTimelines.length > 0,
-    }),
+    verdict,
+    blockingFinding:
+      verdict === "INFEASIBLE"
+        ? (window.blockingFinding ?? longestLeadBlocker(branchBlockers))
+        : null,
     missingFacts,
     unresolvedTimelines,
   };
+}
+
+/**
+ * Of the blockers the branches produced, the one with the longest published lead — the same
+ * "earliest latest-apply date" rule the window check uses, so the copy names the same kind of
+ * finding whether the block was definite or common to every branch.
+ */
+function longestLeadBlocker(blockers: readonly Finding[]): Finding | null {
+  return (
+    [...blockers].sort((left, right) =>
+      (left.latestApplyDate ?? "").localeCompare(right.latestApplyDate ?? ""),
+    )[0] ?? null
+  );
 }
 
 function resolveVerdict({
@@ -341,11 +374,11 @@ export function computeVerdict(
 } {
   const resolved = resolveFindings(intake, ruleset, context);
   const evaluated = evaluateConditional(intake, ruleset, context);
-  const { window, verdict } = evaluated;
+  const { window, verdict, blockingFinding } = evaluated;
 
   const rescopeSuggestions =
-    verdict === "INFEASIBLE" && window.blockingFinding !== null
-      ? buildRescopeSuggestions(window.blockingFinding, intake, ruleset, context, {
+    blockingFinding !== null
+      ? buildRescopeSuggestions(blockingFinding, intake, ruleset, context, {
           findings: evaluated.findings,
           verdict,
         })
@@ -356,10 +389,17 @@ export function computeVerdict(
     verdict,
     verdictDetail: {
       blockingFinding:
-        verdict === "INFEASIBLE" && window.blockingFinding !== null
-          ? { ruleIds: window.blockingFinding.ruleIds, name: window.blockingFinding.name }
-          : null,
-      missedRuleIds: window.missedRuleIds,
+        blockingFinding === null
+          ? null
+          : { ruleIds: blockingFinding.ruleIds, name: blockingFinding.name },
+      // A blocker promoted out of the branches misses in every branch but not in the unresolved
+      // base, so it belongs in the missed list the copy reads from.
+      missedRuleIds: [
+        ...new Set([
+          ...window.missedRuleIds,
+          ...(blockingFinding === null ? [] : blockingFinding.ruleIds),
+        ]),
+      ],
       minSlackDays: window.minSlackDays,
       missingFacts: evaluated.missingFacts,
       unresolvedTimelines: evaluated.unresolvedTimelines,

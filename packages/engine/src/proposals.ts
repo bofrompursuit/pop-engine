@@ -107,6 +107,34 @@ export const LEVEL_DEADLINE_BINDING = {
 } as const;
 
 /**
+ * §7 — Dependency sequencing bindings.
+ *
+ * NYPD-SOUND-PARKS-DEP-001 states in prose that Parks amplified-sound permission precedes the NYPD
+ * sound permit, but nothing machine-readable says which finding it gates or which one it waits on,
+ * and `permit_plan_items.apply_after_date` is a declared F-201 output that stays dead without that
+ * link. Same shape as §5: the engine needs a binding the ruleset does not publish.
+ *
+ * The dates it produces come only from published numbers — the upstream rule's own processing
+ * range — and the rule's own caveat travels with the finding, because its `verification` block
+ * qualifies the sequencing as RESEARCH_REQUIRED: a strict issued-before-filed order is NOT
+ * confirmed. So the gated date is rendered as the earliest the downstream window opens if the
+ * sequencing holds, never as a prohibition on filing sooner, and a tight or negative gated window
+ * can raise the finding to DEADLINE_APPROACHING but can never mark it PUBLISHED_DEADLINE_MISSED.
+ * Closing a window on the strength of an unconfirmed sequence would invent a blocker.
+ */
+export const DEPENDENCY_SEQUENCING_BINDINGS: readonly {
+  readonly dependencyRuleId: string;
+  readonly upstreamRuleId: string;
+  readonly gatedRuleId: string;
+}[] = [
+  {
+    dependencyRuleId: "NYPD-SOUND-PARKS-DEP-001",
+    upstreamRuleId: "PARKS-EVENT-001",
+    gatedRuleId: "NYPD-SOUND-001",
+  },
+];
+
+/**
  * §6 — Rescope generation policy.
  *
  * ARCHITECTURE says rescope suggestions are full re-evaluations of modified intakes but
