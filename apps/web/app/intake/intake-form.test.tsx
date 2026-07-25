@@ -28,6 +28,20 @@ const savedEvent = (overrides: Record<string, unknown> = {}) => ({
   plan_stale: false,
 });
 
+/**
+ * The api answers a save with the row it stored, which is the submission plus the
+ * lifecycle columns. Echoing the request keeps the fake honest about the one thing
+ * these tests turn on: a field the submission cleared comes back null.
+ */
+const echoSavedEvent = (
+  status: number,
+  init: RequestInit,
+  overrides: Record<string, unknown> = {},
+): Response =>
+  jsonResponse(status, {
+    ...savedEvent({ ...JSON.parse(String(init.body)), ...overrides }),
+  });
+
 /** The questions on screen, by their legend, in the order they are asked. */
 const questionsOnScreen = (): string[] =>
   screen.getAllByRole("group").map((group) => group.querySelector("legend")?.textContent ?? "");
@@ -89,7 +103,7 @@ const requestBody = (fetchMock: ReturnType<typeof vi.fn>, call = 0): Record<stri
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  fetchMock = vi.fn(async () => jsonResponse(201, savedEvent()));
+  fetchMock = vi.fn(async (_url: string, init: RequestInit) => echoSavedEvent(201, init));
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -513,14 +527,18 @@ describe("saving and per-field errors", () => {
 });
 
 describe("editing a saved event", () => {
-  it("clears the answers a rescope hides, so the edit can be saved", async () => {
-    const user = renderForm();
+  /** A selling street event, classified all the way down to its SAPO size. */
+  const answerSellingStreetEvent = async (
+    user: ReturnType<typeof userEvent.setup>,
+    sapoEventType = "street_event",
+  ) => {
     await fillField(user, "name", "Bushwick Street Activation");
     await chooseOption(user, "borough", "brooklyn");
     await chooseOption(user, "location_type", "street");
     await chooseOption(user, "obstructs_public_way", "yes");
-    await chooseOption(user, "sapo_event_type", "street_event");
-    await chooseOption(user, "street_event_size", "large");
+    await chooseOption(user, "sapo_event_type", sapoEventType);
+    if (sapoEventType === "street_event") await chooseOption(user, "street_event_size", "large");
+    if (sapoEventType === "block_party") await chooseOption(user, "has_amusement_ride", "false");
     await fillField(user, "headcount", "75");
     await fillField(user, "event_date", "2026-08-26");
     await chooseOption(user, "event_open_to_public", "yes");
@@ -531,12 +549,17 @@ describe("editing a saved event", () => {
     await chooseOption(user, "open_flame_or_cooking", "none");
     await chooseOption(user, "generator_present", "false");
     await chooseOption(user, "alcohol", "false");
+  };
+
+  it("clears the answers a rescope hides, so the edit can be saved", async () => {
+    const user = renderForm();
+    await answerSellingStreetEvent(user);
     await save(user);
     await waitFor(() => expect(screen.getByText(/Saved as revision 1/)).toBeDefined());
     expect(requestBody(fetchMock).street_event_size).toBe("large");
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, savedEvent({ revision_counter: 2, location_type: "park" })),
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      echoSavedEvent(200, init, { revision_counter: 2 }),
     );
     await chooseOption(user, "location_type", "park");
     expect(questionsOnScreen()).not.toContain("Street event size");
@@ -554,12 +577,73 @@ describe("editing a saved event", () => {
     expect(edit.street_event_size).toBeNull();
     expect(edit.headcount).toBe(75);
   });
+
+  it("drops a warning whose answers the save cleared", async () => {
+    // The stored row is what the plan will be built from, so a warning about answers
+    // the row no longer holds is a false alarm the organizer cannot act on.
+    const user = renderForm();
+    await answerSellingStreetEvent(user, "block_party");
+    await save(user);
+    await waitFor(() => expect(screen.getByText(/Saved as revision 1/)).toBeDefined());
+    expect(screen.getByRole("status").textContent).toContain(
+      contract.blockPartyEligibilityNotice.text,
+    );
+
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      echoSavedEvent(200, init, { revision_counter: 2 }),
+    );
+    await chooseOption(user, "location_type", "park");
+    await save(user);
+
+    await waitFor(() => expect(screen.getByText(/Saved as revision 2/)).toBeDefined());
+    expect(requestBody(fetchMock, 1).sapo_event_type).toBeNull();
+    expect(screen.queryByText(contract.blockPartyEligibilityNotice.text)).toBeNull();
+  });
+
+  it("shows a re-revealed question as cleared, not as it was before the save", async () => {
+    const user = renderForm();
+    await answerSellingStreetEvent(user);
+    await save(user);
+    await waitFor(() => expect(screen.getByText(/Saved as revision 1/)).toBeDefined());
+
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      echoSavedEvent(200, init, { revision_counter: 2 }),
+    );
+    await chooseOption(user, "location_type", "park");
+    await save(user);
+    await waitFor(() => expect(screen.getByText(/Saved as revision 2/)).toBeDefined());
+
+    // Back to a street event: the SAPO questions return unanswered, because the row
+    // they were cleared from is the answer of record.
+    await chooseOption(user, "location_type", "street");
+    expect(
+      document.querySelector<HTMLInputElement>('input[name="obstructs_public_way"][value="yes"]')
+        ?.checked,
+    ).toBe(false);
+    await chooseOption(user, "obstructs_public_way", "yes");
+    await chooseOption(user, "sapo_event_type", "street_event");
+    expect(
+      document.querySelector<HTMLInputElement>('input[name="street_event_size"][value="large"]')
+        ?.checked,
+    ).toBe(false);
+
+    // And the next edit cannot resurrect the value the database cleared.
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      echoSavedEvent(200, init, { revision_counter: 3 }),
+    );
+    await save(user);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(requestBody(fetchMock, 2).street_event_size).toBeNull();
+  });
 });
 
 describe("the regenerate control (spec #8)", () => {
   const saveThenStalePlan = async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { ...savedEvent({ revision_counter: 2 }), plan_stale: true }),
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      jsonResponse(200, {
+        ...savedEvent({ ...JSON.parse(String(init.body)), revision_counter: 2 }),
+        plan_stale: true,
+      }),
     );
     const user = renderForm();
     await answerParkEvent(user);
@@ -612,8 +696,11 @@ describe("the regenerate control (spec #8)", () => {
     );
     await user.click(screen.getByRole("button", { name: "Regenerate plan" }));
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { ...savedEvent({ revision_counter: 3 }), plan_stale: true }),
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) =>
+      jsonResponse(200, {
+        ...savedEvent({ ...JSON.parse(String(init.body)), revision_counter: 3 }),
+        plan_stale: true,
+      }),
     );
     await fillField(user, "headcount", "151");
     await save(user);

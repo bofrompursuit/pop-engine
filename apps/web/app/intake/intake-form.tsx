@@ -168,6 +168,11 @@ export function IntakeForm({
         return;
       }
       setErrors([]);
+      // The stored row is the answer of record, not what this form last held. A save
+      // that hides questions clears them server-side, so rebuilding from the response
+      // is what stops a cleared answer from lingering in a warning or coming back on
+      // the next edit when its question is asked again.
+      setAnswers(answersFromEvent(contract, body.event));
       setSaved(body.event);
       currentRevision.current = body.event.revision_counter;
       setPlanStale(body.plan_stale === true);
