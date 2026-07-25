@@ -116,6 +116,8 @@ describe.runIf(databaseUrl.length > 0)("a plan's pinned ruleset version", () => 
         structure_types: ["none"],
         open_flame_or_cooking: ["none"],
         generator_present: false,
+        // nyc.v2.5 asks this of every event, and `battery_system_kwh` only when it is true.
+        battery_present: false,
         alcohol: false,
       });
     const eventId = String(created.body.event.id);
