@@ -208,13 +208,16 @@ export function computeDeadline(
     }
 
     case "composite": {
-      // The hard floor is a cliff, not a gradient: inside it, applications are not accepted
-      // (F-102 AC 3). A runway shorter than the published processing range is at risk even
-      // when the floor clears — "processing may not complete before event" (interpretation I-5).
+      // The hard floor is a cliff, not a gradient, and the floor day itself is inside the window:
+      // PARKS-EVENT-001 publishes "apply at least 21 days ahead (applications inside 21 days are
+      // not accepted)", so filing on the floor is accepted and only the day after it is refused.
+      // ARCHITECTURE says the same — missed PAST the floor — and on the floor latest_apply_date
+      // equals today rather than preceding it, so zero slack is the last valid day, not a miss.
+      // A runway shorter than the published processing range is still at risk even when the floor
+      // clears: "processing may not complete before event" (interpretation I-5).
       const dated = dateBackFrom(
         addCalendarDays(context.eventDate, -deadline.hardFloorDays),
         context,
-        true,
       );
       const runwayDays = differenceInCalendarDays(context.today, context.eventDate);
       const processingCeiling = deadline.processingRangeDays[1];

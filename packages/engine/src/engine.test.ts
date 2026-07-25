@@ -241,9 +241,25 @@ describe("typed deadlines", () => {
     expect(plan.verdict).toBe("FEASIBLE_AT_RISK");
   });
 
-  it("treats the Parks hard floor as a cliff on the day it closes", () => {
+  it("keeps the Parks floor day itself inside the window", () => {
+    // 2026-08-12 is exactly 21 days from the fixture clock, and PARKS-EVENT-001 publishes "apply
+    // at least 21 days ahead (applications inside 21 days are not accepted)" — so the floor day is
+    // the last valid filing day, with zero slack, not a miss. This test previously asserted the
+    // opposite, citing an F-102 sentence that has since been corrected against the published rule.
     const plan = evaluate({ ...parkIntake, event_date: "2026-08-12" }, ruleset, TODAY, calendar);
     const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe(TODAY);
+    expect(parks?.slackDays).toBe(0);
+    expect(parks?.deadlineStatus).not.toBe("published_deadline_missed");
+    expect(plan.verdict).not.toBe("INFEASIBLE");
+  });
+
+  it("treats the day inside the Parks floor as missed", () => {
+    // 2026-08-11 is 20 days out: inside the floor, which the rule says is not accepted. Pinning
+    // both sides keeps the cliff located rather than only pinning where it is not.
+    const plan = evaluate({ ...parkIntake, event_date: "2026-08-11" }, ruleset, TODAY, calendar);
+    const parks = plan.findings.find((finding) => finding.ruleIds.includes("PARKS-EVENT-001"));
+    expect(parks?.latestApplyDate).toBe("2026-07-21");
     expect(parks?.deadlineStatus).toBe("published_deadline_missed");
     expect(plan.verdict).toBe("INFEASIBLE");
   });
