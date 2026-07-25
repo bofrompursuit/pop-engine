@@ -3,6 +3,7 @@ import { describeEngine, EvaluationError } from "@pop-engine/engine";
 import { createCheckinsRouter } from "./checkins";
 import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
+import { createPublicPageRouter } from "./public-page";
 import { createRsvpsRouter } from "./rsvps";
 
 export type AppDependencies = EventsDependencies & {
@@ -50,6 +51,9 @@ export function createApp(dependencies: AppDependencies): Express {
     "/api",
     createRsvpsRouter({ database: dependencies.database, today: dependencies.today }),
   );
+  // F-301: registers GET /e/:eventId at the app root (ARCHITECTURE) plus organizer
+  // /api/events/:id/public-page routes on the same router.
+  app.use(createPublicPageRouter({ database: dependencies.database }));
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
 
   return app;

@@ -4,21 +4,21 @@
 
 ## Architecture Decisions (2026-07-21, extended 2026-07-22)
 
-| # | Decision | Rationale |
-|---|---|---|
-| AD-1 | Separate Express API + Next.js frontend (two services) | Canonical stack; long-lived process hosts the alert poller in-process; decoupled lifecycles. Chosen after explicit tradeoff review vs. single Next.js app. |
-| AD-2 | The published ruleset file in git (`rules/nyc-rules.v2.3.json`) is authoritative; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true. |
-| AD-3 | S3-compatible object storage for F-202 document uploads (metadata in Postgres) | Production-correct from day one; survives redeploys. |
-| AD-4 | No Redis | Demo-scale check-in volume needs no queue layer (PRD appendix). Alerts run on a DB-backed poller. |
-| AD-5 | No auth in MVP | Demo runs single-tenant. F-701 is Phase 2. |
-| AD-6 | Rules engine is a pure module (no DB, no HTTP, no clock) | Deterministic; testable against the 6 scenarios as plain unit tests from day 3. `today` is a parameter, never `Date.now()` inside evaluation. |
-| AD-7 | Plans are immutable snapshots | Regeneration inserts a new plan row pinned to its ruleset version; history is reproducible even after rules change. |
-| AD-8 | TypeScript across the monorepo | The engine package's exported intake/plan/verdict types are the client/server contract; TS makes it enforced rather than conventional. Decided 2026-07-22 (OPEN-QUESTIONS S-5). |
-| AD-9 | Ruleset baseline: nyc.v2.3 (corrected subset), schema popengine-rules/v2 | Adopted 2026-07-22 after two fetch-confirmed verification passes; the 59-rule draft in `rules/proposals/` is the post-capstone target. |
-| AD-10 | Layered result model: finding kind + disposition + per-finding deadline status, summarized by the four-state verdict | Preserves demo vocabulary while never overclaiming; INFEASIBLE = "published deadline missed as scoped." |
-| AD-11 | Real business-day math against a pinned holiday calendar (`us-ny-business-days@2026`) | Fixture dates are pinned, so determinism holds; the calendar artifact versions with the ruleset. Holiday source is an open research item. |
-| AD-12 | Demo environment is access-gated with synthetic data only | The no-auth MVP must not hold real PII, documents, or notification destinations (audit finding B-07). A host-level gate (basic auth or IP allowlist) fronts the demo deploy; public RSVP/check-in routes open only for the rehearsal/demo window. |
-| AD-13 | `permit_rules` keyed by (ruleset_version, rule_id); alerts carry recipient + idempotency key; events carry a revision counter | Cheap correctness fixes adopted from the 2026-07-22 audit: version-safe rules read model, no duplicate sends after a crash, plans pinned to the exact intake revision they evaluated. |
+| #     | Decision                                                                                                                                                | Rationale                                                                                                                                                                                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AD-1  | Separate Express API + Next.js frontend (two services)                                                                                                  | Canonical stack; long-lived process hosts the alert poller in-process; decoupled lifecycles. Chosen after explicit tradeoff review vs. single Next.js app.                                                                                        |
+| AD-2  | The published ruleset file in git (`rules/nyc-rules.v2.3.json`) is authoritative; loaded in-memory at boot; `permit_rules` table is a seeded read model | Engine tests run without a database; rule changes are PRs (matches the manual rules-admin workflow in `DESIGN.md`); "crown jewel is a versioned file" stays literally true.                                                                       |
+| AD-3  | S3-compatible object storage for F-202 document uploads (metadata in Postgres)                                                                          | Production-correct from day one; survives redeploys.                                                                                                                                                                                              |
+| AD-4  | No Redis                                                                                                                                                | Demo-scale check-in volume needs no queue layer (PRD appendix). Alerts run on a DB-backed poller.                                                                                                                                                 |
+| AD-5  | No auth in MVP                                                                                                                                          | Demo runs single-tenant. F-701 is Phase 2.                                                                                                                                                                                                        |
+| AD-6  | Rules engine is a pure module (no DB, no HTTP, no clock)                                                                                                | Deterministic; testable against the 6 scenarios as plain unit tests from day 3. `today` is a parameter, never `Date.now()` inside evaluation.                                                                                                     |
+| AD-7  | Plans are immutable snapshots                                                                                                                           | Regeneration inserts a new plan row pinned to its ruleset version; history is reproducible even after rules change.                                                                                                                               |
+| AD-8  | TypeScript across the monorepo                                                                                                                          | The engine package's exported intake/plan/verdict types are the client/server contract; TS makes it enforced rather than conventional. Decided 2026-07-22 (OPEN-QUESTIONS S-5).                                                                   |
+| AD-9  | Ruleset baseline: nyc.v2.3 (corrected subset), schema popengine-rules/v2                                                                                | Adopted 2026-07-22 after two fetch-confirmed verification passes; the 59-rule draft in `rules/proposals/` is the post-capstone target.                                                                                                            |
+| AD-10 | Layered result model: finding kind + disposition + per-finding deadline status, summarized by the four-state verdict                                    | Preserves demo vocabulary while never overclaiming; INFEASIBLE = "published deadline missed as scoped."                                                                                                                                           |
+| AD-11 | Real business-day math against a pinned holiday calendar (`us-ny-business-days@2026`)                                                                   | Fixture dates are pinned, so determinism holds; the calendar artifact versions with the ruleset. Holiday source is an open research item.                                                                                                         |
+| AD-12 | Demo environment is access-gated with synthetic data only                                                                                               | The no-auth MVP must not hold real PII, documents, or notification destinations (audit finding B-07). A host-level gate (basic auth or IP allowlist) fronts the demo deploy; public RSVP/check-in routes open only for the rehearsal/demo window. |
+| AD-13 | `permit_rules` keyed by (ruleset_version, rule_id); alerts carry recipient + idempotency key; events carry a revision counter                           | Cheap correctness fixes adopted from the 2026-07-22 audit: version-safe rules read model, no duplicate sends after a crash, plans pinned to the exact intake revision they evaluated.                                                             |
 
 ## System Overview
 
@@ -67,112 +67,113 @@ One **Event** row is the single source of truth. Four stage-scoped module views 
 
 Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.3.json` is authoritative for names, enums, and asked-when conditions; the table below groups them):
 
-| Column group | Columns | Notes |
-|---|---|---|
-| Identity | id (uuid PK), name, borough, location_type, location_name | location_type CHECK IN (street, sidewalk, plaza, park, private_venue) |
-| SAPO classification | obstructs_public_way (yes/no/unknown), sapo_event_type (street_event/block_party/plaza_event/other_sapo_class/unknown), street_event_size (small/medium/large/extra_large/unknown), plaza_level (a/b/c/d/unknown), plaza_multiple_blocks (bool), has_amusement_ride (bool) | asked conditionally per the registry; size/level drive per-class deadlines |
-| Scale + date | headcount (integer), capacity (integer, nullable), event_date (date) | capacity is the confirmed venue/event capacity for F-402's gauge — NOT headcount (audit fix); event_date anchors the backward timeline |
-| Audience + food | event_open_to_public (yes/no/unknown), food_present (bool), food_vendor_count (integer), food_affinity_private_exception_claimed (yes/no/unknown), selling_anything (bool) | drive DOHMH vendor/notification rules, Parks TUA, block-party eligibility |
-| Sound | amplified_sound (bool), sound_audible_from_public_way (yes/no/unknown) | audibility asked only at private venues (§10-108(b)(3) scope) |
-| Structures | structure_types (nonempty text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable, or exclusive none), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown) | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL) |
-| Flame + power | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns |
-| Alcohol + assembly | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown) | the Scenario F branch facts; `unknown` is first-class |
-| Lifecycle | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13) |
+| Column group        | Columns                                                                                                                                                                                                                                                                    | Notes                                                                                                                                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity            | id (uuid PK), name, borough, location_type, location_name                                                                                                                                                                                                                  | location_type CHECK IN (street, sidewalk, plaza, park, private_venue)                                                                                                                               |
+| SAPO classification | obstructs_public_way (yes/no/unknown), sapo_event_type (street_event/block_party/plaza_event/other_sapo_class/unknown), street_event_size (small/medium/large/extra_large/unknown), plaza_level (a/b/c/d/unknown), plaza_multiple_blocks (bool), has_amusement_ride (bool) | asked conditionally per the registry; size/level drive per-class deadlines                                                                                                                          |
+| Scale + date        | headcount (integer), capacity (integer, nullable), event_date (date)                                                                                                                                                                                                       | capacity is the confirmed venue/event capacity for F-402's gauge — NOT headcount (audit fix); event_date anchors the backward timeline                                                              |
+| Audience + food     | event_open_to_public (yes/no/unknown), food_present (bool), food_vendor_count (integer), food_affinity_private_exception_claimed (yes/no/unknown), selling_anything (bool)                                                                                                 | drive DOHMH vendor/notification rules, Parks TUA, block-party eligibility                                                                                                                           |
+| Sound               | amplified_sound (bool), sound_audible_from_public_way (yes/no/unknown)                                                                                                                                                                                                     | audibility asked only at private venues (§10-108(b)(3) scope)                                                                                                                                       |
+| Structures          | structure_types (nonempty text[]: tent_canopy, stage_platform_scaffold, prop_truss, bleachers_inflatable, or exclusive none), tent_area_sqft, tent_days_in_place, stage_height_ft, stage_area_sqft, structure_over_10ft_tall (yes/no/unknown)                              | dimensions stored; thresholds evaluated in rules (400 sq ft boundary renders CONDITIONAL)                                                                                                           |
+| Flame + power       | open_flame_or_cooking (nonempty text[]: charcoal_wood, propane_lpg, sterno_candles_heaters, or exclusive none), generator_present (bool), generator_gasoline_gallons, generator_diesel_gallons, generator_kw, battery_system_kwh                                           | numeric thresholds (2.5 gal / 10 gal / 20 kWh / 40 kW) live in rules, not columns                                                                                                                   |
+| Alcohol + assembly  | alcohol (bool), venue_license_covers_event_area (yes/no/unknown), venue_has_assembly_approval (yes/no/unknown)                                                                                                                                                             | the Scenario F branch facts; `unknown` is first-class                                                                                                                                               |
+| Lifecycle           | status (draft/planned/live/done), revision_counter (integer, starts 1), created_at, updated_at                                                                                                                                                                             | revision_counter increments on any intake edit; plans record the revision they evaluated (AD-13)                                                                                                    |
+| Public page (F-301) | description (text, nullable), public_page_published (bool, default false)                                                                                                                                                                                                  | Promotion copy + visibility; not intake/rules fields. Unpublished (`public_page_published = false`) → `GET /e/:eventId` returns friendly 404. Added in migration 003 (resolves SPEC-CONFLICT #100). |
 
-*Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field bumps `revision_counter` server-side, marks the current plan stale, and prompts regeneration (recalculate, don't patch).*
+_Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Editing any intake field bumps `revision_counter` server-side, marks the current plan stale, and prompts regeneration (recalculate, don't patch)._
 
-### permit_rules *(read model, seeded from `rules/nyc-rules.v2.3.json` at migration/boot; never hand-edited)*
+### permit_rules _(read model, seeded from `rules/nyc-rules.v2.3.json` at migration/boot; never hand-edited)_
 
-| Column | Type | Notes |
-|---|---|---|
-| ruleset_version + rule_id | text + text, composite PK | version-safe: two ruleset versions can coexist for comparison/rollback (AD-13) |
-| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, classification, advisory, note) | the rule's own kind; `classification` is a rule role that persists as a `note` finding, so this set is one wider than `permit_plan_items.kind` |
-| title / agency | text | |
-| trigger | jsonb | condition tree (see Rules Engine) |
-| output | jsonb | name/variants, typed deadline, fee, portal, paths, notes |
-| verification | jsonb | status (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP / VERIFIED), qualification, evidence ref into `VERIFICATION-SOURCES.md` |
-| source | jsonb | citation + URLs |
+| Column                    | Type                                                                                                                                | Notes                                                                                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ruleset_version + rule_id | text + text, composite PK                                                                                                           | version-safe: two ruleset versions can coexist for comparison/rollback (AD-13)                                                                          |
+| kind                      | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, classification, advisory, note) | the rule's own kind; `classification` is a rule role that persists as a `note` finding, so this set is one wider than `permit_plan_items.kind`          |
+| title / agency            | text                                                                                                                                |                                                                                                                                                         |
+| trigger                   | jsonb                                                                                                                               | condition tree (see Rules Engine)                                                                                                                       |
+| output                    | jsonb                                                                                                                               | name/variants, typed deadline, fee, portal, paths, notes                                                                                                |
+| verification              | jsonb                                                                                                                               | status (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP / VERIFIED), qualification, evidence ref into `VERIFICATION-SOURCES.md` |
+| source                    | jsonb                                                                                                                               | citation + URLs                                                                                                                                         |
 
-### permit_plans *(immutable; one row per generation)*
+### permit_plans _(immutable; one row per generation)_
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| event_id | uuid FK → events | |
-| event_revision | integer | the `events.revision_counter` value evaluated (AD-13) — a plan always names the exact intake it saw |
-| ruleset_version | text | pinned at generation (lean-plus) |
-| verdict | text CHECK IN (feasible, feasible_at_risk, conditional, infeasible) | |
-| verdict_detail | jsonb | blocking permit, missing facts + branches, min slack days, rescope suggestions |
-| intake_snapshot | jsonb | the intake values evaluated, for reproducibility |
-| generated_at | timestamptz | |
+| Column          | Type                                                                | Notes                                                                                               |
+| --------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| id              | uuid PK                                                             |                                                                                                     |
+| event_id        | uuid FK → events                                                    |                                                                                                     |
+| event_revision  | integer                                                             | the `events.revision_counter` value evaluated (AD-13) — a plan always names the exact intake it saw |
+| ruleset_version | text                                                                | pinned at generation (lean-plus)                                                                    |
+| verdict         | text CHECK IN (feasible, feasible_at_risk, conditional, infeasible) |                                                                                                     |
+| verdict_detail  | jsonb                                                               | blocking permit, missing facts + branches, min slack days, rescope suggestions                      |
+| intake_snapshot | jsonb                                                               | the intake values evaluated, for reproducibility                                                    |
+| generated_at    | timestamptz                                                         |                                                                                                     |
 
-### permit_plan_items *(denormalized snapshot of the rule at generation time — plans stay reproducible after rules change)*
+### permit_plan_items _(denormalized snapshot of the rule at generation time — plans stay reproducible after rules change)_
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| plan_id | uuid FK → permit_plans | |
-| rule_ids | text[] | provenance links; dedupe-merged findings retain every contributing rule |
-| triggered_by | jsonb | exact intake field/value pairs that triggered the finding |
-| permit_name / agency | text | |
-| deadline | jsonb | typed deadline snapshot |
-| latest_apply_date | date | computed backward from event_date |
-| apply_after_date | date, nullable | dependency-gated earliest filing (Parks→NYPD) |
-| fee_display | text | |
-| required_documents | jsonb | |
-| portal_name / portal_url | text | |
-| sources | jsonb | immutable citation + URL snapshots for every contributing rule; OFFICIAL_CONFLICT retains every source |
-| source_url / last_verified_date | text / date | primary click-through + last-verified date rendered per line (F-206) |
-| kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the **finding's** kind, which usually equals the rule's kind (DOHMH-ORGANIZER-NOTIFY-001 → `notification`). Exception: a `classification`-kind rule persists as `note` (see below). `classification` is a rule role, not a persisted finding kind, so it is absent here by design |
-| disposition | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement) | AD-10; fixture comparisons match on (kind, disposition, finding) |
-| deadline_status | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable) | per-finding; the verdict summarizes these |
-| verification_status | text NOT NULL CHECK IN (SOURCE_CONFIRMED, OFFICIAL_CONFLICT, RESEARCH_REQUIRED, COVERAGE_GAP, VERIFIED) | **canonical** per-line verification status; the value F-206 renders as the badge. Mirrors the ruleset's `verification.status`. |
+| Column                          | Type                                                                                                                | Notes                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                              | uuid PK                                                                                                             |                                                                                                                                                                                                                                                                                           |
+| plan_id                         | uuid FK → permit_plans                                                                                              |                                                                                                                                                                                                                                                                                           |
+| rule_ids                        | text[]                                                                                                              | provenance links; dedupe-merged findings retain every contributing rule                                                                                                                                                                                                                   |
+| triggered_by                    | jsonb                                                                                                               | exact intake field/value pairs that triggered the finding                                                                                                                                                                                                                                 |
+| permit_name / agency            | text                                                                                                                |                                                                                                                                                                                                                                                                                           |
+| deadline                        | jsonb                                                                                                               | typed deadline snapshot                                                                                                                                                                                                                                                                   |
+| latest_apply_date               | date                                                                                                                | computed backward from event_date                                                                                                                                                                                                                                                         |
+| apply_after_date                | date, nullable                                                                                                      | dependency-gated earliest filing (Parks→NYPD)                                                                                                                                                                                                                                             |
+| fee_display                     | text                                                                                                                |                                                                                                                                                                                                                                                                                           |
+| required_documents              | jsonb                                                                                                               |                                                                                                                                                                                                                                                                                           |
+| portal_name / portal_url        | text                                                                                                                |                                                                                                                                                                                                                                                                                           |
+| sources                         | jsonb                                                                                                               | immutable citation + URL snapshots for every contributing rule; OFFICIAL_CONFLICT retains every source                                                                                                                                                                                    |
+| source_url / last_verified_date | text / date                                                                                                         | primary click-through + last-verified date rendered per line (F-206)                                                                                                                                                                                                                      |
+| kind                            | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the **finding's** kind, which usually equals the rule's kind (DOHMH-ORGANIZER-NOTIFY-001 → `notification`). Exception: a `classification`-kind rule persists as `note` (see below). `classification` is a rule role, not a persisted finding kind, so it is absent here by design |
+| disposition                     | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement)                   | AD-10; fixture comparisons match on (kind, disposition, finding)                                                                                                                                                                                                                          |
+| deadline_status                 | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable)           | per-finding; the verdict summarizes these                                                                                                                                                                                                                                                 |
+| verification_status             | text NOT NULL CHECK IN (SOURCE_CONFIRMED, OFFICIAL_CONFLICT, RESEARCH_REQUIRED, COVERAGE_GAP, VERIFIED)             | **canonical** per-line verification status; the value F-206 renders as the badge. Mirrors the ruleset's `verification.status`.                                                                                                                                                            |
 
 > `verified_status` (nullable, unconstrained) exists in migration 001 as a pre-merge duplicate of `verification_status`. It is **deprecated and unused**: never write or read it, use `verification_status`. It stays in place because migration 001 is merged and immutable (AGENTS.md); a later migration drops the column. This resolves issue #76.
 
-**Rule kind vs finding kind (resolves #73).** A rule's `kind` describes what the rule *is*; a plan item's `kind` describes the finding it *emits*. For almost every rule these are equal. The exception is `classification`: `SAPO-SCOPE-001` (`kind: classification`) is a scope check that, when it fires with `obstructs_public_way=no`, emits a no-requirement finding. It persists as `kind = note`, `disposition = no_new_requirement`, with its `rule_ids` retaining `SAPO-SCOPE-001` for provenance. `classification` therefore appears in `permit_rules.kind` (the ruleset read model, line 89) but not in `permit_plan_items.kind`.
+**Rule kind vs finding kind (resolves #73).** A rule's `kind` describes what the rule _is_; a plan item's `kind` describes the finding it _emits_. For almost every rule these are equal. The exception is `classification`: `SAPO-SCOPE-001` (`kind: classification`) is a scope check that, when it fires with `obstructs_public_way=no`, emits a no-requirement finding. It persists as `kind = note`, `disposition = no_new_requirement`, with its `rule_ids` retaining `SAPO-SCOPE-001` for provenance. `classification` therefore appears in `permit_rules.kind` (the ruleset read model, line 89) but not in `permit_plan_items.kind`.
 
 ### checklist_items
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| plan_item_id | uuid FK → permit_plan_items, UNIQUE | keeps status linked to rule + source; event is derived through the plan item and plan |
-| status | text CHECK IN (not_started, in_progress, submitted, approved, rejected) | |
-| notes | text | |
-| updated_at | timestamptz | |
+| Column       | Type                                                                    | Notes                                                                                 |
+| ------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| id           | uuid PK                                                                 |                                                                                       |
+| plan_item_id | uuid FK → permit_plan_items, UNIQUE                                     | keeps status linked to rule + source; event is derived through the plan item and plan |
+| status       | text CHECK IN (not_started, in_progress, submitted, approved, rejected) |                                                                                       |
+| notes        | text                                                                    |                                                                                       |
+| updated_at   | timestamptz                                                             |                                                                                       |
 
 ### documents
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| checklist_item_id | uuid FK | |
-| filename / content_type / size_bytes | text / text / bigint | |
-| storage_key | text | S3 object key; access via short-lived signed URLs |
-| uploaded_at | timestamptz | |
+| Column                               | Type                 | Notes                                             |
+| ------------------------------------ | -------------------- | ------------------------------------------------- |
+| id                                   | uuid PK              |                                                   |
+| checklist_item_id                    | uuid FK              |                                                   |
+| filename / content_type / size_bytes | text / text / bigint |                                                   |
+| storage_key                          | text                 | S3 object key; access via short-lived signed URLs |
+| uploaded_at                          | timestamptz          |                                                   |
 
 ### alerts
 
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid PK | |
-| event_id | uuid FK | |
-| checklist_item_id | uuid FK, nullable | when present, its plan must belong to `event_id` |
-| alert_type | text CHECK IN (deadline_reminder, slack_warning, dependency_unlocked) | |
-| channel | text CHECK IN (email, sms) | |
-| recipient | text | the destination address/number (audit fix: was missing entirely) |
-| idempotency_key | text UNIQUE | e.g. `{event_id}:{checklist_item_id}:{alert_type}:{send_at}` — a crash between send and mark-sent cannot double-send (AD-13) |
-| send_at | timestamptz | |
-| status | text CHECK IN (pending, sent, failed, cancelled) | `cancelled` for alerts obsoleted by plan regeneration |
-| sent_at | timestamptz, nullable | |
-| payload | jsonb | rendered message content |
+| Column            | Type                                                                  | Notes                                                                                                                        |
+| ----------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| id                | uuid PK                                                               |                                                                                                                              |
+| event_id          | uuid FK                                                               |                                                                                                                              |
+| checklist_item_id | uuid FK, nullable                                                     | when present, its plan must belong to `event_id`                                                                             |
+| alert_type        | text CHECK IN (deadline_reminder, slack_warning, dependency_unlocked) |                                                                                                                              |
+| channel           | text CHECK IN (email, sms)                                            |                                                                                                                              |
+| recipient         | text                                                                  | the destination address/number (audit fix: was missing entirely)                                                             |
+| idempotency_key   | text UNIQUE                                                           | e.g. `{event_id}:{checklist_item_id}:{alert_type}:{send_at}` — a crash between send and mark-sent cannot double-send (AD-13) |
+| send_at           | timestamptz                                                           |                                                                                                                              |
+| status            | text CHECK IN (pending, sent, failed, cancelled)                      | `cancelled` for alerts obsoleted by plan regeneration                                                                        |
+| sent_at           | timestamptz, nullable                                                 |                                                                                                                              |
+| payload           | jsonb                                                                 | rendered message content                                                                                                     |
 
-### rsvps *(stretch, F-302 — in the day-1 schema so stretch needs no migration)*
+### rsvps _(stretch, F-302 — in the day-1 schema so stretch needs no migration)_
 
 id uuid PK · event_id FK · name text · email text · phone text nullable · status CHECK IN (confirmed, cancelled) · created_at · UNIQUE (event_id, email)
 
-### checkins *(stretch, F-401)*
+### checkins _(stretch, F-401)_
 
 id uuid PK · event_id FK · rsvp_id FK nullable (must belong to the same event when present) · name text · contact text (normalized email or phone) · checked_in_at timestamptz · UNIQUE (event_id, contact)
 
@@ -207,15 +208,15 @@ Each rule in `rules/nyc-rules.v2.3.json` carries: `id`, `kind`, `trigger` (condi
 
 ### Typed deadlines (never one number)
 
-| Type | Example | Semantics |
-|---|---|---|
-| `published_minimum` | SAPO Street Event Large: 45 days; block party 60; DOHMH organizer notification 30 | latest_apply = event_date − calendar_days; past it → PUBLISHED_DEADLINE_MISSED |
-| `published_minimum_by_level` | SAPO plaza: A 45 (60 multi-block) / B 30 (45 multi) / C 30 / D 14 | level resolved from intake; `unknown` level → CONDITIONAL listing the range |
-| `hard_floor_days` (composite with `processing_range_days`) | Parks: inside 21 days NOT accepted; processing 21–30 | the floor is a cliff → PUBLISHED_DEADLINE_MISSED past it; runway shorter than the processing range → FEASIBLE-AT-RISK ("processing may not complete"; interpretation I-5) |
-| `business_days_minimum` | SLA: ≥15 business days; DOB TUP: 15 business days | actual business-day count against the pinned holiday calendar (AD-11); fixture dates are pinned so results are deterministic |
-| `dependency` | Parks amplified-sound permission precedes the NYPD sound pursuit | apply_after = upstream apply date + processing range; slack for gated items = latest_apply − apply_after |
-| `before_issuance` | SAPO insurance: obtain before permit issuance | listed with the parent permit; no independent date arithmetic |
-| `research_required` | FDNY fuel/open-flame/generator leads | listed, rendered "confirm with agency," excluded from verdict and slack arithmetic |
+| Type                                                       | Example                                                                           | Semantics                                                                                                                                                                 |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `published_minimum`                                        | SAPO Street Event Large: 45 days; block party 60; DOHMH organizer notification 30 | latest_apply = event_date − calendar_days; past it → PUBLISHED_DEADLINE_MISSED                                                                                            |
+| `published_minimum_by_level`                               | SAPO plaza: A 45 (60 multi-block) / B 30 (45 multi) / C 30 / D 14                 | level resolved from intake; `unknown` level → CONDITIONAL listing the range                                                                                               |
+| `hard_floor_days` (composite with `processing_range_days`) | Parks: inside 21 days NOT accepted; processing 21–30                              | the floor is a cliff → PUBLISHED_DEADLINE_MISSED past it; runway shorter than the processing range → FEASIBLE-AT-RISK ("processing may not complete"; interpretation I-5) |
+| `business_days_minimum`                                    | SLA: ≥15 business days; DOB TUP: 15 business days                                 | actual business-day count against the pinned holiday calendar (AD-11); fixture dates are pinned so results are deterministic                                              |
+| `dependency`                                               | Parks amplified-sound permission precedes the NYPD sound pursuit                  | apply_after = upstream apply date + processing range; slack for gated items = latest_apply − apply_after                                                                  |
+| `before_issuance`                                          | SAPO insurance: obtain before permit issuance                                     | listed with the parent permit; no independent date arithmetic                                                                                                             |
+| `research_required`                                        | FDNY fuel/open-flame/generator leads                                              | listed, rendered "confirm with agency," excluded from verdict and slack arithmetic                                                                                        |
 
 ### Verdict algorithm
 
@@ -232,24 +233,26 @@ Determinism: same intake + same ruleset version + same `today` + same calendar �
 
 Base: `apps/api`, JSON over REST. No auth in MVP (AD-5).
 
-| Method + Path | Purpose | Feature |
-|---|---|---|
-| POST /api/events | Create event from intake (validates contradictions, returns field errors) | F-101 |
-| GET /api/events/:id | Fetch event | F-101 |
-| PATCH /api/events/:id | Edit intake (marks current plan stale) | F-101 |
-| POST /api/events/:id/plan | Generate plan + verdict (new immutable plan row) | F-201/F-102 |
-| GET /api/events/:id/plan | Latest plan with items, verdict, ruleset version | F-201/F-206 |
-| GET /api/rules/meta | Ruleset version + snapshot date (banner) | F-206 |
-| POST /api/events/:id/checklist | Materialize checklist from latest plan; schedules alerts | F-202/F-203 |
-| GET /api/events/:id/checklist | Checklist with statuses + documents | F-202 |
-| PATCH /api/checklist-items/:id | Update status/notes | F-202 |
-| POST /api/checklist-items/:id/documents | Upload document (API streams to S3; returns metadata) | F-202 |
-| GET /api/documents/:id/url | Short-lived signed download URL | F-202 |
-| POST /api/events/:id/alerts/test | Fire one alert immediately (demo utility, labeled) | F-203 |
-| GET /e/:eventId *(stretch)* | Public event page data | F-301 |
-| POST /api/events/:id/rsvps *(stretch)* | Create RSVP (capacity-aware) | F-302 |
-| POST /api/events/:id/checkins *(stretch)* | 2-field check-in | F-401 |
-| GET /api/events/:id/stats *(stretch)* | Check-in counts + capacity (polled ~5s; no websockets in MVP) | F-402 |
+| Method + Path                                 | Purpose                                                                                           | Feature     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------- |
+| POST /api/events                              | Create event from intake (validates contradictions, returns field errors)                         | F-101       |
+| GET /api/events/:id                           | Fetch event                                                                                       | F-101       |
+| PATCH /api/events/:id                         | Edit intake (marks current plan stale)                                                            | F-101       |
+| POST /api/events/:id/plan                     | Generate plan + verdict (new immutable plan row)                                                  | F-201/F-102 |
+| GET /api/events/:id/plan                      | Latest plan with items, verdict, ruleset version                                                  | F-201/F-206 |
+| GET /api/rules/meta                           | Ruleset version + snapshot date (banner)                                                          | F-206       |
+| POST /api/events/:id/checklist                | Materialize checklist from latest plan; schedules alerts                                          | F-202/F-203 |
+| GET /api/events/:id/checklist                 | Checklist with statuses + documents                                                               | F-202       |
+| PATCH /api/checklist-items/:id                | Update status/notes                                                                               | F-202       |
+| POST /api/checklist-items/:id/documents       | Upload document (API streams to S3; returns metadata)                                             | F-202       |
+| GET /api/documents/:id/url                    | Short-lived signed download URL                                                                   | F-202       |
+| POST /api/events/:id/alerts/test              | Fire one alert immediately (demo utility, labeled)                                                | F-203       |
+| GET /e/:eventId _(stretch)_                   | Public event page data (404 if unpublished)                                                       | F-301       |
+| GET /api/events/:id/public-page _(stretch)_   | Organizer promote view (description, publish flag, share URL fields, optional infeasible warning) | F-301       |
+| PATCH /api/events/:id/public-page _(stretch)_ | Update description and/or public_page_published                                                   | F-301       |
+| POST /api/events/:id/rsvps _(stretch)_        | Create RSVP (capacity-aware)                                                                      | F-302       |
+| POST /api/events/:id/checkins _(stretch)_     | 2-field check-in                                                                                  | F-401       |
+| GET /api/events/:id/stats _(stretch)_         | Check-in counts + capacity (polled ~5s; no websockets in MVP)                                     | F-402       |
 
 Error principle: rule-evaluation failures return an explicit error; the API never returns a partial plan as complete.
 

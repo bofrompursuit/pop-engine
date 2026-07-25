@@ -8,8 +8,9 @@ As an organizer whose event is now compliant, one click turns the same event rec
 
 ## Inputs / Outputs
 
-- Source: the `events` row (name, date, location_name, headcount) + an organizer-entered description.
-- `GET /e/:eventId` (public, no auth): title, date, venue, description, map link, RSVP button (wired to F-302 when present).
+- Source: the `events` row (name, date, location_name, headcount, borough) + organizer-entered `description` and `public_page_published` (migration 003; resolves SPEC-CONFLICT #100).
+- `GET /e/:eventId` (public, no auth): title, date, venue, description, map link, RSVP affordance (wired to F-302 when present). Returns friendly 404 when `public_page_published` is false.
+- `GET` / `PATCH /api/events/:id/public-page`: organizer promote controls (description, publish toggle, shareable path, infeasible warning when latest plan verdict is infeasible).
 - Shareable URL shown to the organizer with copy-to-clipboard.
 
 ## Acceptance Criteria
@@ -23,7 +24,7 @@ As an organizer whose event is now compliant, one click turns the same event rec
 ## Edge Cases
 
 - Event with INFEASIBLE current plan: page still renders (publishing is the organizer's call), but the organizer-side view shows a warning banner.
-- Unpublished/draft toggle: organizer controls visibility; unpublished URL returns a friendly 404.
+- Visibility: `public_page_published` on `events` (not lifecycle `status`). Organizer toggles publish via `PATCH /api/events/:id/public-page`; unpublished URL returns a friendly 404.
 
 ## Answer-Key Scenarios Exercised
 
