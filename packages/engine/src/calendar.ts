@@ -3,7 +3,7 @@
 // (AD-11); the engine never derives holidays and never reads the clock.
 
 import { EvaluationError } from "./types";
-import type { HolidayCalendar } from "./types";
+import type { PublishedHolidayCalendar } from "./types";
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -29,7 +29,7 @@ export function differenceInCalendarDays(from: string, to: string): number {
   return toEpochDay(to) - toEpochDay(from);
 }
 
-function isBusinessDay(date: string, calendar: HolidayCalendar): boolean {
+function isBusinessDay(date: string, calendar: PublishedHolidayCalendar): boolean {
   const weekday = new Date(toEpochDay(date) * MILLISECONDS_PER_DAY).getUTCDay();
   return weekday !== 0 && weekday !== 6 && !calendar.holidays.includes(date);
 }
@@ -41,7 +41,7 @@ function isBusinessDay(date: string, calendar: HolidayCalendar): boolean {
 export function subtractBusinessDays(
   date: string,
   businessDays: number,
-  calendar: HolidayCalendar,
+  calendar: PublishedHolidayCalendar,
 ): string {
   if (!Number.isInteger(businessDays) || businessDays < 0) {
     throw new EvaluationError(
@@ -58,7 +58,11 @@ export function subtractBusinessDays(
 }
 
 /** Business days strictly after `from`, up to and including `to`. Negative when `to` precedes `from`. */
-export function countBusinessDays(from: string, to: string, calendar: HolidayCalendar): number {
+export function countBusinessDays(
+  from: string,
+  to: string,
+  calendar: PublishedHolidayCalendar,
+): number {
   const span = differenceInCalendarDays(from, to);
   if (span < 0) return -countBusinessDays(to, from, calendar);
   let counted = 0;

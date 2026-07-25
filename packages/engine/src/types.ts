@@ -120,8 +120,18 @@ export type EngineRuleset = {
   readonly rules: readonly EngineRule[];
 };
 
-/** The pinned holiday calendar (AD-11). Injected; the engine never derives holidays itself. */
-export type HolidayCalendar = { readonly id: string; readonly holidays: readonly string[] };
+/**
+ * The pinned holiday calendar (AD-11). Injected; the engine never derives holidays itself.
+ *
+ * `holidays: null` means no list has been published for this calendar id — distinct from a
+ * published list that happens to be empty. A business-day deadline cannot be computed without
+ * one, so findings that need it render NOT_CALCULABLE rather than falling back to weekday-only
+ * arithmetic, which would push the date later than it really is.
+ */
+export type HolidayCalendar = { readonly id: string; readonly holidays: readonly string[] | null };
+
+/** A calendar whose holiday list has been published, so business-day math can run. */
+export type PublishedHolidayCalendar = HolidayCalendar & { readonly holidays: readonly string[] };
 
 export type TriggeredBy = { readonly field: string; readonly value: IntakeValue };
 

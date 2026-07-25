@@ -8,7 +8,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseEngineRuleset, type EngineRuleset, type HolidayCalendar } from "@pop-engine/engine";
 import { createApp } from "./app";
-import { MissingHolidayCalendarError, pinnedCalendar } from "./calendar";
+import { holidayCalendarWarning, pinnedCalendar } from "./calendar";
 import { calendarDateFrom, createPlanService } from "./plan";
 import { rulesFilePath } from "./ruleset";
 
@@ -204,17 +204,75 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(rows).toHaveLength(0);
   });
 
-  it("withholds a plan when the pinned holiday calendar has no published list", async () => {
+  it("generates normally with no published holiday list when nothing needs business days", async () => {
+    // Scenario A triggers no business-day rule, so its plan is fully computable. Withholding it
+    // because some other rule would have needed a holiday list helps nobody.
     const eventId = await insertEvent();
-    expect(() => pinnedCalendar(ruleset.calendarId)).toThrow(MissingHolidayCalendarError);
     const response = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
 
-    expect(response.status).toBe(503);
-    expect(response.body.error).toBe("plan generation unavailable");
-    expect(response.body.detail).toContain("no published holiday list");
-    expect(response.body.findings).toBeUndefined();
-    const { rows } = await pool.query("SELECT id FROM permit_plans WHERE event_id = $1", [eventId]);
-    expect(rows).toHaveLength(0);
+    expect(response.status).toBe(201);
+    expect(response.body.verdict).toBe("INFEASIBLE");
+    expect(response.body.findings).toHaveLength(5);
+    expect(response.body.findings[0].latestApplyDate).toBe("2026-07-12");
+    // The only undated lines are ones the ruleset itself leaves undated: insurance is owed before
+    // issuance and the DOHMH vendor lead time is research-required. Neither is a calendar gap, and
+    // no business_days_minimum rule triggers here.
+    const undated = response.body.findings.filter(
+      (finding: { latestApplyDate: string | null; deadline: { type: string } | null }) =>
+        finding.latestApplyDate === null && finding.deadline !== null,
+    );
+    expect(undated.map((finding: { deadline: { type: string } }) => finding.deadline.type)).toEqual(
+      ["before_issuance", "research_required"],
+    );
+  });
+
+  it("warns operators that the pinned calendar has no published holiday list", () => {
+    // Plans still generate; the warning is how an operator learns why business-day lines are
+    // undated, instead of an organizer discovering it.
+    const warning = holidayCalendarWarning(pinnedCalendar(ruleset.calendarId));
+    expect(warning).toContain("no published holiday list");
+    expect(warning).toContain(ruleset.calendarId);
+    expect(holidayCalendarWarning({ id: "published@2026", holidays: [] })).toBeNull();
+  });
+
+  it("degrades only the business-day finding when no holiday list is published", async () => {
+    // Rooftop with alcohol and no venue licence: SLA-ONEDAY-001 is a 15-business-day deadline.
+    const eventId = await insertEvent({
+      location_type: "private_venue",
+      obstructs_public_way: null,
+      sapo_event_type: null,
+      street_event_size: null,
+      headcount: 90,
+      event_open_to_public: "no",
+      food_present: false,
+      food_vendor_count: null,
+      selling_anything: false,
+      amplified_sound: false,
+      alcohol: true,
+      venue_license_covers_event_area: "no",
+    });
+
+    const degraded = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+    expect(degraded.status).toBe(201);
+    const withoutList = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
+      finding.ruleIds.includes("SLA-ONEDAY-001"),
+    );
+    expect(withoutList.latestApplyDate).toBeNull();
+    expect(withoutList.deadlineStatus).toBe("not_calculable");
+    expect(withoutList.notes).toContain("confirm with agency");
+    // Everything that needs no business-day math still carries its real date.
+    const assembly = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
+      finding.ruleIds.includes("DOB-ASSEMBLY-001"),
+    );
+    expect(assembly.latestApplyDate).toBe("2026-08-16");
+
+    // With a published list the same finding dates for real, which is what the fixtures exercise.
+    const computed = await request(appWith()).post(`/api/events/${eventId}/plan`);
+    const withList = computed.body.findings.find((finding: { ruleIds: string[] }) =>
+      finding.ruleIds.includes("SLA-ONEDAY-001"),
+    );
+    expect(withList.latestApplyDate).toBe("2026-08-05");
+    expect(withList.deadlineStatus).toBe("on_track");
   });
 
   it("reads a Postgres date as its stored calendar day, east of UTC included", async () => {

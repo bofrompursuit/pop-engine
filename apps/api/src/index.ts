@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Client, Pool } from "pg";
 import { parseEngineRuleset } from "@pop-engine/engine";
 import { createApp } from "./app";
-import { pinnedCalendar } from "./calendar";
+import { holidayCalendarWarning, pinnedCalendar } from "./calendar";
 import { createPlanService } from "./plan";
 import { loadRuleset, rulesFilePath, syncPermitRules } from "./ruleset";
 
@@ -31,6 +31,11 @@ const pool = new Pool({ connectionString: databaseUrl });
 const planService = createPlanService(pool, engineRuleset, pinnedCalendar, () =>
   new Date().toISOString().slice(0, 10),
 );
+
+// Plans still generate without a published holiday list; the business-day lines in them do not
+// get dates. Operators should know that before an organizer asks why.
+const calendarWarning = holidayCalendarWarning(pinnedCalendar(engineRuleset.calendarId));
+if (calendarWarning !== null) console.warn(calendarWarning);
 
 createApp({ planService }).listen(PORT, () => {
   console.log(`pop-engine-api listening on :${PORT}`);

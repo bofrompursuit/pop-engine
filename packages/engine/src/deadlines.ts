@@ -151,14 +151,25 @@ export function computeDeadline(
       };
     }
 
-    case "business_days_minimum":
+    case "business_days_minimum": {
+      // No published holiday list means this date cannot be computed. Weekday-only arithmetic
+      // would count a holiday as a business day and put the deadline later than it really is, so
+      // the finding takes the ruleset's own treatment for an uncomputable deadline instead: listed,
+      // rendered "confirm with agency", excluded from verdict arithmetic (engine_conventions).
+      // Only the findings that need business days degrade; the rest of the plan still computes.
+      const { holidays } = context.calendar;
+      if (holidays === null) return undatable("not_calculable", deadline.display);
       return {
         ...dateBackFrom(
-          subtractBusinessDays(context.eventDate, deadline.businessDays, context.calendar),
+          subtractBusinessDays(context.eventDate, deadline.businessDays, {
+            ...context.calendar,
+            holidays,
+          }),
           context,
         ),
         deadlineDisplay: deadline.display,
       };
+    }
 
     // Listed with its parent permit; no independent date arithmetic.
     case "before_issuance":

@@ -14,7 +14,7 @@ import {
   triggerFields,
   EvaluationError,
 } from "./index";
-import type { EventIntake, HolidayCalendar } from "./types";
+import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./types";
 
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
@@ -24,7 +24,7 @@ const rawRuleset: Record<string, unknown> = JSON.parse(
   ),
 );
 const ruleset = parseEngineRuleset(rawRuleset);
-const calendar: HolidayCalendar = { id: ruleset.calendarId, holidays: [] };
+const calendar: PublishedHolidayCalendar = { id: ruleset.calendarId, holidays: [] };
 
 const parkIntake: EventIntake = {
   borough: "brooklyn",
@@ -294,7 +294,7 @@ describe("business-day arithmetic against the pinned calendar", () => {
   });
 
   it("honors an injected holiday", () => {
-    const withHoliday: HolidayCalendar = { id: calendar.id, holidays: ["2026-07-24"] };
+    const withHoliday: PublishedHolidayCalendar = { id: calendar.id, holidays: ["2026-07-24"] };
     expect(subtractBusinessDays("2026-07-27", 1, withHoliday)).toBe("2026-07-23");
     expect(countBusinessDays("2026-07-22", "2026-07-27", withHoliday)).toBe(2);
   });
@@ -304,6 +304,47 @@ describe("business-day arithmetic against the pinned calendar", () => {
     expect(countBusinessDays("2026-08-11", "2026-07-22", calendar)).toBe(-14);
     expect(addCalendarDays("2026-12-31", 1)).toBe("2027-01-01");
     expect(differenceInCalendarDays("2026-07-22", "2026-08-26")).toBe(35);
+  });
+
+  it("declines a business-day deadline instead of guessing when no list is published", () => {
+    // holidays: null is "no list published for this calendar id", not "a list with no holidays".
+    // Weekday-only math would date SLA-ONEDAY-001 at 2026-07-21 and could call a missed window
+    // on track, so the finding takes the published uncomputable-deadline treatment instead.
+    const unpublished: HolidayCalendar = { id: ruleset.calendarId, holidays: null };
+    const rooftop: EventIntake = {
+      ...parkIntake,
+      location_type: "private_venue",
+      headcount: 40,
+      event_date: "2026-08-11",
+      amplified_sound: false,
+      alcohol: true,
+      venue_license_covers_event_area: "no",
+    };
+
+    const withList = evaluate(rooftop, ruleset, TODAY, calendar);
+    const dated = withList.findings.find((finding) => finding.ruleIds.includes("SLA-ONEDAY-001"));
+    expect(dated?.latestApplyDate).toBe("2026-07-21");
+    expect(dated?.deadlineStatus).toBe("published_deadline_missed");
+
+    const withoutList = evaluate(rooftop, ruleset, TODAY, unpublished);
+    const degraded = withoutList.findings.find((finding) =>
+      finding.ruleIds.includes("SLA-ONEDAY-001"),
+    );
+    expect(degraded?.latestApplyDate).toBeNull();
+    expect(degraded?.deadlineStatus).toBe("not_calculable");
+    expect(degraded?.notes).toContain("confirm with agency");
+    // Excluded from verdict arithmetic: the same plan is INFEASIBLE only when the date is real.
+    expect(withList.verdict).toBe("INFEASIBLE");
+    expect(withoutList.verdict).not.toBe("INFEASIBLE");
+  });
+
+  it("still computes every finding that needs no business-day math", () => {
+    const unpublished: HolidayCalendar = { id: ruleset.calendarId, holidays: null };
+    const plan = evaluate(parkIntake, ruleset, TODAY, unpublished);
+    expect(plan.verdict).toBe("FEASIBLE");
+    expect(plan.findings.find((f) => f.ruleIds.includes("PARKS-EVENT-001"))?.latestApplyDate).toBe(
+      "2026-08-26",
+    );
   });
 
   it("rejects a nonsensical business-day count", () => {

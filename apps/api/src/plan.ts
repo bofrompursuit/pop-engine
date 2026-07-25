@@ -174,9 +174,9 @@ async function insertPlan(
 export function createPlanService(
   pool: Pool,
   ruleset: EngineRuleset,
-  // Resolved per generation, not at construction: a ruleset whose pinned holiday calendar has no
-  // published list must fail the request with an explicit error rather than take the api down or,
-  // worse, quietly fall back to weekday-only business-day math.
+  // Resolved per generation so a plan always records the calendar state it actually evaluated
+  // against. When the pinned calendar has no published holiday list, the engine renders only the
+  // findings that need business-day math as NOT_CALCULABLE; the rest of the plan still computes.
   resolveCalendar: (calendarId: string) => HolidayCalendar,
   today: () => string,
 ): PlanService {

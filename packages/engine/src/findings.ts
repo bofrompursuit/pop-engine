@@ -13,6 +13,7 @@ import type {
   Finding,
   FindingKind,
   FindingSource,
+  DeadlineStatus,
   Disposition,
   TriggeredBy,
   Tristate,
@@ -37,10 +38,11 @@ function resolveDisposition(rule: EngineRule, result: Tristate): Disposition {
   return result === "unknown" && published === "required" ? UNKNOWN_TRIGGER_DISPOSITION : published;
 }
 
-function ruleNotes(rule: EngineRule): string[] {
-  const isResearchRequired =
-    rule.deadline?.type === "research_required" || rule.verificationStatus === "RESEARCH_REQUIRED";
-  return isResearchRequired ? [...rule.notes, CONFIRM_WITH_AGENCY] : [...rule.notes];
+/** Any deadline the engine could not compute gets the published "confirm with agency" treatment. */
+function ruleNotes(rule: EngineRule, deadlineStatus: DeadlineStatus): string[] {
+  const needsAgencyConfirmation =
+    deadlineStatus === "not_calculable" || rule.verificationStatus === "RESEARCH_REQUIRED";
+  return needsAgencyConfirmation ? [...rule.notes, CONFIRM_WITH_AGENCY] : [...rule.notes];
 }
 
 function ruleSources(rule: EngineRule): FindingSource[] {
@@ -73,7 +75,7 @@ function buildFinding(
     feeDisplay: rule.feeDisplay,
     portalName: rule.portalName,
     portalUrl: rule.portalUrl,
-    notes: ruleNotes(rule),
+    notes: ruleNotes(rule, dated.deadlineStatus),
     noteText: rule.noteText,
     deadlineUnknownFields: dated.unknownFields,
     // An OFFICIAL_CONFLICT rule renders both readings and every source; it never resolves silently.

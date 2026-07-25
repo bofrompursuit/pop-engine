@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { countBusinessDays, evaluate, parseEngineRuleset } from "./index";
-import type { EventIntake, Finding, HolidayCalendar, PermitPlan } from "./types";
+import type { EventIntake, Finding, PermitPlan, PublishedHolidayCalendar } from "./types";
 
 const TODAY = "2026-07-22";
 
@@ -31,7 +31,7 @@ const ruleset = parseEngineRuleset(
 // The pinned calendar's holiday list is unresolved upstream (config.business_day_math: "the
 // holiday list itself remains RESEARCH_REQUIRED"). Fixtures may not invent holidays, so the
 // list stays empty and every fixture window is one the answer key states is uncontested.
-const calendar: HolidayCalendar = { id: ruleset.calendarId, holidays: [] };
+const calendar: PublishedHolidayCalendar = { id: ruleset.calendarId, holidays: [] };
 
 const plan = (intake: EventIntake, today = TODAY): PermitPlan =>
   evaluate(intake, ruleset, today, calendar);
