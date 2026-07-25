@@ -18,10 +18,11 @@ As an independent organizer, I can see when the rules behind my plan were last v
 
 ## Acceptance Criteria
 
-1. The banner renders on every plan and checklist view, populated from the rules file (never hardcoded copy).
+1. The banner renders on every plan and checklist view, populated from stored data and never from hardcoded copy. AC 4 names which stored data: a view with a plan in context reads that plan's row, so this criterion is about never hand-writing the version or date into the markup, not about reading the live file.
 2. Every plan line shows its source citation and verification status; RESEARCH_REQUIRED renders "confirm with agency" visibly (not hidden in a tooltip), and OFFICIAL_CONFLICT lines render both readings with both sources.
 3. Clicking a citation opens the source URL; lines whose portal/source URL is still unresolved render the citation text without a dead link.
-4. The plan's pinned `ruleset_version` is shown (from `permit_plans`, not from the live file), so an old plan viewed after a rules update displays the version that produced it.
+4. The plan's pinned `ruleset_version` **and `snapshot_date`** are shown (both from `permit_plans`, not from the live file), so an old plan viewed after a rules update displays the version that produced it and the publication date that version carried. The two travel together: showing a pinned version beside the live file's date would render a pair that never existed. `GET /api/rules/meta` remains the live file's values and is for surfaces with no plan in context; it is not the plan banner's source.
+   **Legacy plans:** a plan generated before migration 002 has a null `snapshot_date`. The banner renders the pinned version and says the publication date was not recorded for that plan — it never falls back to the live file's date, which would pair a pinned version with a date it never carried, and it is never backfilled, because the plan does not record which artifact it read and a derived date would assert provenance nothing witnessed. The version alone is still the honest answer to "which rules produced this".
 5. Demo check: the banner is visible in every screen of the demo path (DESIGN.md demo plan step 5 includes a live citation click-through).
 
 ## Edge Cases
