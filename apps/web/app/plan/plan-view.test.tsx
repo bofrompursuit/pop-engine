@@ -350,6 +350,46 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     expect(line.queryAllByRole("link")).toEqual([]);
   });
 
+  it("logs loudly when a stored citation has lost its URL, and still renders the text", async () => {
+    // F-206's Edge Cases pair the fallback above with "log loudly". Every rule in the published
+    // ruleset carries at least one URL on its source, so reaching this means a stored plan has lost
+    // its click-through — and a plan row is immutable with nothing re-deriving it, so the log is the
+    // only way an operator learns of it.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const line = await lineFor(
+        finding({
+          sources: [
+            { ruleId: "PARKS-EVENT-001", citation: "Parks borough office, by phone", urls: [] },
+          ],
+        }),
+      );
+
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining("no source URL"),
+        expect.objectContaining({
+          ruleId: "PARKS-EVENT-001",
+          citation: "Parks borough office, by phone",
+        }),
+      );
+      // The organizer is not told: they can do nothing with it, and the citation is still correct.
+      expect(line.getByText("Parks borough office, by phone")).toBeDefined();
+      expect(line.queryAllByRole("link")).toEqual([]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("says nothing about a citation that has its URL", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await lineFor(finding());
+      expect(logged).not.toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("renders a finding that publishes no source at all without a citation block", async () => {
     // ADV-ALCOHOL-PUBLIC-001 is a COVERAGE_GAP advisory: it asserts nothing and cites nothing.
     const line = await lineFor(

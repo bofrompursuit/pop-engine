@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type Finding, type FindingSource } from "@pop-engine/engine";
 
 // F-206 AC 2 and AC 3: every plan line carries its citation and its verification status, both
@@ -54,12 +55,29 @@ function VerificationBadge({ status }: { status: Finding["verificationStatus"] }
 /**
  * A citation with click-through to each official page it rests on. A source with no resolved URL
  * renders its citation text and nothing clickable, so a line never offers a dead link.
+ *
+ * F-206's Edge Cases pair that fallback with "log loudly", and loudly is the operative half. The
+ * state should be unreachable — every rule in the published ruleset carries at least one URL on its
+ * source — so reaching it means a stored plan has lost its click-through, and a plan row is
+ * immutable with nothing re-deriving it, so no later read repairs or reports it. The log is the
+ * only way an operator finds out. Not surfaced to the organizer: they can do nothing with it, and
+ * the citation text they see is still correct.
  */
 function Citation({ source }: { source: FindingSource }) {
+  const hasNoUrl = source.urls.length === 0;
+
+  useEffect(() => {
+    if (!hasNoUrl) return;
+    console.error(
+      "F-206: a stored plan finding carries citation text with no source URL; rendering the citation without a link",
+      { ruleId: source.ruleId, citation: source.citation },
+    );
+  }, [hasNoUrl, source.ruleId, source.citation]);
+
   return (
     <li className="line__citation">
       <span className="line__citation-text">{source.citation}</span>
-      {source.urls.length === 0 ? null : (
+      {hasNoUrl ? null : (
         <span className="line__citation-links">
           {source.urls.map((url, index) => (
             <a key={url} href={url} target="_blank" rel="noreferrer noopener">
