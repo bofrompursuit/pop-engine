@@ -12,6 +12,13 @@ import { loadRuleset, rulesFilePath, syncPermitRules } from "./ruleset";
 const PORT = Number(process.env.PORT ?? 3001);
 
 const ruleset = await loadRuleset();
+// The engine reads the same published file the boot validator just checked (AD-2), and it runs
+// BEFORE anything is written. The engine's parser is where scoping cycles and asked_when operands
+// are validated, so parsing after the sync would let a malformed artifact delete and reseed
+// permit_rules and only then abort: loud for the deploying process, silent for every other api
+// instance still reading the read model it just replaced.
+const engineRuleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
+
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is required");
@@ -24,9 +31,6 @@ try {
 } finally {
   await database.end();
 }
-
-// The engine reads the same published file the boot validator just checked (AD-2).
-const engineRuleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
 const pool = new Pool({ connectionString: databaseUrl });
 
 // One clock for the whole api: an intake date and a plan deadline are both calendar days

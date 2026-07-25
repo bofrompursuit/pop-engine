@@ -10,7 +10,6 @@ export const ENGINE_NAME = "pop-engine-engine";
 // and submission validation. Shared by apps/api and apps/web (AD-8) so the contract has
 // exactly one implementation.
 export type {
-  AskedWhenTerm,
   IntakeContract,
   IntakeField,
   IntakeFieldType,

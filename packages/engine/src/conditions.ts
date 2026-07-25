@@ -9,7 +9,7 @@ import type {
   AskedWhenClause,
   Condition,
   EngineRuleset,
-  IntakeFieldDefinition,
+  ScopedField,
   EventIntake,
   IntakeValue,
   TriggeredBy,
@@ -48,7 +48,7 @@ export type ScopeResolver = { isInScope: (field: string) => boolean };
  */
 export function parseAskedWhen(
   expression: string,
-  fields: readonly IntakeFieldDefinition[],
+  fields: readonly ScopedField[],
 ): AskedWhenClause[] {
   return expression.split(" AND ").map((clause) => parseAskedWhenClause(clause.trim(), fields));
 }
@@ -63,14 +63,11 @@ export function parseAskedWhen(
  * The operator/type table is deliberately strict. A published expression this rejects is a loud
  * boot failure someone fixes; one it wrongly accepts is a plan that quietly omits permits.
  */
-function declaredValuesOf(
-  field: string,
-  fields: readonly IntakeFieldDefinition[],
-): readonly string[] | null {
+function declaredValuesOf(field: string, fields: readonly ScopedField[]): readonly string[] | null {
   return fields.find((entry) => entry.field === field)?.values ?? null;
 }
 
-function fieldTypeOf(field: string, fields: readonly IntakeFieldDefinition[]): string {
+function fieldTypeOf(field: string, fields: readonly ScopedField[]): string {
   return fields.find((entry) => entry.field === field)?.type ?? "";
 }
 
@@ -92,10 +89,7 @@ function rejectClause(clause: string, reason: string): never {
   throw new EvaluationError(`asked_when clause "${clause}" ${reason}`);
 }
 
-function parseAskedWhenClause(
-  clause: string,
-  fields: readonly IntakeFieldDefinition[],
-): AskedWhenClause {
+function parseAskedWhenClause(clause: string, fields: readonly ScopedField[]): AskedWhenClause {
   const declared = new Set(fields.map((field) => field.field));
 
   const inMatch = /^(\S+) in (\S+)$/.exec(clause);
@@ -165,11 +159,19 @@ function parseAskedWhenClause(
     }
     return { kind: "truthy", field: clause };
   }
-  const owner = fields.find((field) => field.values?.includes(clause) === true);
-  if (owner === undefined) {
+  const owners = fields.filter((field) => field.values?.includes(clause) === true);
+  if (owners.length === 0) {
     rejectClause(clause, "names no declared field or value");
   }
-  return { kind: "member", field: owner.field, member: clause };
+  // Two fields declaring the same option leave the clause ambiguous, and picking the first would
+  // silently scope on whichever the registry happened to list earlier.
+  if (owners.length > 1) {
+    rejectClause(
+      clause,
+      `is a value of more than one field (${owners.map((field) => field.field).join(", ")})`,
+    );
+  }
+  return { kind: "member", field: (owners[0] as ScopedField).field, member: clause };
 }
 
 export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset): ScopeResolver {
@@ -188,6 +190,14 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
       case "in":
         return clause.values.includes(String(value));
       case "compare":
+        // On a multi-select ("structure_types != none") the comparison is membership. Comparing
+        // the array itself would read ["none"] as "not none" and put the dependent question in
+        // scope when nothing is selected; the questionnaire already read it as membership, and
+        // the two must not disagree about which questions an event is asked.
+        if (Array.isArray(value)) {
+          const holdsMember = value.includes(String(clause.value));
+          return clause.op === "=" ? holdsMember : !holdsMember;
+        }
         return clause.op === "="
           ? value === clause.value
           : value !== null && value !== clause.value;

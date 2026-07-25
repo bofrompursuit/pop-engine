@@ -9,19 +9,10 @@
 // Pure by construction (AGENTS.md "Engine invariants"): the caller supplies the parsed
 // ruleset; this module reads no file, clock, or environment.
 
-export type IntakeFieldType = "enum" | "multi_enum" | "boolean" | "integer" | "number" | "date";
+import { parseAskedWhen as parseAskedWhenExpression } from "../conditions";
+import type { AskedWhenClause } from "../types";
 
-/**
- * One clause of an `asked_when` expression. The registry's grammar is a conjunction of
- * these; see the expressions in the published registry for every form in use.
- */
-export type AskedWhenTerm =
-  | { operator: "equals"; field: string; value: string }
-  | { operator: "not_equals"; field: string; value: string }
-  | { operator: "in"; field: string; values: readonly string[] }
-  | { operator: "at_least"; field: string; value: number }
-  | { operator: "is_true"; field: string }
-  | { operator: "selected"; field: string; value: string };
+export type IntakeFieldType = "enum" | "multi_enum" | "boolean" | "integer" | "number" | "date";
 
 export type IntakeField = {
   readonly field: string;
@@ -32,8 +23,8 @@ export type IntakeField = {
   readonly nullable: boolean;
   /** The registry's published note, rendered verbatim as help text. */
   readonly note: string | null;
-  /** Empty when the field is always asked. */
-  readonly askedWhen: readonly AskedWhenTerm[];
+  /** Empty when the field is always asked. Parsed by the engine's one `asked_when` parser. */
+  readonly askedWhen: readonly AskedWhenClause[];
   /** The raw `asked_when` expression, quoted back in validation messages. */
   readonly askedWhenSource: string | null;
 };
@@ -66,7 +57,6 @@ const BLOCK_PARTY_ELIGIBILITY_RULE_ID = "SAPO-BLOCK-PARTY-ELIG-001";
 const ALCOHOL_IN_PUBLIC_SPACE_ADVISORY_ID = "ADV-ALCOHOL-PUBLIC-001";
 
 const FIELD_TYPES = new Set<string>(["enum", "multi_enum", "boolean", "integer", "number", "date"]);
-const NUMERIC_TYPES = new Set<IntakeFieldType>(["integer", "number"]);
 const ENUMERATED_TYPES = new Set<IntakeFieldType>(["enum", "multi_enum"]);
 
 function contractError(message: string): never {
@@ -123,85 +113,32 @@ function parseField(entry: unknown, label: string): PartialField {
   };
 }
 
-function fieldNamed(fields: readonly PartialField[], name: string): PartialField | undefined {
-  return fields.find((candidate) => candidate.field === name);
-}
-
-function requireEnumValue(field: PartialField, value: string, label: string): void {
-  if (field.values !== null && !field.values.includes(value)) {
-    contractError(`${label} references value "${value}", which ${field.field} does not declare`);
-  }
-}
-
-function requireField(fields: readonly PartialField[], name: string, label: string): PartialField {
-  const field = fieldNamed(fields, name);
-  if (field === undefined) contractError(`${label} references undeclared field "${name}"`);
-  return field;
-}
-
 /**
- * Resolve a bare token: either a boolean field ("food_present") or a multi-enum member
- * whose owning field the registry leaves implicit ("tent_canopy" → structure_types).
+ * `asked_when` is parsed by the engine's parser, not a second one here.
+ *
+ * The questionnaire and the rules engine were each reading the same expression grammar with
+ * their own code, which is how they came to disagree: the engine typed a comparison operand to
+ * the field ("food_present = true" yields a boolean) while this side kept the raw string, so a
+ * field the engine considered in scope was a question the questionnaire hid — the user unable to
+ * answer something the engine expected an answer for. One parsed representation removes the class
+ * rather than the instance.
  */
-function parseBareToken(
-  fields: readonly PartialField[],
-  token: string,
-  label: string,
-): AskedWhenTerm {
-  const declared = fieldNamed(fields, token);
-  if (declared !== undefined) {
-    if (declared.type !== "boolean") {
-      contractError(`${label} uses ${token} as a flag, but it is declared ${declared.type}`);
-    }
-    return { operator: "is_true", field: token };
-  }
-  const owners = fields.filter(
-    (candidate) => candidate.type === "multi_enum" && candidate.values?.includes(token),
-  );
-  if (owners.length !== 1 || owners[0] === undefined) {
-    contractError(`${label} references "${token}", which is not a field or a unique option`);
-  }
-  return { operator: "selected", field: owners[0].field, value: token };
-}
-
-function parseTerm(fields: readonly PartialField[], text: string, label: string): AskedWhenTerm {
-  const binary = /^(\w+) (in|!=|=|gte) (.+)$/.exec(text.trim());
-  if (binary === null) return parseBareToken(fields, text.trim(), label);
-
-  const [, name = "", operator = "", operand = ""] = binary;
-  const field = requireField(fields, name, label);
-
-  if (operator === "in") {
-    const values = operand.split("/").map((value) => value.trim());
-    for (const value of values) requireEnumValue(field, value, label);
-    return { operator: "in", field: name, values };
-  }
-  if (operator === "gte") {
-    const value = Number(operand);
-    if (!Number.isFinite(value) || !NUMERIC_TYPES.has(field.type)) {
-      contractError(`${label} compares ${name} (${field.type}) with "${operand}"`);
-    }
-    return { operator: "at_least", field: name, value };
-  }
-  requireEnumValue(field, operand, label);
-  return operator === "="
-    ? { operator: "equals", field: name, value: operand }
-    : { operator: "not_equals", field: name, value: operand };
-}
-
 function parseAskedWhen(
   expression: unknown,
   fields: readonly PartialField[],
   label: string,
-): { terms: readonly AskedWhenTerm[]; source: string | null } {
+): { terms: readonly AskedWhenClause[]; source: string | null } {
   if (expression === undefined) return { terms: [], source: null };
   if (typeof expression !== "string" || expression.length === 0) {
     contractError(`${label}.asked_when must be a non-empty string`);
   }
-  return {
-    terms: expression.split(" AND ").map((term) => parseTerm(fields, term, `${label}.asked_when`)),
-    source: expression,
-  };
+  try {
+    return { terms: parseAskedWhenExpression(expression, fields), source: expression };
+  } catch (error) {
+    return contractError(
+      `${label}.asked_when is unusable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function publishedNotice(ruleset: Record<string, unknown>, ruleId: string): PublishedNotice {

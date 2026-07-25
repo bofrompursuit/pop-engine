@@ -124,6 +124,13 @@ export type IntakeFieldDefinition = {
   readonly nullable: boolean;
 };
 
+/** The minimum a parser needs to check an `asked_when` clause against a field. */
+export type ScopedField = {
+  readonly field: string;
+  readonly type: string;
+  readonly values: readonly string[] | null;
+};
+
 export type AskedWhenClause =
   | { readonly kind: "in"; readonly field: string; readonly values: readonly string[] }
   | {
