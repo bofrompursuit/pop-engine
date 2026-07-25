@@ -3,7 +3,7 @@
 
 import { createScopeResolver, evaluateTrigger } from "./conditions";
 import { CONFIRM_WITH_AGENCY, computeDeadline } from "./deadlines";
-import type { DeadlineContext } from "./deadlines";
+import type { DeadlineContext, PlanContext } from "./deadlines";
 import { DEFAULT_DISPOSITION_BY_RULE_KIND, UNKNOWN_TRIGGER_DISPOSITION } from "./proposals";
 import type {
   EngineRule,
@@ -75,6 +75,7 @@ function buildFinding(
     portalUrl: rule.portalUrl,
     notes: ruleNotes(rule),
     noteText: rule.noteText,
+    deadlineUnknownFields: dated.unknownFields,
     // An OFFICIAL_CONFLICT rule renders both readings and every source; it never resolves silently.
     conflictText: rule.verificationStatus === "OFFICIAL_CONFLICT" ? rule.noteText : null,
     sources: ruleSources(rule),
@@ -90,6 +91,7 @@ function mergeFindings(first: Finding, second: Finding): Finding {
     notes: [...first.notes, ...second.notes],
     sources: [...first.sources, ...second.sources],
     triggeredBy: [...first.triggeredBy, ...second.triggeredBy],
+    deadlineUnknownFields: [...first.deadlineUnknownFields, ...second.deadlineUnknownFields],
     noteText: first.noteText ?? second.noteText,
     conflictText: first.conflictText ?? second.conflictText,
   };
@@ -114,9 +116,10 @@ function dedupe(findings: readonly { finding: Finding; dedupeKey: string | null 
 export function resolveFindings(
   intake: EventIntake,
   ruleset: EngineRuleset,
-  context: DeadlineContext,
+  context: PlanContext,
 ): ResolvedFindings {
   const scope = createScopeResolver(intake, ruleset);
+  const deadlineContext: DeadlineContext = { ...context, scope };
   const trace: EvaluationTraceEntry[] = [];
   const triggered: { finding: Finding; dedupeKey: string | null }[] = [];
   const unknownFields = new Set<string>();
@@ -126,10 +129,10 @@ export function resolveFindings(
     trace.push({ ruleId: rule.id, result: evaluation.result });
     if (evaluation.result === "false") continue;
     for (const field of evaluation.unknownFields) unknownFields.add(field);
-    triggered.push({
-      finding: buildFinding(rule, evaluation.result, evaluation.triggeredBy, context),
-      dedupeKey: rule.dedupeKey,
-    });
+    const finding = buildFinding(rule, evaluation.result, evaluation.triggeredBy, deadlineContext);
+    // An unknown that surfaces while dating a finding is as material as one from its trigger.
+    for (const field of finding.deadlineUnknownFields) unknownFields.add(field);
+    triggered.push({ finding, dedupeKey: rule.dedupeKey });
   }
 
   return { findings: dedupe(triggered), trace, unknownFields: [...unknownFields] };

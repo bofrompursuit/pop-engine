@@ -2,7 +2,7 @@
 // window check, so an unknown-conditioned finding can never render INFEASIBLE (Scenario F).
 
 import { resolveFindings } from "./findings";
-import type { DeadlineContext } from "./deadlines";
+import type { PlanContext } from "./deadlines";
 import {
   MISSED_MAY_BE_REQUIRED_IS_CONDITIONAL,
   RESCOPE_EXCLUDES_UNKNOWN_VALUES,
@@ -71,6 +71,14 @@ export function computeWindowVerdict(findings: readonly Finding[]): WindowVerdic
 const ruleIdsOf = (findings: readonly Finding[]): string[] =>
   findings.flatMap((finding) => finding.ruleIds).sort();
 
+const branchSignature = (verdict: Verdict, findings: readonly Finding[]): string =>
+  [
+    verdict,
+    ...[...findings]
+      .map((finding) => `${finding.ruleIds.join("+")}@${finding.latestApplyDate ?? "-"}`)
+      .sort(),
+  ].join("|");
+
 function describeDifference(base: readonly Finding[], candidate: readonly Finding[]): string {
   const baseIds = new Set(ruleIdsOf(base));
   const candidateIds = new Set(ruleIdsOf(candidate));
@@ -90,7 +98,7 @@ function evaluateWith(
   field: string,
   value: string,
   ruleset: EngineRuleset,
-  context: DeadlineContext,
+  context: PlanContext,
 ): Evaluated {
   const branchIntake = { ...intake, [field]: value };
   const findings = resolveFindings(branchIntake, ruleset, {
@@ -115,7 +123,7 @@ function buildMissingFacts(
   unknownFields: readonly string[],
   intake: EventIntake,
   ruleset: EngineRuleset,
-  context: DeadlineContext,
+  context: PlanContext,
   base: readonly Finding[],
 ): {
   readonly missingFacts: readonly MissingFact[];
@@ -145,8 +153,10 @@ function buildMissingFacts(
       verdict: branch.window.verdict,
       reason: describeDifference(base, branch.findings),
     }));
-    const signatures = branches.map(
-      (branch) => `${branch.window.verdict}|${ruleIdsOf(branch.findings).join(",")}`,
+    // ARCHITECTURE step 3: an unknown that changes the finding set *or the timeline* is
+    // conditional, so the signature carries each finding's date, not just the verdict.
+    const signatures = branches.map((branch) =>
+      branchSignature(branch.window.verdict, branch.findings),
     );
     if (new Set(signatures).size > 1) branchesDiverge = true;
     missingFacts.push({ field, branches: outcomes });
@@ -182,7 +192,7 @@ function buildRescopeSuggestions(
   blocking: Finding,
   intake: EventIntake,
   ruleset: EngineRuleset,
-  context: DeadlineContext,
+  context: PlanContext,
   base: Evaluated,
 ): RescopeSuggestion[] {
   const blockingRules = ruleset.rules.filter((rule) => blocking.ruleIds.includes(rule.id));
@@ -230,7 +240,7 @@ function buildRescopeSuggestions(
 export function computeVerdict(
   intake: EventIntake,
   ruleset: EngineRuleset,
-  context: DeadlineContext,
+  context: PlanContext,
 ): {
   readonly findings: readonly Finding[];
   readonly verdict: Verdict;

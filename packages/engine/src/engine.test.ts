@@ -203,25 +203,67 @@ describe("typed deadlines", () => {
     expect(plan.verdict).toBe("INFEASIBLE");
   });
 
+  const unknownLevelPlaza: EventIntake = {
+    ...parkIntake,
+    location_type: "plaza",
+    obstructs_public_way: "yes",
+    sapo_event_type: "plaza_event",
+    plaza_level: "unknown",
+    plaza_multiple_blocks: false,
+    amplified_sound: false,
+  };
+
   it("lists the published plaza range instead of guessing when the level is unknown", () => {
-    const plan = evaluate(
-      {
-        ...parkIntake,
-        location_type: "plaza",
-        obstructs_public_way: "yes",
-        sapo_event_type: "plaza_event",
-        plaza_level: "unknown",
-        plaza_multiple_blocks: false,
-        amplified_sound: false,
-      },
-      ruleset,
-      TODAY,
-      calendar,
-    );
+    const plan = evaluate(unknownLevelPlaza, ruleset, TODAY, calendar);
     const plaza = plan.findings.find((finding) => finding.ruleIds.includes("SAPO-PLAZA-001"));
     expect(plaza?.latestApplyDate).toBeNull();
     expect(plaza?.deadlineStatus).toBe("not_calculable");
     expect(plaza?.deadlineDisplay).toBe("14–60 days depending on level; confirm with agency");
+  });
+
+  it("makes an unknown plaza level conditional, as SAPO-PLAZA-001 publishes", () => {
+    // The rule's own deadline block says `unknown_level_behavior: "CONDITIONAL listing 14–60
+    // range"`. SAPO-PLAZA-001 triggers on sapo_event_type alone, so the level only reaches the
+    // verdict because deadline resolution reports it as a material unknown.
+    const plan = evaluate(unknownLevelPlaza, ruleset, TODAY, calendar);
+    expect(plan.verdict).toBe("CONDITIONAL");
+    const levelFact = plan.verdictDetail.missingFacts.find((fact) => fact.field === "plaza_level");
+    expect(levelFact?.branches.map((branch) => branch.value)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("keeps an unknown level conditional even when every branch clears its window", () => {
+    // Far-future event: each branch verdict is FEASIBLE, and only the timeline differs. The
+    // engine must still refuse to call it feasible, because which window applies is unknown.
+    const plan = evaluate(
+      { ...unknownLevelPlaza, event_date: "2027-06-01" },
+      ruleset,
+      TODAY,
+      calendar,
+    );
+    const levelFact = plan.verdictDetail.missingFacts.find((fact) => fact.field === "plaza_level");
+    expect(levelFact?.branches.map((branch) => branch.verdict)).toEqual([
+      "FEASIBLE",
+      "FEASIBLE",
+      "FEASIBLE",
+      "FEASIBLE",
+    ]);
+    expect(plan.verdict).toBe("CONDITIONAL");
+  });
+
+  it("reports an unknown level as missed rather than on track when the window has closed", () => {
+    // Nine days out: even the shortest published level window (14 days) is already gone.
+    const plan = evaluate(
+      { ...unknownLevelPlaza, event_date: "2026-07-31" },
+      ruleset,
+      TODAY,
+      calendar,
+    );
+    const levelFact = plan.verdictDetail.missingFacts.find((fact) => fact.field === "plaza_level");
+    expect(levelFact?.branches.every((branch) => branch.verdict === "INFEASIBLE")).toBe(true);
+    expect(plan.verdict).toBe("CONDITIONAL");
+    expect(plan.findings.find((f) => f.ruleIds.includes("SAPO-PLAZA-001"))?.deadlineStatus).toBe(
+      "not_calculable",
+    );
   });
 
   it("uses the multi-block variant of a level deadline when the event spans blocks", () => {

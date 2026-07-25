@@ -28,11 +28,8 @@ try {
 // The engine reads the same published file the boot validator just checked (AD-2).
 const engineRuleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
 const pool = new Pool({ connectionString: databaseUrl });
-const planService = createPlanService(
-  pool,
-  engineRuleset,
-  pinnedCalendar(engineRuleset.calendarId),
-  () => new Date().toISOString().slice(0, 10),
+const planService = createPlanService(pool, engineRuleset, pinnedCalendar, () =>
+  new Date().toISOString().slice(0, 10),
 );
 
 createApp({ planService }).listen(PORT, () => {

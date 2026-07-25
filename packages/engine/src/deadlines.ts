@@ -3,6 +3,8 @@
 // semantics, and a type the engine cannot date says so rather than guessing.
 
 import { addCalendarDays, differenceInCalendarDays, subtractBusinessDays } from "./calendar";
+import type { ScopeResolver } from "./conditions";
+import { UNKNOWN_ANSWER } from "./conditions";
 import { LEVEL_DEADLINE_BINDING } from "./proposals";
 import type { Deadline, DeadlineStatus, EventIntake, HolidayCalendar } from "./types";
 
@@ -13,15 +15,26 @@ export type DatedDeadline = {
   readonly deadlineStatus: DeadlineStatus;
   readonly slackDays: number | null;
   readonly deadlineDisplay: string | null;
+  /**
+   * Intake fields whose unanswered state is what stopped the deadline from resolving. These are
+   * material unknowns exactly like the ones a trigger surfaces: SAPO-PLAZA-001 triggers on
+   * `sapo_event_type` alone, so without this an unknown plaza level would never reach the verdict
+   * and a plan whose real 14–60-day window may already be missed would read FEASIBLE.
+   */
+  readonly unknownFields: readonly string[];
 };
 
 export type DeadlineContext = {
   readonly intake: EventIntake;
+  readonly scope: ScopeResolver;
   readonly eventDate: string;
   readonly today: string;
   readonly calendar: HolidayCalendar;
   readonly slackWarningDays: number;
 };
+
+/** What a caller supplies; the scope resolver is built per intake while findings resolve. */
+export type PlanContext = Omit<DeadlineContext, "scope">;
 
 function statusFromSlack(
   slackDays: number,
@@ -43,11 +56,23 @@ function dateBackFrom(
     deadlineStatus: statusFromSlack(slackDays, context.slackWarningDays, missedAtZero),
     slackDays,
     deadlineDisplay: null,
+    unknownFields: [],
   };
 }
 
-function undatable(deadlineStatus: DeadlineStatus, deadlineDisplay: string | null): DatedDeadline {
-  return { latestApplyDate: null, deadlineStatus, slackDays: null, deadlineDisplay };
+function undatable(
+  deadlineStatus: DeadlineStatus,
+  deadlineDisplay: string | null,
+  unknownFields: readonly string[] = [],
+): DatedDeadline {
+  return { latestApplyDate: null, deadlineStatus, slackDays: null, deadlineDisplay, unknownFields };
+}
+
+/** True when the level field is in scope but unanswered — the case the rule publishes behavior for. */
+function isLevelUnknown(context: DeadlineContext): boolean {
+  if (!context.scope.isInScope(LEVEL_DEADLINE_BINDING.levelField)) return false;
+  const level = context.intake[LEVEL_DEADLINE_BINDING.levelField];
+  return level === undefined || level === null || level === UNKNOWN_ANSWER;
 }
 
 function resolveLevelDays(
@@ -90,7 +115,16 @@ export function computeDeadline(
 
     case "published_minimum_by_level": {
       const days = resolveLevelDays(deadline, context.intake);
-      if (days === null) return undatable("not_calculable", levelRangeDisplay(deadline));
+      // SAPO-PLAZA-001 publishes its own unknown-level behavior: "CONDITIONAL listing 14–60
+      // range". Reporting the level as a material unknown is what makes the verdict conditional;
+      // the range comes from the rule's own level table, never from a guess.
+      if (days === null) {
+        return undatable(
+          "not_calculable",
+          levelRangeDisplay(deadline),
+          isLevelUnknown(context) ? [LEVEL_DEADLINE_BINDING.levelField] : [],
+        );
+      }
       return {
         ...dateBackFrom(addCalendarDays(context.eventDate, -days), context),
         deadlineDisplay: null,

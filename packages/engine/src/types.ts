@@ -149,6 +149,8 @@ export type Finding = {
   readonly notes: readonly string[];
   /** The rule's published note text, verbatim — carries eligibility rescope guidance and scope caveats. */
   readonly noteText: string | null;
+  /** Intake fields that stopped this finding's deadline from resolving (e.g. an unknown plaza level). */
+  readonly deadlineUnknownFields: readonly string[];
   /** Both readings of an OFFICIAL_CONFLICT rule, verbatim; null otherwise. */
   readonly conflictText: string | null;
   readonly sources: readonly FindingSource[];

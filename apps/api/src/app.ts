@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { describeEngine } from "@pop-engine/engine";
+import { MissingHolidayCalendarError } from "./calendar";
 import { EventNotFoundError, type PlanService } from "./plan";
 
 export type AppDependencies = {
@@ -57,6 +58,12 @@ function registerPlanRoutes(app: Express, planService: PlanService): void {
       .catch((error: unknown) => {
         if (error instanceof EventNotFoundError) {
           res.status(404).json({ error: error.message });
+          return;
+        }
+        // A missing published holiday list is a gap in the inputs, not a bug in the request:
+        // the api withholds the plan rather than serving one computed on weekday-only math.
+        if (error instanceof MissingHolidayCalendarError) {
+          res.status(503).json({ error: "plan generation unavailable", detail: error.message });
           return;
         }
         res.status(500).json({

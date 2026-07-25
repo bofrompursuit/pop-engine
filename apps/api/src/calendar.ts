@@ -1,10 +1,33 @@
 import type { HolidayCalendar } from "@pop-engine/engine";
 
-// The calendar the ruleset pins (`config.business_day_math.calendar`, AD-11). Its holiday
-// list is still RESEARCH_REQUIRED upstream — the ruleset says so in the same block — and a
-// permit fact may not be invented to fill a gap, so no holidays are asserted here. Business-day
-// math therefore counts weekdays only until the verification owner publishes the list.
-// Tracked as a finding on F-201; the id stays pinned so plans record which calendar they used.
+/**
+ * Plan generation cannot proceed without the holiday list its ruleset pins.
+ *
+ * `config.business_day_math` pins `us-ny-business-days@2026.1` but states in the same block that
+ * the holiday list itself is still RESEARCH_REQUIRED, and no artifact publishes one. Substituting
+ * weekday-only arithmetic would count a holiday as a business day, push every business-day
+ * deadline later than it really is, and can report an already-missed filing window as on track.
+ * Overclaiming feasibility is the failure this product exists to prevent, so generation fails
+ * loudly instead. Inventing holidays to fill the gap is not an option (AGENTS.md, Golden Rule 1).
+ */
+export class MissingHolidayCalendarError extends Error {
+  constructor(calendarId: string) {
+    super(
+      `holiday calendar "${calendarId}" has no published holiday list, so business-day deadlines ` +
+        `cannot be computed; plans are withheld until the verification owner publishes it`,
+    );
+    this.name = "MissingHolidayCalendarError";
+  }
+}
+
+/**
+ * Published holiday lists, keyed by the calendar id a ruleset pins. Empty on purpose: an entry
+ * appears here only when the verification owner publishes the dates for that calendar.
+ */
+const PUBLISHED_HOLIDAY_CALENDARS: Readonly<Record<string, readonly string[]>> = {};
+
 export function pinnedCalendar(calendarId: string): HolidayCalendar {
-  return { id: calendarId, holidays: [] };
+  const holidays = PUBLISHED_HOLIDAY_CALENDARS[calendarId];
+  if (holidays === undefined) throw new MissingHolidayCalendarError(calendarId);
+  return { id: calendarId, holidays };
 }

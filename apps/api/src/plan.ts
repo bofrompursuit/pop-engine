@@ -45,6 +45,19 @@ export type PlanService = {
   latest(eventId: string): Promise<StoredPlan | null>;
 };
 
+/**
+ * node-postgres materializes a PostgreSQL `date` at LOCAL midnight. `toISOString()` on that value
+ * shifts it to the previous calendar day anywhere east of UTC, which would move every computed
+ * deadline by a day and can turn an on-track window into a missed one. Read the local calendar
+ * components instead, which recover the stored `YYYY-MM-DD` in any timezone.
+ */
+const pad = (value: number): string => String(value).padStart(2, "0");
+
+export function calendarDateFrom(value: Date | string): string {
+  if (typeof value === "string") return value.slice(0, 10);
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+
 /** `date` columns arrive as Date objects and `numeric` columns as strings; the registry says which is which. */
 function intakeFromEventRow(row: Record<string, unknown>, ruleset: EngineRuleset): EventIntake {
   const intake: Record<string, IntakeValue> = {};
@@ -52,7 +65,7 @@ function intakeFromEventRow(row: Record<string, unknown>, ruleset: EngineRuleset
     const value = row[field.field];
     if (value === undefined) continue;
     if (value instanceof Date) {
-      intake[field.field] = value.toISOString().slice(0, 10);
+      intake[field.field] = calendarDateFrom(value);
     } else if (typeof value === "string" && (field.type === "number" || field.type === "integer")) {
       intake[field.field] = Number(value);
     } else {
@@ -76,6 +89,7 @@ type FindingRendering = {
   conflict_text: string | null;
   deadline_display: string | null;
   slack_days: number | null;
+  deadline_unknown_fields: readonly string[];
 };
 
 const renderingOf = (finding: Finding): FindingRendering => ({
@@ -85,6 +99,7 @@ const renderingOf = (finding: Finding): FindingRendering => ({
   conflict_text: finding.conflictText,
   deadline_display: finding.deadlineDisplay,
   slack_days: finding.slackDays,
+  deadline_unknown_fields: finding.deadlineUnknownFields,
 });
 
 const renderingKey = (ruleIds: readonly string[]): string => ruleIds.join(",");
@@ -159,7 +174,10 @@ async function insertPlan(
 export function createPlanService(
   pool: Pool,
   ruleset: EngineRuleset,
-  calendar: HolidayCalendar,
+  // Resolved per generation, not at construction: a ruleset whose pinned holiday calendar has no
+  // published list must fail the request with an explicit error rather than take the api down or,
+  // worse, quietly fall back to weekday-only business-day math.
+  resolveCalendar: (calendarId: string) => HolidayCalendar,
   today: () => string,
 ): PlanService {
   const loadEvent = async (eventId: string): Promise<Record<string, unknown>> => {
@@ -178,7 +196,7 @@ export function createPlanService(
       const intake = intakeFromEventRow(row, ruleset);
       // Evaluation runs before the transaction opens: a rule-evaluation failure must surface
       // as an error, never as a stored plan with no findings (AC 5).
-      const plan = evaluate(intake, ruleset, today(), calendar);
+      const plan = evaluate(intake, ruleset, today(), resolveCalendar(ruleset.calendarId));
       const eventRevision = Number(row.revision_counter);
 
       const client = await pool.connect();
@@ -262,8 +280,8 @@ type PlanItemRow = {
   permit_name: string | null;
   agency: string | null;
   deadline: Finding["deadline"];
-  latest_apply_date: Date | null;
-  apply_after_date: Date | null;
+  latest_apply_date: Date | string | null;
+  apply_after_date: Date | string | null;
   fee_display: string | null;
   portal_name: string | null;
   portal_url: string | null;
@@ -281,8 +299,8 @@ const ENGINE_VERDICT = {
   infeasible: "INFEASIBLE",
 } as const;
 
-const isoDate = (value: Date | null): string | null =>
-  value === null ? null : value.toISOString().slice(0, 10);
+const isoDate = (value: Date | string | null): string | null =>
+  value === null ? null : calendarDateFrom(value);
 
 /** The persisted columns rebuild the finding a client reads; snake_case stays inside this file. */
 function findingFromRow(row: PlanItemRow, rendering: FindingRendering): Finding {
@@ -303,6 +321,7 @@ function findingFromRow(row: PlanItemRow, rendering: FindingRendering): Finding 
     portalUrl: row.portal_url,
     notes: rendering.notes,
     noteText: rendering.note_text,
+    deadlineUnknownFields: rendering.deadline_unknown_fields,
     conflictText: rendering.conflict_text,
     sources: row.sources,
     verificationStatus: row.verification_status,

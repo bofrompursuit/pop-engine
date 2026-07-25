@@ -6,10 +6,10 @@ import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parseEngineRuleset, type EngineRuleset } from "@pop-engine/engine";
+import { parseEngineRuleset, type EngineRuleset, type HolidayCalendar } from "@pop-engine/engine";
 import { createApp } from "./app";
-import { pinnedCalendar } from "./calendar";
-import { createPlanService } from "./plan";
+import { MissingHolidayCalendarError, pinnedCalendar } from "./calendar";
+import { calendarDateFrom, createPlanService } from "./plan";
 import { rulesFilePath } from "./ruleset";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
@@ -53,14 +53,17 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     return eventId;
   };
 
-  const appWith = (calendarId?: string) =>
+  // Production refuses to run without a published holiday list; the fixtures pin dates in windows
+  // the answer key states carry no contested holidays (AD-11), so they inject the list explicitly
+  // rather than relaxing that guard.
+  const fixtureCalendar = (calendarId: string): HolidayCalendar => ({
+    id: calendarId,
+    holidays: [],
+  });
+
+  const appWith = (resolveCalendar = fixtureCalendar) =>
     createApp({
-      planService: createPlanService(
-        pool,
-        ruleset,
-        pinnedCalendar(calendarId ?? ruleset.calendarId),
-        () => TODAY,
-      ),
+      planService: createPlanService(pool, ruleset, resolveCalendar, () => TODAY),
     });
 
   beforeAll(async () => {
@@ -189,9 +192,9 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
 
   it("returns an explicit error and stores nothing when evaluation fails (AC 5)", async () => {
     const eventId = await insertEvent();
-    const response = await request(appWith("some-other-calendar")).post(
-      `/api/events/${eventId}/plan`,
-    );
+    const response = await request(
+      appWith((calendarId) => ({ id: `${calendarId}-mismatched`, holidays: [] })),
+    ).post(`/api/events/${eventId}/plan`);
 
     expect(response.status).toBe(500);
     expect(response.body.error).toBe("plan generation failed");
@@ -199,6 +202,34 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(response.body.findings).toBeUndefined();
     const { rows } = await pool.query("SELECT id FROM permit_plans WHERE event_id = $1", [eventId]);
     expect(rows).toHaveLength(0);
+  });
+
+  it("withholds a plan when the pinned holiday calendar has no published list", async () => {
+    const eventId = await insertEvent();
+    expect(() => pinnedCalendar(ruleset.calendarId)).toThrow(MissingHolidayCalendarError);
+    const response = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("plan generation unavailable");
+    expect(response.body.detail).toContain("no published holiday list");
+    expect(response.body.findings).toBeUndefined();
+    const { rows } = await pool.query("SELECT id FROM permit_plans WHERE event_id = $1", [eventId]);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("reads a Postgres date as its stored calendar day, east of UTC included", async () => {
+    // node-postgres builds a `date` at local midnight; toISOString() would move it back a day in
+    // any timezone east of UTC and shift every deadline with it.
+    const localMidnight = new Date(2026, 7, 26);
+    expect(calendarDateFrom(localMidnight)).toBe("2026-08-26");
+    expect(calendarDateFrom("2026-08-26")).toBe("2026-08-26");
+
+    const eventId = await insertEvent();
+    const generated = await request(appWith()).post(`/api/events/${eventId}/plan`);
+    // Scenario A's event date is 2026-08-26 and the SAPO line is a 45-day published minimum.
+    expect(generated.body.findings[0].latestApplyDate).toBe("2026-07-12");
+    const fetched = await request(appWith()).get(`/api/events/${eventId}/plan`);
+    expect(fetched.body.findings[0].latestApplyDate).toBe("2026-07-12");
   });
 
   it("404s for an unknown event and for an event with no plan yet", async () => {
