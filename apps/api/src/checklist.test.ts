@@ -1140,6 +1140,86 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(await flagOn(api, eventId)).toBe(false);
     });
 
+    it("appends a reintroduced requirement instead of sorting it by its first plan", async () => {
+      // Three plans, because a two-plan sequence passes under both the old rule and the new one.
+      // X, then Y with the checklist created against it, then X+Y. Ordering by first appearance in
+      // any plan dates A from plan X — earlier than B, which the organizer has been working since
+      // the checklist existed — and sorts the brand-new task above it. AC 6 appends.
+      const eventId = await createEvent(scenario("A"));
+      const api = appWith(fakeStorage());
+
+      await insertPlan(eventId, permits(A), "2026-07-22T10:00:00Z");
+      await insertPlan(eventId, permits(B), "2026-07-22T11:00:00Z");
+      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      expect(created.status).toBe(201);
+      expect((created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
+        B,
+      ]);
+
+      await insertPlan(eventId, permits(A, B), "2026-07-22T12:00:00Z");
+      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+
+      // B first: it became a task first, even though A appeared in an earlier plan.
+      expect((reviewed.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
+        B,
+        A,
+      ]);
+      // And the order is a property of the checklist, so a later read reproduces it.
+      const read = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect((read.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
+        B,
+        A,
+      ]);
+    });
+
+    it("does not reshuffle the list when the organizer works an item", async () => {
+      // `created_at` rather than `updated_at`: a status change must not move a task's position.
+      const { eventId, api } = await startedFrom([A, B]);
+      const items = (await request(api).get(`/api/events/${eventId}/checklist`)).body
+        .items as ChecklistItemView[];
+      const first = items[0];
+      expect(first).toBeDefined();
+
+      await request(api)
+        .patch(`/api/checklist-items/${first?.id}`)
+        .send({ status: "submitted" })
+        .set("Content-Type", "application/json");
+
+      const after = (await request(api).get(`/api/events/${eventId}/checklist`)).body
+        .items as ChecklistItemView[];
+      expect(after.map((item) => item.ruleIds[0])).toEqual(items.map((item) => item.ruleIds[0]));
+    });
+
+    it("distinguishes a checklist that does not exist from one with nothing in it", async () => {
+      // Both render zero items, and they are different states: one offers creation, the other says
+      // there is nothing to track. Only the acknowledgement separates them.
+      const uncreated = await createEvent(scenario("A"));
+      await insertPlan(uncreated, permits(A), "2026-07-22T10:00:00Z");
+      const api = appWith(fakeStorage());
+      const beforeCreate = await request(api).get(`/api/events/${uncreated}/checklist`);
+      expect(beforeCreate.status).toBe(200);
+      expect(beforeCreate.body.created).toBe(false);
+      expect(beforeCreate.body.items).toEqual([]);
+
+      // A plan with no trackable line at all: created, and still empty (Scenario B).
+      const emptyEvent = await createEvent(scenario("A"));
+      await insertPlan(
+        emptyEvent,
+        [{ ruleIds: ["ADV-NOISE-CODE-001"], kind: "advisory" }],
+        "2026-07-22T10:00:00Z",
+      );
+      await request(api).post(`/api/events/${emptyEvent}/checklist`);
+      const emptyCreated = await request(api).get(`/api/events/${emptyEvent}/checklist`);
+      expect(emptyCreated.body.created).toBe(true);
+      expect(emptyCreated.body.items).toEqual([]);
+
+      // Creating flips it, so the flag tracks the checklist and not the plan's shape.
+      await request(api).post(`/api/events/${uncreated}/checklist`);
+      expect((await request(api).get(`/api/events/${uncreated}/checklist`)).body.created).toBe(
+        true,
+      );
+    });
+
     it("rises when the regeneration removes every trackable requirement", async () => {
       // The case that defeated all four earlier shapes. Each of them asked the checklist whether
       // the latest plan held a line it was not pointing at; with every requirement gone there is

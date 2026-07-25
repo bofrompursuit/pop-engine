@@ -5,10 +5,15 @@
 // citation and portal travel with the work (spec AC 1).
 //
 // Plans are immutable snapshots (AD-7), so a rescope produces a NEW plan rather than editing the
-// old one. Supersession is therefore a relationship between two plans, not a flag on either: this
-// file computes it by comparing the plan-item rows the checklist points at with the latest plan's,
-// and returns the answer as explicit fields (`planChanged`, `inLatestPlan`, `planStale`) so a
-// client renders rather than re-derives it. Nothing is ever deleted or rewritten (spec AC 6).
+// old one. Supersession is therefore a relationship between two plans, not a flag on either, and
+// this file returns it as explicit fields (`planChanged`, `inLatestPlan`, `planStale`) so a client
+// renders rather than re-derives it. Nothing is ever deleted or rewritten (spec AC 6).
+//
+// The two are answered from different places, deliberately. `inLatestPlan` is per row, so it is a
+// comparison against the latest plan's items. `planChanged` is about the plan as a whole and is
+// answered from `checklist_acknowledgements` — which plan the organizer last converted — because
+// the checklist's own rows cannot answer it: a regeneration that removes every trackable
+// requirement leaves nothing to compare, and that is the case the prompt most needs to fire in.
 
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
@@ -279,32 +284,36 @@ async function planItems(database: Queryable, planId: string): Promise<PlanItemR
 }
 
 /**
- * When each requirement first appeared in any of this event's plans, keyed the same way identity
- * is. It is what "new items appended" orders by (AC 6): a requirement raised by a later plan
- * sorts after everything already being worked, and it keeps doing so after `materialize`
- * re-points the rows at the current plan, which the plan's own timestamp no longer distinguishes.
+ * When each requirement became a checklist task, keyed the same way identity is.
+ *
+ * This is what "new items appended" orders by (AC 6). It reads `checklist_items.created_at` rather
+ * than the plans, because the plans answer a different question: a requirement that appeared in an
+ * early plan, was absent when the checklist was created, and returned later has an early plan
+ * timestamp and a late task, and ordering by the plan sorts it ahead of everything the organizer
+ * has been working instead of appending it. Re-pointing a surviving row at the current plan does
+ * not touch `created_at`, so the order also survives every regeneration.
  */
-async function firstSeenByRequirement(
+async function taskCreatedByRequirement(
   database: Queryable,
   eventId: string,
 ): Promise<Map<string, number>> {
-  const { rows } = await database.query<{ rule_ids: string[]; first_seen: Date }>(
-    `SELECT item.rule_ids, min(plan.generated_at) AS first_seen
-       FROM permit_plan_items AS item
+  const { rows } = await database.query<{ rule_ids: string[]; created_at: Date }>(
+    `SELECT item.rule_ids, checklist.created_at
+       FROM checklist_items AS checklist
+       JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
        JOIN permit_plans AS plan ON plan.id = item.plan_id
-      WHERE plan.event_id = $1
-      GROUP BY item.rule_ids`,
+      WHERE plan.event_id = $1`,
     [eventId],
   );
-  const firstSeen = new Map<string, number>();
+  const createdAt = new Map<string, number>();
   for (const row of rows) {
-    // Grouped on the stored array, so the same set written in a different order arrives as two
-    // groups; identity says they are one requirement, and the earlier sighting is the one.
+    // Identity is the whole rule-id set, order-insensitively, so the same requirement written two
+    // ways is one key and the earlier task is the one that dates it.
     const key = requirementKey(row.rule_ids);
-    const at = row.first_seen.getTime();
-    firstSeen.set(key, Math.min(firstSeen.get(key) ?? at, at));
+    const at = row.created_at.getTime();
+    createdAt.set(key, Math.min(createdAt.get(key) ?? at, at));
   }
-  return firstSeen;
+  return createdAt;
 }
 
 /**
@@ -379,12 +388,12 @@ async function acknowledgedPlanId(database: Queryable, eventId: string): Promise
 
 async function checklistView(database: Queryable, eventId: string, plan: LatestPlan) {
   const unordered = await checklistRows(database, eventId);
-  const firstSeen = await firstSeenByRequirement(database, eventId);
+  const taskCreated = await taskCreatedByRequirement(database, eventId);
   // Stable, so the filing-date order the query already applied survives as the tiebreak.
   const items = [...unordered].sort(
     (left, right) =>
-      (firstSeen.get(requirementKey(left.rule_ids)) ?? 0) -
-      (firstSeen.get(requirementKey(right.rule_ids)) ?? 0),
+      (taskCreated.get(requirementKey(left.rule_ids)) ?? 0) -
+      (taskCreated.get(requirementKey(right.rule_ids)) ?? 0),
   );
   const latestItems = await planItems(database, plan.id);
   const documents = await documentsFor(
@@ -443,6 +452,12 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
   return {
     eventId,
     planId: plan.id,
+    // Whether a checklist exists at all, which the rows cannot say: a plan whose every requirement
+    // is an advisory materialises to zero items (Scenario B), and so does never having pressed
+    // create. Those render differently — "nothing to track" against "turn this plan into a
+    // checklist" — and only the acknowledgement distinguishes them, because `materialize` writes it
+    // in the same transaction that creates the checklist.
+    created: acknowledged !== null,
     planChanged,
     // The event has been edited since even the latest plan was generated (AD-13), so these
     // requirements answer an intake the organizer has already moved on from. Creation is refused
