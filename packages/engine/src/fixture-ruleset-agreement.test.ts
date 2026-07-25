@@ -34,7 +34,7 @@ const repoFile = (relativePath: string): string =>
 const publishedRuleset: {
   rules: { id: string; exercised_by_scenarios?: string[] }[];
   advisories: { id: string; exercised_by_scenarios?: string[] }[];
-} = JSON.parse(readFileSync(repoFile("rules/nyc-rules.v2.3.json"), "utf8"));
+} = JSON.parse(readFileSync(repoFile("rules/nyc-rules.v2.4.json"), "utf8"));
 
 const ruleset = parseEngineRuleset(publishedRuleset);
 const answerKey = readFileSync(repoFile("docs/test-scenario-answer-key.md"), "utf8");
@@ -255,7 +255,62 @@ export function metadataOmissions(
   return reached.filter((ruleId) => !(claims.get(ruleId) ?? []).includes(scenario));
 }
 
-const scenarios = SCENARIO_INTAKE_FIXTURES.map((fixture) => fixture.scenario);
+/**
+ * The scenarios each artifact names, so the loops below cannot run over a universe one of them
+ * does not share.
+ *
+ * Taking the universe from the fixtures alone made every parameterized check below vacuous for
+ * anything the fixtures happen not to cover: a scenario added to the approved key with no fixture
+ * is never visited, and an `exercised_by_scenarios` entry naming a scenario that does not exist is
+ * never compared against anything. Both leave the suite green while the thing it exists to check
+ * has a hole in it.
+ */
+const scenarioIdsIn = {
+  fixtures: () => SCENARIO_INTAKE_FIXTURES.map((fixture) => fixture.scenario),
+  answerKey: () =>
+    [...answerKey.matchAll(/^## Scenario ([A-Z])\b/gm)].map((match) => match[1] as string),
+  /**
+   * Plus the rescopes a scenario documents. `SAPO-STREET-MEDIUM-001` and `SAPO-STREET-SMALL-001`
+   * are exercised by Scenario A's size=medium and size=small rescopes, which the key states under
+   * A's "Expected rescopes" block rather than as sections of their own, and their metadata says
+   * `A-rescope`. That is the key being read correctly, not metadata naming something that does not
+   * exist — so the reader has to know the shape rather than the allowlist absorbing it.
+   */
+  answerKeyIncludingRescopes: () =>
+    scenarioIdsIn.answerKey().flatMap((id) => {
+      const section = answerKey.slice(answerKey.indexOf(`## Scenario ${id}`));
+      const body = section.slice(0, section.indexOf("\n## ") + 1 || undefined);
+      return body.includes("**Expected rescopes") ? [id, `${id}-rescope`] : [id];
+    }),
+  ruleMetadata: () => [
+    ...new Set(
+      [...publishedRuleset.rules, ...publishedRuleset.advisories].flatMap(
+        (rule) => rule.exercised_by_scenarios ?? [],
+      ),
+    ),
+  ],
+};
+
+const sorted = (ids: readonly string[]): string[] => [...new Set(ids)].sort();
+
+describe("the three artifacts name the same scenarios", () => {
+  // Runs before anything parameterized: a disagreement here means every check below is looping
+  // over the wrong set, so reporting it as its own failure is clearer than a downstream symptom.
+  it("the answer key and the intake fixtures cover the same scenarios", () => {
+    expect(sorted(scenarioIdsIn.fixtures())).toEqual(sorted(scenarioIdsIn.answerKey()));
+  });
+
+  it("no rule claims a scenario that does not exist", () => {
+    expect(
+      scenarioIdsIn
+        .ruleMetadata()
+        .filter((id) => !scenarioIdsIn.answerKeyIncludingRescopes().includes(id)),
+      "exercised_by_scenarios naming a scenario the answer key does not define",
+    ).toEqual([]);
+  });
+});
+
+const scenarios = scenarioIdsIn.fixtures();
 
 describe("the fixture suite and the published ruleset agree", () => {
   it.each(scenarios)("Scenario %s evaluates the intake the answer key documents", (scenario) => {

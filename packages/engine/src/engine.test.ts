@@ -779,169 +779,61 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   it("counts a level field as consumed only when a by-level deadline keys on it", () => {
     // The bug the derivation fixes. Naming the field as consumed unconditionally let a ruleset
     // declare it while publishing no by-level deadline and still pass the orphan check.
-    const withLevelField = (deadline: Record<string, unknown> | undefined) => () =>
-      parseEngineRuleset({
-        ruleset_version: "test.v1",
-        jurisdiction: "US-NY-NYC",
-        snapshot_date: "2026-07-22",
-        config: {
-          slack_warning_days: { value: 14 },
-          business_day_math: { calendar: "test-calendar@2026" },
-        },
-        intake_fields: [
-          { field: "event_date", type: "date" },
-          { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
-          { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
-          {
-            field: "spans_blocks",
-            type: "boolean",
-            asked_when: "venue_kind = plaza",
+    const withLevelField =
+      (deadline: Record<string, unknown> | undefined, extra: unknown[] = []) =>
+      () =>
+        parseEngineRuleset({
+          ruleset_version: "test.v1",
+          jurisdiction: "US-NY-NYC",
+          snapshot_date: "2026-07-22",
+          config: {
+            slack_warning_days: { value: 14 },
+            business_day_math: { calendar: "test-calendar@2026" },
           },
-        ],
-        rules: [
-          {
-            id: "RULE-LEVEL",
-            kind: "permit",
-            trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
-            output: { permit_name: "x", agency: "DOB", ...(deadline ? { deadline } : {}) },
-            verification: { status: "SOURCE_CONFIRMED" },
-            source: { citation: "c", urls: ["https://example.test"] },
-          },
-        ],
-        advisories: [],
-      });
+          intake_fields: [
+            { field: "event_date", type: "date" },
+            { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
+            { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+            {
+              field: "spans_blocks",
+              type: "boolean",
+              asked_when: "venue_kind = plaza",
+            },
+            ...extra,
+          ],
+          rules: [
+            {
+              id: "RULE-LEVEL",
+              kind: "permit",
+              trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
+              output: { permit_name: "x", agency: "DOB", ...(deadline ? { deadline } : {}) },
+              verification: { status: "SOURCE_CONFIRMED" },
+              source: { citation: "c", urls: ["https://example.test"] },
+            },
+          ],
+          advisories: [],
+        });
+
+    const byLevel = {
+      type: "published_minimum_by_level",
+      level_field: "tier",
+      multi_block_field: "spans_blocks",
+      levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
+    };
 
     // No by-level deadline: nothing keys on `tier`, and the flag has nothing to qualify.
     expect(withLevelField(undefined)).toThrow(/"tier" is declared but no rule trigger, deadline/);
 
-    // A by-level deadline that publishes multi_block_days consumes both.
+    // A by-level deadline consumes exactly the two fields its binding names.
+    expect(withLevelField(byLevel)).not.toThrow();
+
+    // And only those. A level-shaped field the binding does not name is still an orphan, which is
+    // what stops the guard from waving through any enum that happens to cover the level keys.
     expect(
-      withLevelField({
-        type: "published_minimum_by_level",
-        levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
-      }),
-    ).not.toThrow();
-
-    // Levels without a multi-block variant consume the level field but not the flag.
-    expect(
-      withLevelField({
-        type: "published_minimum_by_level",
-        levels: { a: { calendar_days: 45 }, b: { calendar_days: 30 } },
-      }),
-    ).toThrow(/"spans_blocks" is declared but no rule trigger, deadline/);
-  });
-
-  it("dates a by-level deadline with the fields the ruleset itself declares", () => {
-    // The loader and the evaluator now read one resolved binding. Before, the loader inferred the
-    // level field while resolveLevelDays read a hard-coded plaza_level, so a ruleset like this one
-    // parsed and then threw "intake field plaza_level is not declared" the moment its rule fired.
-    const ruleset = parseEngineRuleset({
-      ruleset_version: "test.v1",
-      jurisdiction: "US-NY-NYC",
-      snapshot_date: "2026-07-22",
-      config: {
-        slack_warning_days: { value: 14 },
-        business_day_math: { calendar: "test-calendar@2026" },
-      },
-      intake_fields: [
-        { field: "event_date", type: "date" },
-        { field: "venue_kind", type: "enum", values: ["hall", "plaza"] },
-        { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
-        { field: "spans_blocks", type: "boolean", asked_when: "venue_kind = plaza" },
-      ],
-      rules: [
-        {
-          id: "RULE-LEVEL",
-          kind: "permit",
-          trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
-          output: {
-            permit_name: "x",
-            agency: "DOB",
-            deadline: {
-              type: "published_minimum_by_level",
-              levels: { a: { calendar_days: 45, multi_block_days: 60 }, b: { calendar_days: 30 } },
-            },
-          },
-          verification: { status: "SOURCE_CONFIRMED" },
-          source: { citation: "c", urls: ["https://example.test"] },
-        },
-      ],
-      advisories: [],
-    });
-
-    const dateFor = (intake: Record<string, unknown>) =>
-      evaluate(
-        { event_date: "2026-12-04", venue_kind: "plaza", ...intake } as EventIntake,
-        ruleset,
-        TODAY,
-        {
-          id: ruleset.calendarId,
-          holidays: [],
-        },
-      ).findings.find((finding) => finding.ruleIds.includes("RULE-LEVEL"))?.latestApplyDate;
-
-    // tier a, single block: 45 days back from 2026-12-04
-    expect(dateFor({ tier: "a", spans_blocks: false })).toBe("2026-10-20");
-    // tier a spanning blocks: the level's own 60-day window
-    expect(dateFor({ tier: "a", spans_blocks: true })).toBe("2026-10-05");
-    // tier b publishes no multi-block window, so the flag does not change it
-    expect(dateFor({ tier: "b", spans_blocks: true })).toBe("2026-11-04");
-  });
-
-  it("refuses a by-level deadline the evaluator could not date", () => {
-    const withLevels = (fields: Record<string, unknown>[], levels: Record<string, unknown>) => () =>
-      parseEngineRuleset({
-        ruleset_version: "test.v1",
-        jurisdiction: "US-NY-NYC",
-        snapshot_date: "2026-07-22",
-        config: {
-          slack_warning_days: { value: 14 },
-          business_day_math: { calendar: "test-calendar@2026" },
-        },
-        intake_fields: [{ field: "event_date", type: "date" }, ...fields],
-        rules: [
-          {
-            id: "RULE-LEVEL",
-            kind: "permit",
-            trigger: { all: [{ field: "venue_kind", op: "eq", value: "plaza" }] },
-            output: {
-              permit_name: "x",
-              agency: "DOB",
-              deadline: { type: "published_minimum_by_level", levels },
-            },
-            verification: { status: "SOURCE_CONFIRMED" },
-            source: { citation: "c", urls: ["https://example.test"] },
-          },
-        ],
-        advisories: [],
-      });
-
-    const venueKind = { field: "venue_kind", type: "enum", values: ["hall", "plaza"] };
-    // no declared field offers the published levels
-    expect(withLevels([venueKind], { a: { calendar_days: 45 } })).toThrow(
-      /publishes levels a that no declared intake field offers/,
-    );
-    // two fields offer them, so which one the deadline keys on is ambiguous
-    expect(
-      withLevels(
-        [
-          venueKind,
-          { field: "tier", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
-          { field: "grade", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
-        ],
-        { a: { calendar_days: 45 }, b: { calendar_days: 30 } },
-      ),
-    ).toThrow(/offered by more than one declared field/);
-    // a multi-block window with no flag to select it
-    expect(
-      withLevels(
-        [
-          venueKind,
-          { field: "tier", type: "enum", values: ["a"], asked_when: "venue_kind = plaza" },
-        ],
-        { a: { calendar_days: 45, multi_block_days: 60 } },
-      ),
-    ).toThrow(/no boolean field is asked alongside "tier" to select it/);
+      withLevelField({ ...byLevel, level_field: "grade" }, [
+        { field: "grade", type: "enum", values: ["a", "b"], asked_when: "venue_kind = plaza" },
+      ]),
+    ).toThrow(/"tier" is declared but no rule trigger, deadline/);
   });
 
   it("counts deadline resolution and scoping as consuming a field", () => {
@@ -1111,7 +1003,13 @@ describe("asked_when scoping", () => {
 // old constant never held, and the boundary by a threshold that declares none.
 describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)", () => {
   const testCalendar: PublishedHolidayCalendar = { id: "test-calendar@2026", holidays: [] };
-  const plazaRuleset = (deadline: Record<string, unknown>, fields: unknown[] = []) =>
+  // The default flag lives in the parameter default rather than the base list, so a case that
+  // binds the deadline to a different boolean does not also leave `spans_two_sites` declared and
+  // unread — which the orphan guard now refuses, correctly.
+  const plazaRuleset = (
+    deadline: Record<string, unknown>,
+    fields: unknown[] = [{ field: "spans_two_sites", type: "boolean" }],
+  ) =>
     parseEngineRuleset({
       ruleset_version: "test.v1",
       jurisdiction: "US-NY-NYC",
@@ -1123,7 +1021,6 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
       intake_fields: [
         { field: "event_date", type: "date" },
         { field: "tier", type: "enum", values: ["gold", "silver"] },
-        { field: "spans_two_sites", type: "boolean" },
         ...fields,
       ],
       rules: [
