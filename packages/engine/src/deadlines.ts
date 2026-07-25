@@ -5,9 +5,10 @@
 import { addCalendarDays, differenceInCalendarDays, subtractBusinessDays } from "./calendar";
 import type { ScopeResolver } from "./conditions";
 import { UNKNOWN_ANSWER } from "./conditions";
-import { LEVEL_DEADLINE_BINDING } from "./proposals";
+import { EvaluationError } from "./types";
 import type {
   Deadline,
+  LevelBinding,
   DeadlineBoundary,
   DeadlineStatus,
   EventIntake,
@@ -113,36 +114,73 @@ function isUnanswered(field: string, context: DeadlineContext): boolean {
 
 type LevelResolution =
   | { readonly kind: "days"; readonly days: number }
+  /** Asked and not answered: the organizer can still supply it, so the verdict branches on it. */
   | { readonly kind: "unknown"; readonly field: string; readonly display: string }
-  | { readonly kind: "unresolvable" };
+  /**
+   * Not answerable at all — the question was never asked, or the answer names no published level.
+   * Reported as an unresolved timeline rather than a missing fact: nobody can supply it, and
+   * offering it as a branch would ask the verdict to enumerate values that leave the field just
+   * as out of scope as before.
+   */
+  | { readonly kind: "unresolved"; readonly reason: string; readonly display: string };
 
 function resolveLevelDays(
   deadline: Extract<Deadline, { type: "published_minimum_by_level" }>,
+  binding: LevelBinding,
   context: DeadlineContext,
 ): LevelResolution {
-  const { levelField, multiBlockField } = LEVEL_DEADLINE_BINDING;
+  const { levelField, multiBlockField } = binding;
+
+  // Out of scope is not "answered no", and that is the case that used to slip through: the rule
+  // fired, so it owes this plan a date, but the registry never asked the field its deadline keys
+  // on. Saying so here rather than proving scope at parse time is deliberate — `asked_when` is an
+  // arbitrary conjunction, so no static check can be complete, and an incomplete one leaves this
+  // hole open for whichever expression it fails to recognise. The check that closes it is the one
+  // that runs against the actual intake.
+  if (!context.scope.isInScope(levelField)) {
+    return {
+      kind: "unresolved",
+      reason: `the plan was never asked ${levelField}, which this deadline keys on`,
+      display: levelRangeDisplay(deadline),
+    };
+  }
   if (isUnanswered(levelField, context)) {
     return { kind: "unknown", field: levelField, display: levelRangeDisplay(deadline) };
   }
 
   const level = context.intake[levelField];
   const definition = typeof level === "string" ? deadline.levels[level] : undefined;
-  if (definition === undefined) return { kind: "unresolvable" };
+  // An answer the rule publishes no level for leaves the deadline undatable, and it has to say so:
+  // `not_calculable` carrying neither a missing fact nor a reason never reaches the verdict, which
+  // is how a required permit with no date sat inside a FEASIBLE plan.
+  if (definition === undefined) {
+    return {
+      kind: "unresolved",
+      reason: `${levelField} answered "${String(level)}", which publishes no level`,
+      display: levelRangeDisplay(deadline),
+    };
+  }
 
   const { calendarDays, multiBlockDays } = definition;
   if (multiBlockDays === null) return { kind: "days", days: calendarDays };
 
-  // A level that publishes a distinct multi-block window cannot be dated from an unanswered flag:
-  // treating "not answered" as "single block" would quietly apply the shorter window and can
-  // present an already-missed multi-block deadline as on track (P1-B).
-  if (isUnanswered(multiBlockField, context)) {
+  const multiBlockDisplay =
+    `${calendarDays}–${multiBlockDays} days depending on whether the event spans multiple ` +
+    `blocks; ${CONFIRM_WITH_AGENCY}`;
+  // A level publishing a distinct multi-block window cannot be dated from a flag this plan never
+  // got to answer. Treating unasked or unanswered as "single block" quietly applies the shorter
+  // window and can present an already-missed multi-block deadline as on track (P1-B).
+  if (!context.scope.isInScope(multiBlockField)) {
     return {
-      kind: "unknown",
-      field: multiBlockField,
-      display:
-        `${calendarDays}–${multiBlockDays} days depending on whether the event spans multiple ` +
-        `blocks; ${CONFIRM_WITH_AGENCY}`,
+      kind: "unresolved",
+      reason:
+        `${levelField} "${String(level)}" publishes a multi-block window, but the plan was ` +
+        `never asked ${multiBlockField}`,
+      display: multiBlockDisplay,
     };
+  }
+  if (isUnanswered(multiBlockField, context)) {
+    return { kind: "unknown", field: multiBlockField, display: multiBlockDisplay };
   }
 
   return {
@@ -165,6 +203,7 @@ function levelRangeDisplay(
 
 export function computeDeadline(
   deadline: Deadline | null,
+  binding: LevelBinding | null,
   context: DeadlineContext,
 ): DatedDeadline {
   if (deadline === null) return undatable("not_applicable", null);
@@ -187,12 +226,15 @@ export function computeDeadline(
       // SAPO-PLAZA-001 publishes its own unknown-level behavior: "CONDITIONAL listing 14–60
       // range". Reporting the blocking field as a material unknown is what makes the verdict
       // conditional; every number comes from the rule's own level table, never from a guess.
-      const resolution = resolveLevelDays(deadline, context);
+      // parseRule attaches the binding to exactly the rules whose deadline is by-level, so a null
+      // here is a parser bug rather than an artifact one.
+      if (binding === null) throw new EvaluationError(`${deadline.type} deadline has no binding`);
+      const resolution = resolveLevelDays(deadline, binding, context);
       if (resolution.kind === "unknown") {
         return undatable("not_calculable", resolution.display, [resolution.field]);
       }
-      if (resolution.kind === "unresolvable") {
-        return undatable("not_calculable", levelRangeDisplay(deadline));
+      if (resolution.kind === "unresolved") {
+        return undatable("not_calculable", resolution.display, [], resolution.reason);
       }
       return {
         ...dateBackFrom(
@@ -208,13 +250,20 @@ export function computeDeadline(
     }
 
     case "composite": {
-      // The hard floor is a cliff, not a gradient: inside it, applications are not accepted
-      // (F-102 AC 3). A runway shorter than the published processing range is at risk even
-      // when the floor clears — "processing may not complete before event" (interpretation I-5).
+      // The hard floor is a cliff, not a gradient, and the floor day itself is inside the window:
+      // PARKS-EVENT-001 publishes "apply at least 21 days ahead (applications inside 21 days are
+      // not accepted)", so filing on the floor is accepted and only the day after it is refused.
+      // ARCHITECTURE says the same — missed PAST the floor — and on the floor latest_apply_date
+      // equals today rather than preceding it, so zero slack is the last valid day, not a miss.
+      // A runway shorter than the published processing range is still at risk even when the floor
+      // clears: "processing may not complete before event" (interpretation I-5).
       const dated = dateBackFrom(
-        addCalendarDays(context.eventDate, -deadline.hardFloorDays),
+        lastValidFilingDate(
+          addCalendarDays(context.eventDate, -deadline.hardFloorDays),
+          deadline.boundary,
+          (date, units) => addCalendarDays(date, -units),
+        ),
         context,
-        true,
       );
       const runwayDays = differenceInCalendarDays(context.today, context.eventDate);
       const processingCeiling = deadline.processingRangeDays[1];

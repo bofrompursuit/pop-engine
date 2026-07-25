@@ -2,7 +2,7 @@
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-201 (same engine invocation) · **Feeds:** plan UI, F-203 slack warnings
-**Updated:** 2026-07-22 for the nyc.v2.3 baseline (layered status model, AD-10).
+**Updated:** 2026-07-22 against nyc.v2.1 (layered status model, AD-10); retargeted to nyc.v2.4 on 2026-07-25.
 
 ## User Story
 
@@ -29,7 +29,7 @@ One top-level verdict on the `permit_plans` row, plus `verdict_detail`:
 
 1. **Backward timeline:** every dated finding gets `latest_apply_date` per its deadline type (published minimums per SAPO class/size/plaza level; hard floor + processing range composites; actual business-day minimums; before-issuance; dependency-gated). `research_required` deadlines are NOT_CALCULABLE and excluded from verdict math.
 2. **Algorithm order** (ARCHITECTURE steps 1–6): branch evaluation for unknowns runs before window checks. Scenario F must render CONDITIONAL, never INFEASIBLE.
-3. **The cliff:** Parks' 21-day hard floor is binary (22 days out → not floor-blocked; 21 → PUBLISHED_DEADLINE_MISSED). The 22–29-day band renders FEASIBLE-AT-RISK with "processing may not complete before event" (interpretation I-5, carried forward).
+3. **The cliff:** Parks' 21-day hard floor is binary (21 days out → not floor-blocked, the last valid filing day; 20 → PUBLISHED_DEADLINE_MISSED). PARKS-EVENT-001 publishes "apply at least 21 days ahead (applications inside 21 days are not accepted)", so day 21 is inside the window and only day 20 is past it. The 21–29-day band renders FEASIBLE-AT-RISK with "processing may not complete before event" (interpretation I-5, carried forward).
 4. **Sequencing:** in parks with amplified sound, the sound finding is dependency-gated on the Parks timeline and the rendered timeline shows apply-now → decision window → pursue sound → buffer (Scenario C), with the sequencing caveat as a note.
 5. **Slack warning:** Scenario D renders exactly "apply within 10 days". Slack for gated findings = latest_apply − apply_after (window width).
 6. **Branching:** every material unknown produces a fully evaluated branch (Scenario F: license coverage, assembly approval, sound audibility → branch table with per-branch verdicts; the no-license branch shows the one-business-day miss).

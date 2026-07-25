@@ -1,0 +1,62 @@
+{
+  "ruleIds": ["SAPO-PLAZA-001"],
+  "kind": "permit",
+  "disposition": "required",
+  "name": "Plaza Event Permit",
+  "agency": "SAPO (Mayor's Office CECM)",
+  "deadline": {
+    "type": "published_minimum_by_level",
+    "levels": {
+      "a": {
+        "calendarDays": 45,
+        "multiBlockDays": 60
+      },
+      "b": {
+        "calendarDays": 30,
+        "multiBlockDays": 45
+      },
+      "c": {
+        "calendarDays": 30,
+        "multiBlockDays": null
+      },
+      "d": {
+        "calendarDays": 14,
+        "multiBlockDays": null
+      }
+    },
+    "unknownLevelBehavior": "CONDITIONAL listing 14–60 range",
+    "qualification": null,
+    "boundary": "inclusive"
+  },
+  "deadlineDisplay": null,
+  "latestApplyDate": "2026-08-02",
+  "applyAfterDate": null,
+  "deadlineStatus": "deadline_approaching",
+  "slackDays": 11,
+  "feeDisplay": "$1,000–$31,000 by level/size + $25 processing fee",
+  "portalName": "E-Apply",
+  "portalUrl": "https://nyceventpermits.nyc.gov/cems/Login",
+  "portalInstructions": null,
+  "notes": [],
+  "noteText": null,
+  "deadlineUnknownFields": [],
+  "timelineUnresolvedReason": null,
+  "conflictText": null,
+  "sources": [
+    {
+      "ruleId": "SAPO-PLAZA-001",
+      "citation": "CECM permit-deadlines + plaza-fees pages",
+      "urls": [
+        "https://www.nyc.gov/site/cecm/permitting/permit-deadlines.page",
+        "https://www.nyc.gov/site/cecm/permitting/plaza-fees.page"
+      ]
+    }
+  ],
+  "verificationStatus": "SOURCE_CONFIRMED",
+  "triggeredBy": [
+    {
+      "field": "sapo_event_type",
+      "value": "plaza_event"
+    }
+  ]
+}
