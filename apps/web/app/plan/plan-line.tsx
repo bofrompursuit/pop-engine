@@ -4,6 +4,13 @@ import { CONFIRM_WITH_AGENCY, type Finding, type FindingSource } from "@pop-engi
 // visible. Nothing here composes regulatory prose — every string an organizer reads is either
 // published in the rules artifact and carried through the plan, or one of the schema's own
 // status/kind tokens.
+//
+// `last_verified_date` is deliberately absent. F-206 line 12 and ARCHITECTURE:125 name it and
+// migration 001 has the column, but no rule publishes a per-fact verification date, so plan.ts
+// writes null; nyc.v2.5 added the optional schema field without carrying it through `Finding` or
+// `insertPlan`. Rendering the ruleset's snapshot date, or the plan's generation date, in its place
+// would state that a fact was checked on a day nothing checked it. Absence is the honest surface
+// until a rule actually publishes one.
 
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
