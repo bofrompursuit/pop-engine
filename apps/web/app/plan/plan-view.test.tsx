@@ -1116,6 +1116,65 @@ describe("a plan the event has moved past", () => {
     await waitFor(() => expect(screen.queryByText(/unconfirmed/)).toBeNull());
     expect((await screen.findByRole("alert")).textContent).toContain("now at revision 3");
   });
+
+  it("installs a regenerated plan without waiting for the revision re-read", async () => {
+    // The mirror image of the finding above, and the same mistake: the event request treated as a
+    // gate on the plan rather than a separate fact. The POST has succeeded, so a plan exists on the
+    // server — withholding it until an ancillary revision check answers leaves the organizer looking
+    // at a button stuck on "Generating plan…" and a plan they cannot reach.
+    const eventRevision = 3;
+    let planRevision = 1;
+    let eventCalls = 0;
+    let releaseEvent: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/rules/meta")) return jsonResponse(200, liveMeta);
+        if (url.endsWith("/plan")) {
+          if (init?.method === "POST") {
+            planRevision = eventRevision;
+            return jsonResponse(201, plan({ eventRevision: planRevision }));
+          }
+          return jsonResponse(200, plan({ eventRevision: planRevision }));
+        }
+        eventCalls += 1;
+        // The initial load answers; the re-read after the generation never settles.
+        if (eventCalls > 1) {
+          return new Promise<Response>((resolvePromise) => {
+            releaseEvent = resolvePromise;
+          });
+        }
+        return jsonResponse(200, {
+          event: { id: "event-1", revision_counter: eventRevision },
+          warnings: [],
+          plan_stale: false,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Regenerate the plan" }));
+
+    // The new plan is on screen and the button has let go, with the revision check still in flight.
+    // Read off the verdict line, which only the installed plan renders — "revision 3" also appears
+    // in the staleness warning the old plan was showing.
+    await waitFor(() =>
+      expect(document.querySelector(".plan__verdict")?.textContent).toContain("revision 3"),
+    );
+    expect(screen.queryByRole("button", { name: "Generating plan…" })).toBeNull();
+    // And currency is not claimed off the revision read before the generation ran.
+    expect(screen.getByText(/unconfirmed until then/)).toBeDefined();
+
+    releaseEvent(
+      jsonResponse(200, {
+        event: { id: "event-1", revision_counter: eventRevision },
+        warnings: [],
+        plan_stale: false,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText(/unconfirmed/)).toBeNull());
+  });
 });
 
 describe("the states this page can be in", () => {

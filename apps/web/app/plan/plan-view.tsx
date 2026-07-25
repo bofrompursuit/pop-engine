@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { loadEvent, regeneratePlan } from "../intake/events-api";
-import { loadPlan, loadRulesMeta, type PlanResponse, type RulesMetaResponse } from "./plan-api";
+import { loadEvent, regeneratePlan, type LoadResult } from "../intake/events-api";
+import {
+  loadPlan,
+  loadRulesMeta,
+  type PlanResponse,
+  type PlanResult,
+  type RulesMetaResponse,
+} from "./plan-api";
 import { PlanLine } from "./plan-line";
 import { compareToPinned, SnapshotBanner } from "./snapshot-banner";
 import { AT_RISK_BUFFER_NOTE, verdictCopy } from "./verdict-copy";
@@ -29,6 +35,24 @@ type PlanState =
 /** What came back for the event, which is what says whether the plan is still current. */
 type EventState =
   { status: "loading" } | { status: "found"; revision: number } | { status: "unavailable" };
+
+// The plan and the event are two facts that arrive separately, and every path through this
+// component applies them separately. Both mappings live here, once, rather than at each call site:
+// the two review findings this component has taken about them — a pending event lookup rendering as
+// confirmed, and a pending event lookup hiding an already-generated plan — were the same mistake
+// made twice, and duplicated mappings are what let it be made twice.
+
+const planStateFrom = (result: PlanResult): PlanState =>
+  result.ok
+    ? { status: "ready", plan: result.plan }
+    : result.missing
+      ? { status: "missing", message: result.message }
+      : { status: "unavailable", message: result.message };
+
+const eventStateFrom = (result: LoadResult): EventState =>
+  result.ok
+    ? { status: "found", revision: result.loaded.event.revision_counter }
+    : { status: "unavailable" };
 
 export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
   const [planState, setPlanState] = useState<PlanState>({ status: "loading" });
@@ -63,9 +87,7 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
 
     void loadPlan(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
-      if (result.ok) setPlanState({ status: "ready", plan: result.plan });
-      else if (result.missing) setPlanState({ status: "missing", message: result.message });
-      else setPlanState({ status: "unavailable", message: result.message });
+      setPlanState(planStateFrom(result));
     });
 
     // A plan pins the revision it evaluated (AD-13), and the plan endpoint serves the latest plan
@@ -73,11 +95,7 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
     // it is the same comparison the checklist API refuses on: current > pinned means stale.
     void loadEvent(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
-      setEventState(
-        result.ok
-          ? { status: "found", revision: result.loaded.event.revision_counter }
-          : { status: "unavailable" },
-      );
+      setEventState(eventStateFrom(result));
     });
 
     // The banner states the plan's own pinned version without this, so the plan is never held up
@@ -109,20 +127,27 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
       return;
     }
 
-    const [result, event] = await Promise.all([
-      loadPlan(apiBaseUrl, eventId),
-      loadEvent(apiBaseUrl, eventId),
-    ]);
-    if (active.current !== requested) return;
-    if (result.ok) setPlanState({ status: "ready", plan: result.plan });
-    else if (result.missing) setPlanState({ status: "missing", message: result.message });
-    else setPlanState({ status: "unavailable", message: result.message });
-    setEventState(
-      event.ok
-        ? { status: "found", revision: event.loaded.event.revision_counter }
-        : { status: "unavailable" },
-    );
-    setRegenerating(false);
+    // The POST succeeded, so a plan now exists on the server. Which revision it will be compared
+    // against is a separate question, and one this page no longer knows the answer to: the event
+    // may have been edited again while the generation ran, so the revision read before it is not
+    // evidence about the plan that just replaced it. Unconfirmed until the re-read answers.
+    setEventState({ status: "loading" });
+
+    // Two requests, two independent facts, each applied when it lands. Awaiting them together let
+    // a slow or never-settling event GET withhold a plan the server had already generated, leaving
+    // the button stuck on "Generating plan…" with the plan unreachable — the ancillary check gating
+    // the thing the organizer clicked for.
+    void loadPlan(apiBaseUrl, eventId).then((result) => {
+      if (active.current !== requested) return;
+      setPlanState(planStateFrom(result));
+      // The button's label is about the plan, so it clears with the plan and not with the revision.
+      setRegenerating(false);
+    });
+
+    void loadEvent(apiBaseUrl, eventId).then((result) => {
+      if (active.current !== requested) return;
+      setEventState(eventStateFrom(result));
+    });
   };
 
   if (planState.status === "loading") {
