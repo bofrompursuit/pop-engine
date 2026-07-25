@@ -1,11 +1,12 @@
 # F-201 · Permit Plan Generator
 
+**Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.1 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
 **Updated:** 2026-07-22 for the nyc.v2.1 baseline.
 
 ## User Story
 
-As an independent organizer, I get the complete list of requirements my specific event triggers, with agency, deadline, fee, portal, and an official source for every line, so I stop guessing what the city wants.
+As an independent organizer, I get the complete list of requirements my specific event triggers, with the agency, deadline, fee, portal, and official source the ruleset publishes for each one, so I stop guessing what the city wants.
 
 ## Inputs
 
@@ -16,6 +17,7 @@ As an independent organizer, I get the complete list of requirements my specific
 ## Outputs
 
 - One immutable `permit_plans` row (verdict via F-102, `ruleset_version`, `event_revision`, `intake_snapshot`) + `permit_plan_items` findings: kind (permit / insurance / notification / registration / eligibility / prohibition / dependency / advisory / note), disposition (required / may_be_required / prohibited_or_ineligible / advisory / no_new_requirement), agency, typed deadline + `latest_apply_date` + deadline_status, fee display, portal, complete source snapshots + verification status, every contributing rule ID, and the triggering answers.
+- `agency` is present on findings whose kind directs the organizer to act with a body (permit, insurance, notification, registration, eligibility, prohibition, dependency) and is boot-validated for those kinds. `advisory`, `note` and `classification` findings describe a condition rather than a filing and may carry none (#77); the engine never infers one from a rule ID or title.
 - A finding's kind is the kind of the finding emitted, which equals the rule's kind for every rule except `classification`. A `classification` rule (`SAPO-SCOPE-001`) persists as kind `note` with disposition `no_new_requirement`, keeping its rule ID in `rule_ids` for provenance; `classification` is never a persisted finding kind (#73).
 - API: `POST /api/events/:id/plan` → plan + findings; `GET /api/events/:id/plan` → latest.
 
@@ -23,7 +25,7 @@ As an independent organizer, I get the complete list of requirements my specific
 
 1. Every finding references its rule ID and the intake answers that triggered it; dedupe-merged findings retain every contributing rule.
 2. Every finding renders source citation + verification status. RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders **both readings with both sources** (never silently resolved); COVERAGE_GAP advisories assert nothing.
-3. Same event revision + same ruleset version + same `today` + same calendar → byte-identical plan (determinism metric).
+3. Same event revision + same ruleset version + same `today` + same calendar → byte-identical **evaluation result** (verdict, finding set, and every computed date and status). Persistence identity is excluded: each generation is a new immutable `permit_plans` row, so `id` and `generated_at` differ by design (`ARCHITECTURE.md` permit_plans). Determinism is asserted on the engine output and the plan snapshot, not on the row's identity columns.
 4. The near-empty result is first-class: "no new city event requirement identified from your answers" plus triggered advisories and named confirmations (Scenario B). Over-prescribing and overclaiming emptiness are both failure modes.
 5. Rule-evaluation failure returns an explicit error; a partial plan is never presented as complete; a failure never yields a "no requirement" result.
 6. Boot validation: the api refuses to start if the ruleset fails schema check (33 rules + 4 advisories, all trigger fields declared).
