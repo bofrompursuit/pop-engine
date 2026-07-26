@@ -16,7 +16,7 @@ import {
 
 const publishedRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.5.json", import.meta.url)),
+    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.6.json", import.meta.url)),
     "utf8",
   ),
 );

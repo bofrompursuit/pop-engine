@@ -31,10 +31,16 @@ import {
 const repoFile = (relativePath: string): string =>
   fileURLToPath(new URL(`../../../${relativePath}`, import.meta.url));
 
-const publishedRuleset: {
-  rules: { id: string; exercised_by_scenarios?: string[] }[];
-  advisories: { id: string; exercised_by_scenarios?: string[] }[];
-} = JSON.parse(readFileSync(repoFile("rules/nyc-rules.v2.5.json"), "utf8"));
+/** Only the fields this file reads off the published artifact; the engine's parser owns the rest. */
+type PublishedRule = {
+  id: string;
+  exercised_by_scenarios?: string[];
+  output?: { dedupe_key?: string; deadline?: { calendar_days?: number } };
+};
+
+const publishedRuleset: { rules: PublishedRule[]; advisories: PublishedRule[] } = JSON.parse(
+  readFileSync(repoFile("rules/nyc-rules.v2.6.json"), "utf8"),
+);
 
 const ruleset = parseEngineRuleset(publishedRuleset);
 const answerKey = readFileSync(repoFile("docs/test-scenario-answer-key.md"), "utf8");
@@ -268,15 +274,6 @@ const KNOWN_DISAGREEMENTS: readonly {
   kind: "reaches-but-key-omits" | "claims-scenario-it-cannot-reach" | "reaches-scenario-it-omits";
   issue: string;
 }[] = [
-  {
-    scenarios: ["F"],
-    ruleId: "ADV-VENUE-OCCUPANCY-001",
-    kind: "reaches-but-key-omits",
-    issue:
-      "#89 item 5: the advisory triggers on location_type = private_venue alone, so it fires in F, " +
-      "and it names F in its own exercised_by_scenarios — but F's expected findings omit it. " +
-      "Whether the key gains the line or the rule narrows is an open product decision.",
-  },
   {
     scenarios: ["B"],
     ruleId: "DOHMH-EXEMPTION-001",
@@ -604,6 +601,66 @@ describe("the fixture suite and the published ruleset agree", () => {
     ]);
     for (const field of Object.keys(UNCONSUMED_INTAKE_FIELDS)) {
       expect(consumed, `${field} is now consumed; remove its exemption`).not.toContain(field);
+    }
+  });
+
+  it("names every published street-size window in the unknown ladder", () => {
+    // #89 item 1: the key's ladder line said "14/30/45" while the registry permits a fourth size
+    // and SAPO-STREET-XL-001 publishes a 60-day window, so the one fixture that documents what an
+    // organizer of unknown size is shown omitted the longest window that might apply — and the
+    // extra-large arm is the only one that is not FEASIBLE, so the omission hid the case that
+    // matters. Nothing caught it: this file compares the six lettered scenarios, and the unknown
+    // ladder is a boundary fixture, so the key line was compared to nothing at all.
+    //
+    // Reads the day counts out of the published rules rather than restating them, so a ruleset that
+    // adds, drops or retimes a size arm fails here until the key's ladder is updated to match.
+    const published = publishedRuleset.rules
+      .filter((rule) => rule.id.startsWith("SAPO-STREET-"))
+      .map(
+        (rule) => (rule as { output: { deadline?: { calendar_days?: number } } }).output.deadline,
+      )
+      .map((deadline) => deadline?.calendar_days)
+      .filter((days): days is number => typeof days === "number")
+      .sort((left, right) => left - right);
+    expect(published.length, "published street-size arms").toBeGreaterThan(1);
+
+    // The boundary-fixture bullet, not any prose that happens to mention the field — the status
+    // paragraph names it too, and matching that made this assert nothing.
+    const ladder = answerKey
+      .split("\n")
+      .find((line) => line.startsWith("- street_event_size=unknown"));
+    expect(ladder, "the key documents the unknown-size ladder").toBeDefined();
+    const stated = (/((?:\d+\/)+\d+)-day ladder/.exec(ladder ?? "")?.[1] ?? "")
+      .split("/")
+      .map(Number)
+      .sort((left, right) => left - right);
+
+    expect(stated, `ladder line states every published window: ${ladder}`).toEqual(published);
+  });
+
+  it("pairs every dedupe key with at least one other rule", () => {
+    // #89 item 6 was a dedupe key declared on exactly one rule: DOB-TALL-STRUCTURE-001 published
+    // `dob-structure` and said in its own note_text that it deduplicates with the area/duration DOB
+    // rules, but DOB-TENT-001 published no key, so the key paired with nothing and one permit
+    // rendered as two findings. A lone dedupe key is always a dangling reference — merging is what
+    // the key is for — and this is the reverse check that makes the next one fail on arrival, the
+    // same shape as #91's guard against an intake field no trigger consumes.
+    //
+    // It also covers the gap that let item 6 through this file: the comparison above reads rule-id
+    // SETS, so a key that names both DOB rules inside one numbered entry agreed with a plan that
+    // rendered them as two lines. Grouping is invisible to a set comparison; this is structural.
+    const byKey = new Map<string, string[]>();
+    for (const rule of [...publishedRuleset.rules, ...publishedRuleset.advisories]) {
+      const key = rule.output?.dedupe_key;
+      if (key === undefined) continue;
+      byKey.set(key, [...(byKey.get(key) ?? []), rule.id]);
+    }
+    expect(byKey.size, "the published ruleset declares at least one dedupe key").toBeGreaterThan(0);
+    for (const [key, ruleIds] of byKey) {
+      expect(
+        ruleIds.length,
+        `dedupe key "${key}" is declared only by ${ruleIds[0]}`,
+      ).toBeGreaterThan(1);
     }
   });
 

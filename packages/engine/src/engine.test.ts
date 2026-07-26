@@ -14,12 +14,12 @@ import {
   triggerFields,
   EvaluationError,
 } from "./index";
-import type { EventIntake, HolidayCalendar, PublishedHolidayCalendar } from "./types";
+import type { EventIntake, HolidayCalendar, PermitPlan, PublishedHolidayCalendar } from "./types";
 
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.5.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.5 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.6 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -879,7 +879,7 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.5");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.6");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
@@ -1238,9 +1238,24 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
     const replays = (intake: EventIntake) => {
       const before = evaluate(intake, v23, TODAY, calendar);
       const after = evaluate(intake, ruleset, TODAY, calendar);
+      const reached = (plan: PermitPlan) => [...plan.findings.flatMap((f) => f.ruleIds)].sort();
+      // Every published filing window in the plan. Keyed by the window rather than by rule,
+      // because a merged line carries one deadline for both of its rules — DOB-TALL-STRUCTURE-001
+      // publishes none of its own, so nothing is being hidden by not attributing the tent's date
+      // to it. `rulesMatch` already pins rule identity; this pins that no window moved or vanished.
+      const windows = (plan: PermitPlan) =>
+        plan.findings
+          .filter((f) => f.latestApplyDate !== null)
+          .map((f) => `${f.latestApplyDate}:${f.deadlineStatus}`)
+          .sort();
       return {
         verdictMatches: before.verdict === after.verdict,
         findingsMatch: JSON.stringify(before.findings) === JSON.stringify(after.findings),
+        // What must hold across ANY publish, grouping aside: the same rules are reached, and each
+        // one keeps its date and status. A rule appearing, vanishing or moving its deadline between
+        // eras is drift; two rules being rendered as one line is a published grouping decision.
+        rulesMatch: JSON.stringify(reached(before)) === JSON.stringify(reached(after)),
+        windowsMatch: JSON.stringify(windows(before)) === JSON.stringify(windows(after)),
         verdict: before.verdict,
       };
     };
@@ -1256,7 +1271,12 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
       plaza_multiple_blocks: true,
       amplified_sound: false,
     } as EventIntake);
-    expect(datedPlaza).toMatchObject({ verdictMatches: true, findingsMatch: true });
+    expect(datedPlaza).toMatchObject({
+      verdictMatches: true,
+      findingsMatch: true,
+      rulesMatch: true,
+      windowsMatch: true,
+    });
 
     // The exact boundary: DOB-TENT-001 at exactly 400 sq ft. This half fails silently rather than
     // loudly — v2.3 read the threshold as unresolved there, and a v2.4-only reading would make the
@@ -1269,11 +1289,28 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
       tent_area_sqft: 400,
       tent_days_in_place: 3,
     } as EventIntake);
-    expect(tentOnBoundary).toMatchObject({ verdictMatches: true, findingsMatch: true });
+    // nyc.v2.6 gave DOB-TENT-001 the `dob-structure` dedupe key that DOB-TALL-STRUCTURE-001 had
+    // always declared, so this intake reaches both rules and now renders them as ONE line where
+    // v2.3 rendered two. `findingsMatch` is therefore false here by design, and that is the whole
+    // point of reading each artifact under its own era: the grouping is published data, so a v2.5
+    // plan replays as two findings from the v2.5 file (kept at git 81320c7) and a v2.6 plan as one
+    // from this one. Nothing was normalized across the bump. What must not move did not: same
+    // verdict, same rules reached, same date and status on each.
+    expect(tentOnBoundary).toMatchObject({
+      verdictMatches: true,
+      rulesMatch: true,
+      windowsMatch: true,
+      findingsMatch: false,
+    });
     expect(tentOnBoundary.verdict).toBe("CONDITIONAL");
 
     // And the scenario intake, so the guarantee is not only asserted on the two changed rules.
-    expect(replays(parkIntake)).toMatchObject({ verdictMatches: true, findingsMatch: true });
+    expect(replays(parkIntake)).toMatchObject({
+      verdictMatches: true,
+      findingsMatch: true,
+      rulesMatch: true,
+      windowsMatch: true,
+    });
   });
 
   it("never dates a level deadline from a field the plan was not asked", () => {
@@ -1455,7 +1492,7 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
         "utf8",
       ),
     );
-    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.5" })).toThrow(
+    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.6" })).toThrow(
       /level_field/,
     );
   });
