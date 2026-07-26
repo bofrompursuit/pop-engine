@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CONSUMED_ITEM_FIELDS,
@@ -356,48 +358,94 @@ describe("uploadDocument", () => {
     });
   });
 
-  // Edge case: storage unreachable. The api keeps the item's state and writes no metadata row,
-  // and says so with `retryable`, so the same upload can simply be sent again.
-  it("passes the api's retryable flag through on a storage failure", async () => {
-    stubFetch(async () =>
-      jsonResponse(503, { error: "document storage is unavailable", retryable: true }),
+  // A header value is a ByteString, so assigning a name outside it throws while the request is
+  // being constructed — before a byte is sent — and the throw lands in the same catch as a network
+  // failure. A valid PDF was unuploadable and the organizer was told the api was unreachable.
+  it.each([
+    ["Chinese", "\u6587\u4ef6.pdf", "%E6%96%87%E4%BB%B6.pdf"],
+    ["emoji", "\ud83d\ude00.pdf", "%F0%9F%98%80.pdf"],
+    [
+      "Cyrillic",
+      "\u0437\u0430\u044f\u0432\u043a\u0430.pdf",
+      "%D0%B7%D0%B0%D1%8F%D0%B2%D0%BA%D0%B0.pdf",
+    ],
+  ])("sends a %s filename percent-encoded rather than throwing", async (_label, name, encoded) => {
+    // The stub builds a `Headers` from the init the way a real `fetch` does, so an unencodable
+    // value throws here exactly as it would in a browser. Without that step this test would assert
+    // the workaround while the bug it exists for went unreproduced.
+    const fetchMock = stubFetch(async (_input, init) => {
+      new Headers(init?.headers);
+      return jsonResponse(201, { id: "doc-1", filename: name });
+    });
+
+    const result = await uploadDocument("https://api.example.com", "item-1", pdf(name));
+
+    expect(result).toEqual({ ok: true, document: { id: "doc-1", filename: name } });
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)["X-Filename"]).toBe(
+      encoded,
     );
+  });
+
+  it("refuses to let an unencodable filename be reported as the api being unreachable", () => {
+    // The defect, pinned as platform behaviour rather than described: a header value is a
+    // ByteString, so this is what the old code did while constructing the request — before a byte
+    // was sent — and the throw landed in the same catch as a network failure.
+    // Matched on the message, not `instanceof TypeError`: jsdom throws from its own realm, so the
+    // constructor identity differs from this file's global.
+    expect(() => new Headers({ "X-Filename": "\u6587\u4ef6.pdf" })).toThrow(
+      /not a valid ByteString/,
+    );
+    expect(
+      () => new Headers({ "X-Filename": encodeURIComponent("\u6587\u4ef6.pdf") }),
+    ).not.toThrow();
+  });
+
+  // The api stored nothing and said so: a storage failure keeps the item's state and writes no
+  // metadata row, and a refusal never reached storage. Both are safe to resend.
+  it.each([
+    [
+      503,
+      { error: "document storage is unavailable", retryable: true },
+      "document storage is unavailable",
+    ],
+    [415, { error: "content type must be one of ..." }, "content type must be one of ..."],
+    [
+      413,
+      { error: "document must be 10485760 bytes or smaller" },
+      "document must be 10485760 bytes or smaller",
+    ],
+  ])("reports an api refusal (%i) as having stored nothing", async (status, body, message) => {
+    stubFetch(async () => jsonResponse(status, body));
 
     await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toEqual({
       ok: false,
-      retryable: true,
-      message: "document storage is unavailable",
+      outcome: "not_stored",
+      message,
     });
   });
 
-  it("does not offer a retry for a rejection that would be repeated identically", async () => {
-    stubFetch(async () => jsonResponse(415, { error: "content type must be one of ..." }));
-
-    await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toEqual({
-      ok: false,
-      retryable: false,
-      message: "content type must be one of ...",
-    });
-  });
-
-  it("treats an unreachable api as retryable: nothing was stored", async () => {
+  // The defect this replaced: `fetch` rejects for every failure that leaves no response, which
+  // includes a connection dropped AFTER the body was sent, processed and committed. The old branch
+  // claimed nothing had been stored and invited a retry, and the api mints a fresh document id and
+  // storage key per request, so that retry stored a second copy.
+  it("reports a request that never completed as an unknown outcome, not a safe retry", async () => {
     stubFetch(async () => {
       throw new TypeError("network down");
     });
 
     await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toEqual({
       ok: false,
-      retryable: true,
-      message: "The API could not be reached.",
+      outcome: "unknown",
+      message: "The connection did not complete, so whether this document was stored is not known.",
     });
   });
 
-  it("does not offer a retry when the upload succeeded but its answer is unreadable", async () => {
+  it("reports a 2xx with an unreadable body as stored, because it is", async () => {
     stubFetch(async () => jsonResponse(201, { id: 7 }));
 
     await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toEqual({
       ok: false,
-      retryable: false,
+      outcome: "stored",
       message: "The document was uploaded, but the API returned a response this page cannot read.",
     });
   });

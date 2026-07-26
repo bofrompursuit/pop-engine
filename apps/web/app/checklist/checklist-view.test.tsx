@@ -117,10 +117,13 @@ afterEach(() => {
 
 describe("AC 1 · one click converts the latest plan into a checklist", () => {
   it("offers conversion when no checklist exists and installs what the api created", async () => {
+    let current = checklistBody({ created: false });
     const calls = stubApi({
-      [GET_CHECKLIST]: checklistOf({ created: false }),
-      [POST_CHECKLIST]: () =>
-        jsonResponse(201, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] });
+        return jsonResponse(201, current);
+      },
     });
     await renderView();
 
@@ -475,7 +478,7 @@ describe("AC 3 · documents upload and download", () => {
 
   // Edge case: upload failure keeps the item's state and leaves no orphan metadata, so the same
   // file stays selected and the error says the upload can be tried again.
-  it("keeps the item and the chosen file on a retryable storage failure", async () => {
+  it("keeps the item and the chosen file when the api stored nothing", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
@@ -494,7 +497,7 @@ describe("AC 3 · documents upload and download", () => {
 
     const row = rowFor(STREET_MEDIUM);
     expect((await within(row).findByRole("alert")).textContent).toBe(
-      "document storage is unavailable The file is still selected, so you can try the upload again.",
+      "document storage is unavailable Nothing was stored, so the file is still selected.",
     );
     // The item is untouched: same status, and no document appeared.
     expect(badgeOf(row)).toBe("submitted");
@@ -502,6 +505,58 @@ describe("AC 3 · documents upload and download", () => {
     expect(within(row).getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(
       false,
     );
+  });
+
+  // The connection dropped with no response. That is NOT the same as nothing being stored: the
+  // request may have been processed and committed before the drop, and the api mints a fresh
+  // document id and storage key per request, so a one-click resend would store a second copy.
+  it("refreshes the checklist and clears the file when an upload never completed", async () => {
+    let attempts = 0;
+    const calls = stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () => {
+        attempts += 1;
+        throw new TypeError("network down");
+      },
+    });
+    await renderView();
+
+    await userEvent.upload(
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
+      pdf(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    const row = rowFor(STREET_MEDIUM);
+    expect((await within(row).findByRole("alert")).textContent).toBe(
+      "The connection did not complete, so whether this document was stored is not known. " +
+        "The checklist has been refreshed, so check whether it is listed before uploading it again.",
+    );
+    // Reconciled rather than guessed: the list itself is the answer, and it is re-read.
+    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+    // No one-click resend of something that may already be stored. Upload is inert until a file
+    // is chosen again, which survives a page reload in a way a disabled button does not.
+    expect(within(row).getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(true);
+    expect(attempts).toBe(1);
+  });
+
+  it("clears the file when the upload landed but its answer was unreadable", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () => jsonResponse(201, { id: 7 }),
+    });
+    await renderView();
+
+    await userEvent.upload(
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
+      pdf(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The document was uploaded, but the API returned a response this page cannot read.",
+    );
+    expect(screen.getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(true);
   });
 
   // The document is stored; only the re-read failed. Inviting a retry would store a second copy.
@@ -544,8 +599,10 @@ describe("AC 3 · documents upload and download", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Upload" }));
 
+    // Nothing stored, so the file stays selected — but the copy does not invite a retry that
+    // would be refused identically. It states what happened and leaves the decision alone.
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "document must be 10485760 bytes or smaller",
+      "document must be 10485760 bytes or smaller Nothing was stored, so the file is still selected.",
     );
   });
 
@@ -804,6 +861,43 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
   });
 });
 
+describe("F-206 AC 5 · the stored verification date, and only when it was stored", () => {
+  it("renders the date the plan item carries", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        // No published rule carries `verification.last_verified_date`, so the fixture states one
+        // explicitly: this is a per-plan-item stored value, and the render is what is under test.
+        items: [trackedItem(STREET_MEDIUM, { lastVerifiedDate: "2026-07-01" })],
+        contextItems: [planContext(NOISE_ADVISORY, { lastVerifiedDate: "2026-06-15" })],
+      }),
+    });
+    await renderView();
+
+    expect(within(rowFor(STREET_MEDIUM)).getByText("last verified 2026-07-01")).toBeDefined();
+    // Context rows carry it too: it is a property of the plan item, not of being trackable.
+    expect(within(rowFor(NOISE_ADVISORY)).getByText("last verified 2026-06-15")).toBeDefined();
+  });
+
+  it("renders no date at all when the item stored none", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        snapshotDate: "2026-07-26",
+        items: [trackedItem(STREET_MEDIUM, { lastVerifiedDate: null })],
+      }),
+    });
+    await renderView();
+
+    const row = rowFor(STREET_MEDIUM);
+    expect(within(row).queryByText(/last verified/)).toBeNull();
+    // And specifically not the snapshot's publication date: a snapshot date means published-on,
+    // never all-facts-verified-on, so standing it in here would state a verification that never
+    // happened.
+    expect(within(row).queryByText(/2026-07-26/)).toBeNull();
+  });
+});
+
 describe("AC 6 · a regenerated plan is reviewed, never silently applied", () => {
   it("flags the change, strikes the dropped row through and keeps everything on it", async () => {
     stubApi({
@@ -838,21 +932,21 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
   });
 
   it("reviews against the current plan through the same idempotent conversion call", async () => {
+    let current = checklistBody({
+      created: true,
+      planChanged: true,
+      items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
+    });
     const calls = stubApi({
-      [GET_CHECKLIST]: checklistOf({
-        created: true,
-        planChanged: true,
-        items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
-      }),
-      [POST_CHECKLIST]: () =>
-        jsonResponse(
-          201,
-          checklistBody({
-            created: true,
-            planChanged: false,
-            items: [trackedItem(STREET_LARGE, { inLatestPlan: false }), trackedItem(SOUND)],
-          }),
-        ),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody({
+          created: true,
+          planChanged: false,
+          items: [trackedItem(STREET_LARGE, { inLatestPlan: false }), trackedItem(SOUND)],
+        });
+        return jsonResponse(201, current);
+      },
     });
     await renderView();
 
@@ -865,6 +959,75 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
     expect(rowFor(STREET_LARGE).className).toContain("check-item--dropped");
     expect(screen.queryByText(/The plan has changed/)).toBeNull();
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+  });
+
+  // The review button and the item controls are both live while planChanged is true, so a status
+  // change can commit and render while the conversion POST is in flight. Installing that POST's
+  // own body put the status it read BEFORE the update, and the counts that went with it, back on
+  // screen. The conversion now goes through the same epoch-ordered re-read as every other write.
+  it("does not install the conversion's own response over a newer item update", async () => {
+    const calls = stubApi({
+      // What the server holds now: the organizer's status change has already landed.
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: true,
+        statusRollup: rollupOf({ submitted: 1 }),
+        items: [trackedItem(STREET_MEDIUM, { status: "submitted" })],
+      }),
+      // What the conversion answers with: assembled before that change, so it is already stale.
+      [POST_CHECKLIST]: () =>
+        jsonResponse(
+          201,
+          checklistBody({
+            created: true,
+            statusRollup: rollupOf({ not_started: 1 }),
+            items: [trackedItem(STREET_MEDIUM, { status: "not_started" })],
+          }),
+        ),
+    });
+    await renderView();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review items against the current plan" }),
+    );
+
+    // The symptom first: the organizer's status must not revert to what the conversion read.
+    await waitFor(() => expect(badgeOf(rowFor(STREET_MEDIUM))).toBe("submitted"));
+    expect(document.querySelector(".checklist__rollup")?.textContent).toBe("1 submitted");
+    // And the mechanism: the conversion re-read rather than installing its own body.
+    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+  });
+
+  it("reports a conversion that landed while the re-read did not", async () => {
+    let reloads = 0;
+    stubApi({
+      [GET_CHECKLIST]: () => {
+        reloads += 1;
+        return reloads === 1
+          ? jsonResponse(
+              200,
+              checklistBody({
+                created: true,
+                planChanged: true,
+                items: [trackedItem(STREET_MEDIUM)],
+              }),
+            )
+          : jsonResponse(500, {});
+      },
+      [POST_CHECKLIST]: () =>
+        jsonResponse(201, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
+    });
+    await renderView();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review items against the current plan" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "The change was saved, but the checklist could not be reloaded: The checklist could not be loaded (HTTP 500).",
+      ),
+    ).toBeDefined();
   });
 
   it("does not offer a review when the plan it would review against is stale", async () => {
@@ -1024,9 +1187,13 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
 describe("edge cases", () => {
   it("offers creation for a plan with nothing trackable, and produces a read-only empty state", async () => {
     const empty = { created: true, items: [], contextItems: [planContext(ALCOHOL_ADVISORY)] };
+    let current = checklistBody({ ...empty, created: false });
     stubApi({
-      [GET_CHECKLIST]: checklistOf({ ...empty, created: false }),
-      [POST_CHECKLIST]: () => jsonResponse(201, checklistBody(empty)),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody(empty);
+        return jsonResponse(201, current);
+      },
     });
     await renderView();
 
@@ -1084,8 +1251,9 @@ describe("edge cases", () => {
 
   it("cannot send a second conversion while the first is still in flight", async () => {
     let release: ((response: Response) => void) | undefined;
+    let current = checklistBody({ created: false });
     const calls = stubApi({
-      [GET_CHECKLIST]: checklistOf({ created: false }),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
       [POST_CHECKLIST]: () =>
         new Promise<Response>((resolve) => {
           release = resolve;
@@ -1099,9 +1267,8 @@ describe("edge cases", () => {
     await userEvent.click(create);
 
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
-    release?.(
-      jsonResponse(201, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
-    );
+    current = checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] });
+    release?.(jsonResponse(201, current));
     expect(await screen.findByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeDefined();
   });
 

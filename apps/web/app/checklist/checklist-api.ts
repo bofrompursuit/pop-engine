@@ -74,6 +74,11 @@ export type PlanContext = {
   readonly deadlineUnknownFields: readonly string[];
   readonly timelineUnresolvedReason: string | null;
   readonly verificationStatus: VerificationStatus;
+  /**
+   * The date the plan item stored, or null when it stored none (F-206 AC 5). Null renders no date
+   * at all: the snapshot's publication date is a different fact and must never stand in for it.
+   */
+  readonly lastVerifiedDate: string | null;
   /** Published regulatory text. Never the organizer's `notes`, which are a different field. */
   readonly publishedNotes: readonly string[];
   readonly noteText: string | null;
@@ -144,18 +149,37 @@ export type ChecklistItemUpdate = {
 export type ItemUpdateResult =
   { ok: true; item: ChecklistItemUpdate } | { ok: false; message: string };
 
+/**
+ * What a failed upload leaves behind, which decides whether sending the same file again is safe.
+ *
+ * Three states rather than a `retryable` boolean, because the boolean had no way to say the third
+ * one and defaulted it to the wrong answer. The api reasons in exactly these terms internally —
+ * `metadataOutcome` in `apps/api/src/checklist.ts` returns written / not_written / unknown, and
+ * keeps the stored bytes whenever the outcome is unknown rather than assuming.
+ */
+export type UploadOutcome =
+  /** The api refused before storing anything, or stored nothing and said so. Safe to resend. */
+  | "not_stored"
+  /** The api answered 2xx: the document is stored. Resending would store a second copy. */
+  | "stored"
+  /** The request never completed. It may or may not have been stored, and nothing here can say. */
+  | "unknown";
+
 export type UploadResult =
   | { ok: true; document: ChecklistDocument }
-  /**
-   * `retryable` is the api's own flag on a storage failure: the item kept its state and no
-   * metadata row was written, so the same upload can simply be sent again (spec edge case).
-   */
-  | { ok: false; retryable: boolean; message: string };
+  | { ok: false; outcome: UploadOutcome; message: string };
 
 export type DownloadResult = { ok: true; url: string } | { ok: false; message: string };
 
 const UNREACHABLE = "The API could not be reached.";
 const UNREADABLE_CHECKLIST = "The API returned a checklist this page cannot read.";
+/**
+ * Said for an upload that never came back, which is not the same as an upload that never landed.
+ * The wording states the uncertainty rather than resolving it in either direction, because
+ * nothing on this side can resolve it.
+ */
+const INCOMPLETE_UPLOAD =
+  "The connection did not complete, so whether this document was stored is not known.";
 
 async function readJson(response: Response): Promise<unknown> {
   try {
@@ -232,6 +256,7 @@ const PLAN_CONTEXT_CHECKS: FieldChecks<PlanContext> = {
   deadlineUnknownFields: arrayOf(isString),
   timelineUnresolvedReason: nullOr(isString),
   verificationStatus: isToken(VERIFICATION_STATUSES),
+  lastVerifiedDate: nullOr(isString),
   publishedNotes: arrayOf(isString),
   noteText: nullOr(isString),
   conflictText: nullOr(isString),
@@ -405,6 +430,11 @@ export function documentRejection(file: File): string | null {
  * request, which the browser sets from the `File`, and it never buffers the whole body. The
  * filename rides in a header because it is a display name only — the api generates the storage
  * key, so nothing a caller sends decides where the bytes land.
+ *
+ * It is percent-encoded because a header value is a ByteString: assigning "文件.pdf" or an emoji
+ * name throws a `TypeError` while the request is being constructed, before a byte is sent, and
+ * the throw lands in the same `catch` as a network failure. A valid PDF was unuploadable and the
+ * organizer was told the API could not be reached. The api decodes it back (`decodeFilename`).
  */
 export async function uploadDocument(
   apiBaseUrl: string,
@@ -416,22 +446,26 @@ export async function uploadDocument(
     response = await fetch(`${apiBaseUrl}/api/checklist-items/${itemId}/documents`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": file.type, "X-Filename": file.name },
+      headers: { "Content-Type": file.type, "X-Filename": encodeURIComponent(file.name) },
       body: file,
     });
   } catch {
-    // Nothing reached the api, so nothing was stored and the same upload can be sent again.
-    return { ok: false, retryable: true, message: UNREACHABLE };
+    // `fetch` rejects for every failure that leaves no response, and that is not the same set as
+    // "nothing was stored". A connection dropped after the body was sent, processed and committed
+    // rejects here too, with the object in the bucket and the metadata row written — and the api
+    // mints a fresh document id and storage key per request, so resending would store a second
+    // copy. This branch used to claim nothing had been stored and invite exactly that retry.
+    return { ok: false, outcome: "unknown", message: INCOMPLETE_UPLOAD };
   }
 
   const body = await readJson(response);
   if (!response.ok) {
+    // A response means the api decided. It stored nothing either way: a storage failure keeps the
+    // item's state and writes no metadata row (it flags itself `retryable`), and a refusal — a
+    // wrong type, an over-size body — never reached storage at all.
     return {
       ok: false,
-      // The api flags a storage failure as retryable: the item kept its state and no metadata
-      // row was written. Anything else it refused (a wrong type, an over-size body) will be
-      // refused again identically, so it is not offered as a retry.
-      retryable: asRecord(body)?.retryable === true,
+      outcome: "not_stored",
       message: failureMessage(
         body,
         `The document could not be uploaded (HTTP ${response.status}).`,
@@ -441,11 +475,10 @@ export async function uploadDocument(
 
   const document = readChecked(DOCUMENT_CHECKS, body);
   if (document === null) {
-    // The upload succeeded — the api answered 2xx — so this is not offered as a retry: sending
-    // it again would store a second copy of a document that is already there.
+    // The api answered 2xx, so the document IS stored; only its description is unreadable.
     return {
       ok: false,
-      retryable: false,
+      outcome: "stored",
       message: "The document was uploaded, but the API returned a response this page cannot read.",
     };
   }

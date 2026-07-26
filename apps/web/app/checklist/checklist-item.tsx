@@ -9,6 +9,7 @@ import {
   type ChecklistItem,
   type PlanContext,
   type SourcePlan,
+  type UploadOutcome,
 } from "./checklist-api";
 
 // One checklist row. F-202 AC 2–5 and AC 8 all land here, and the row is deliberately the whole
@@ -92,6 +93,14 @@ export function PlanContextBody({
         {context.agency !== null && <span>{context.agency}</span>}
         <span>{humanize(context.disposition)}</span>
         <span className="check-item__rule-ids">{ruleIds}</span>
+        {/* F-206 AC 5: the date the plan item stored, and only when it stored one. A null renders
+            nothing at all — the snapshot's publication date is a different fact, and standing it in
+            here would state a verification that never happened. */}
+        {context.lastVerifiedDate !== null && (
+          <span className="check-item__verified-date">
+            last verified {context.lastVerifiedDate}
+          </span>
+        )}
       </p>
 
       {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
@@ -232,8 +241,8 @@ export type ChecklistItemCardProps = {
   /** Resolves to a failure message, or null when the change was saved. */
   onStatusChange: (status: ChecklistStatus) => Promise<string | null>;
   onNotesSave: (notes: string) => Promise<string | null>;
-  /** Resolves to a failure and whether sending the same file again is worth doing. */
-  onUpload: (file: File) => Promise<{ message: string; retryable: boolean } | null>;
+  /** Resolves to a failure and what it left behind, which decides whether a resend is safe. */
+  onUpload: (file: File) => Promise<{ message: string; outcome: UploadOutcome } | null>;
   onDownload: (documentId: string) => Promise<string | null>;
 };
 
@@ -266,17 +275,24 @@ export function ChecklistItemCard({
     setBusy(true);
     setFailure(null);
     const failed = await onUpload(file);
-    // A failed upload changes nothing about the item and leaves no metadata behind, so the file
-    // stays selected and the same button sends it again (spec edge case).
-    if (failed === null) {
+    // The file is kept for a resend ONLY when the api stored nothing, which is the spec's
+    // retryable edge case. Keeping it after an upload that may have landed offered a one-click
+    // resend of a document the message itself said might already be there, and the api mints a
+    // new id and storage key per request, so that click stores a duplicate. Clearing it does not
+    // forbid a second upload — the organizer can pick the file again — it stops the accident.
+    if (failed === null || failed.outcome !== "not_stored") {
       setFile(null);
       if (fileInput.current !== null) fileInput.current.value = "";
     }
     setFailure(
       failed === null
         ? null
-        : failed.retryable
-          ? `${failed.message} The file is still selected, so you can try the upload again.`
+        : failed.outcome === "not_stored"
+          ? // True of every refusal, which "you can try again" was not: a file the api rejected as
+            // too large or the wrong type is refused identically on a second click. What the
+            // organizer needs to know is that nothing landed, and that the file they picked is the
+            // one still selected.
+            `${failed.message} Nothing was stored, so the file is still selected.`
           : failed.message,
     );
     setBusy(false);

@@ -117,9 +117,13 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
       setCreating(false);
       return;
     }
-    // The response IS the checklist it just wrote, so it goes on screen here rather than being
-    // asked for a second time.
-    setState({ status: "ready", checklist: result.checklist });
+    // The conversion's own response is NOT installed, even though it is the checklist the api just
+    // wrote. Reviewing is offered while the item controls are live, so a status change can commit
+    // and render while this POST is in flight, and this response — assembled before that update —
+    // would put the old status and the old counts back on screen. It goes through the same
+    // epoch-ordered re-read every other write uses, so there is one ordering rule rather than one
+    // rule and an exception.
+    setCreationFailure(await reload(requested));
     setCreating(false);
   };
 
@@ -167,13 +171,26 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const upload = async (itemId: string, file: File) => {
     const requested = showing;
     const result = await uploadDocument(apiBaseUrl, itemId, file);
-    // A failed upload leaves the item exactly as it was and writes no metadata row, so there is
-    // nothing to undo here and the row simply reports what happened.
-    if (!result.ok) return { message: result.message, retryable: result.retryable };
+    if (result.ok) {
+      const failure = await reload(requested);
+      // The document is stored either way; a reload that failed is not a resend.
+      return failure === null ? null : { message: failure, outcome: "stored" as const };
+    }
+    // An api that stored nothing needs no reconciling: the row is exactly as it was.
+    if (result.outcome === "not_stored")
+      return { message: result.message, outcome: result.outcome };
+
+    // Anything else may be on the item already. Rather than guess, or ask the organizer to guess,
+    // re-read the checklist so the document list itself is the answer — it is the same list a page
+    // reload would show, which is why this is reconciling rather than disabling a button.
     const failure = await reload(requested);
-    // The document is stored either way; a reload that failed is not a retryable upload, and
-    // sending the file again would store a second copy of it.
-    return failure === null ? null : { message: failure, retryable: false };
+    return {
+      message:
+        failure === null
+          ? `${result.message} The checklist has been refreshed, so check whether it is listed before uploading it again.`
+          : `${result.message} The checklist could not be refreshed either: ${failure}`,
+      outcome: result.outcome,
+    };
   };
 
   /**

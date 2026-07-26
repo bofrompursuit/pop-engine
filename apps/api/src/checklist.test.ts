@@ -882,6 +882,40 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(storedKey).not.toContain("passwd");
     });
 
+    // A header value is a ByteString, so the browser cannot send these names raw: the client
+    // percent-encodes and this decodes. Letters and marks survive in any script; everything else
+    // becomes `_`, which still excludes control characters, the invisible bidi/format characters
+    // that can reverse how a name reads, and every path separator.
+    it.each([
+      ["Chinese", "%E7%94%B3%E8%AF%B7%E4%B9%A6.pdf", "\u7533\u8bf7\u4e66.pdf"],
+      [
+        "Cyrillic",
+        "%D0%B7%D0%B0%D1%8F%D0%B2%D0%BA%D0%B0.pdf",
+        "\u0437\u0430\u044f\u0432\u043a\u0430.pdf",
+      ],
+      ["emoji", "%F0%9F%98%80.pdf", "_.pdf"],
+      ["a right-to-left override", "a%E2%80%AEb.pdf", "a_b.pdf"],
+      ["an encoded path", "..%2F..%2Fetc%2Fpasswd", "passwd"],
+      ["a plain ascii name", "sapo-application.pdf", "sapo-application.pdf"],
+      ["an unencodable stray percent", "50%.pdf", "50_.pdf"],
+    ])("decodes %s filename into a display name", async (_label, sent, expected) => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${itemId}/documents`)
+        .set("Content-Type", "application/pdf")
+        .set("X-Filename", sent)
+        .send(PDF);
+
+      expect(upload.status).toBe(201);
+      expect(upload.body.filename).toBe(expected);
+      // Whatever the name, it never reaches the storage key.
+      const [storedKey] = [...storage.objects.keys()];
+      expect(storedKey).toBe(`checklist-items/${itemId}/${storedKey?.split("/")[2]}`);
+    });
+
     it("keeps the item's state and writes no metadata row when storage is unreachable", async () => {
       const { body } = await checklistFor("A");
       const itemId = body.items[0]?.id as string;

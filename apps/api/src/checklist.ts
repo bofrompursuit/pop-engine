@@ -625,14 +625,41 @@ const handle =
   };
 
 /**
- * A display name only. The client's filename is untrusted: it is reduced to its last path
- * segment and a conservative character set, and it never contributes to the storage key.
+ * Everything a header value cannot carry, percent-decoded back.
+ *
+ * A header value is a ByteString, so a browser cannot put "文件.pdf" in one — constructing the
+ * request throws before a byte is sent. The client therefore percent-encodes the name and this
+ * undoes it. Decoding happens BEFORE the path split below, deliberately: `..%2F..%2Fetc%2Fpasswd`
+ * decoded after splitting would still be a path, and the split is what makes a filename a name.
+ *
+ * A value that is not valid percent-encoding is used as sent rather than rejected. It is a display
+ * name; a literal `%` in a filename from some other client is not worth a failed upload.
+ */
+function decodeFilename(supplied: string | undefined): string {
+  if (supplied === undefined) return "";
+  try {
+    return decodeURIComponent(supplied);
+  } catch {
+    return supplied;
+  }
+}
+
+/**
+ * A display name only. The client's filename is untrusted: it is reduced to its last path segment
+ * and a bounded character set, and it never contributes to the storage key.
+ *
+ * Letters, numbers and combining marks are kept in any script, so an organizer who names a file in
+ * Chinese gets that name back rather than a row of underscores. Everything else becomes `_`, which
+ * still excludes the classes that make a display name dangerous: control characters, the bidi and
+ * other invisible format characters (`\p{Cf}`) that can reverse how a name reads on screen, and
+ * every path separator and shell metacharacter.
  */
 function displayFilename(supplied: string | undefined, extension: string): string {
-  const lastSegment = (supplied ?? "").split(/[\\/]/).pop() ?? "";
+  const lastSegment = decodeFilename(supplied).split(/[\\/]/).pop() ?? "";
   const cleaned = lastSegment
-    .replace(/[^A-Za-z0-9._-]/g, "_")
-    .replace(/^\.+/, "")
+    .replace(/[^\p{L}\p{N}\p{M}._ -]/gu, "_")
+    .replace(/^[.\s]+/u, "")
+    .trim()
     .slice(0, 120);
   return cleaned === "" ? `document.${extension}` : cleaned;
 }
