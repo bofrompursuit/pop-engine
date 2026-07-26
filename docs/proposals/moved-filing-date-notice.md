@@ -1,10 +1,30 @@
 # PopEngine — Moved-Filing-Date Notice
 
-**Status:** PROPOSED. Not approved, and not implementable.
+**Status:** PARTLY SUPERSEDED (2026-07-26). Its premise defect was tested and held; F-202 Acceptance Criterion 9 is the approved outcome, and it is narrower than anything proposed here. §2's criteria are NOT approved and were not adopted. §4's research is retained: it is the evidence for what was rejected.
 **Covered by:** `docs/BASELINE.md`, "Superseded/draft material" row (`docs/proposals/*`): _never build from these_.
-**Proposes:** new acceptance criteria on `specs/F-202-compliance-checklist.md`, plus the rule data and schema they would require.
-**Blocks:** PR #117, which implements this behaviour and must not merge until these criteria are approved.
+**Proposed:** new acceptance criteria on `specs/F-202-compliance-checklist.md`, plus the rule data and schema they would require.
+**Blocked:** PR #117, which implemented this behaviour. #117 is superseded rather than unblocked — see below.
 **Drafted:** 2026-07-26
+
+---
+
+## 0. Outcome (2026-07-26): the premise defect was decisive, not a caveat
+
+SPEC-CONFLICT #121 was resolved by approving **F-202 Acceptance Criterion 9**, which authorises a notice that makes two claims and forbids a third. Read that criterion, not §2 of this document, before implementing anything.
+
+**Approved.** The row may state that the deadline PopEngine **computes** for the item has changed, naming the earlier and current dates, both read through the plan-item relationship F-202 AC 8 and F-206 AC 4 already use. Where the two plans pin different `ruleset_version`s it may state that, naming both versions.
+
+**Rejected: every claim about the organizer's filed application.** Not "you may need to contact the agency about amending your application", not a re-application, not a linked procedure, not the per-agency branch table in §2, not AC-N+6's three-way copy split.
+
+**Why, and it is this document's own §2 finding taken to its conclusion.** "Known defect in AC-N: the trigger is wider than the premise" recorded that `latest_apply_date` is computed and moves when any input moves, and offered option 2 (reword) as a mitigation and option 1 (record the cause of the change at regeneration) as the fix. Neither was adopted, because the defect turned out to be disqualifying for the whole class of claim rather than a wording problem: no source establishes that a change in **our arithmetic** obliges an organizer to do anything at all. §4.3's research answers a different question — what happens when the **event** changes — and it answers it for two of seven findings. A notice built on that research would attach an amendment procedure, honestly cited, to an event that did not change.
+
+**The worked example that settled it** was live while this was decided. The v2.8 ruleset publication corrects `DOB-ASSEMBLY-001` from ten calendar days to ten business days and its boundary from exclusive to inclusive. That moves the finding's computed deadline for every organizer holding the item — and because the pinned holiday calendar is deliberately unpublished (SPEC-CONFLICT #130), it moves it to NOT_CALCULABLE outright. Nothing about any organizer's event changed and no filed application became less valid. Under PR #117's behaviour every one of them would have been told their filing date moved and sent to DOB about amending a filing that was exactly as valid as it was. That is not a hypothetical the criteria needed to guard against; it is what the next ruleset bump does.
+
+**§4 is retained deliberately.** The per-agency table is the evidence for the rejection: it shows that AMEND was established for SAPO and a cancel-then-re-request for FDNY generators, that five of seven rows located nothing, and — the load-bearing part — that even the two established procedures address a changed event date rather than a changed computation. Deleting the research would leave the rejection looking like an untested preference. §4.4's no-inheritance rule and the §4 method note stand on their own and are worth keeping for any future survey.
+
+**PR #117 is superseded, not revived.** It built the rejected claim, and it carried migration 008's `checklist_items.worked_against_date`. AC 9 needs no new column: the persisted plan item already carries the date the row is pointed at. That is a coarser signal than #117's column — it tracks the last conversion or review of the checklist rather than each individual action on a row — and AC 9 is written against what it actually says, which is why AC-N+3's persist-at-the-moment-of-work machinery is not part of the approved criterion either. #117's column was never merged and is not being added.
+
+Still open and untouched by this outcome: §5 step 2's observation that procedure research state cannot be expressed through `verification.status` without relabelling a whole finding. It only matters if procedure text is ever published, which AC 9 does not require.
 
 ---
 
