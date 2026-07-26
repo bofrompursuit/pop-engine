@@ -31,6 +31,10 @@ function firstCondition(ruleset: JsonObject): JsonObject {
   return object(array(object(firstRule(ruleset).trigger).all)[0]);
 }
 
+function firstVerification(ruleset: JsonObject): JsonObject {
+  return object(firstRule(ruleset).verification);
+}
+
 function ruleById(ruleset: JsonObject, id: string): JsonObject {
   const found = [...array(ruleset.rules), ...array(ruleset.advisories)]
     .map(object)
@@ -141,6 +145,47 @@ describe("ruleset validation", () => {
         ruleset.status = "PROPOSED";
       },
       error: /status must be APPROVED/,
+    },
+    // Every one of these reaches `permit_plan_items.last_verified_date`, a `date` column, so a
+    // validator that accepts them defers the failure to plan generation: the api boots clean and
+    // then every affected write fails, per organizer. Impossible days are the ones a shape check
+    // alone lets through, which is why the calendar round trip is the assertion.
+    {
+      name: "impossible verification date",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "2026-13-45";
+      },
+      error: /last_verified_date must be an ISO date/,
+    },
+    {
+      name: "non-date verification date",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "soon";
+      },
+      error: /last_verified_date must be an ISO date/,
+    },
+    {
+      name: "verification date that rolls forward",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "2026-02-31";
+      },
+      error: /last_verified_date must be an ISO date/,
+    },
+    {
+      name: "unpadded verification date",
+      mutate: (ruleset) => {
+        // Postgres would accept this and normalize it, so the generated response and the row read
+        // back afterwards would disagree about the same date.
+        firstVerification(ruleset).last_verified_date = "2026-7-18";
+      },
+      error: /last_verified_date must be an ISO date/,
+    },
+    {
+      name: "empty verification date",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "";
+      },
+      error: /last_verified_date must be a non-empty string/,
     },
     {
       name: "duplicate intake field",

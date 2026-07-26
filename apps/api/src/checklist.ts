@@ -460,6 +460,18 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     // recalculated, not patched (PRD principle 6). A dropped requirement keeps the dates of
     // the last plan that raised it, which is the honest last-known state.
     const source = current ?? item;
+    // A row therefore describes two objects on purpose, and which field describes which is worth
+    // stating, because getting it wrong in either direction is the same defect. The persisted
+    // half is the organizer's: `id`, `planItemId`, `status`, `notes`, `documents`. Everything
+    // `planContext` returns is regulatory content read off `source`, INCLUDING `sourcePlan`, which
+    // names the plan those values came from.
+    //
+    // So `sourcePlan` follows `source` and never `item`. Pointing it at the persisted item while
+    // the values still come from the latest plan would label recalculated dates with the version
+    // and snapshot date of a plan that never produced them, which is the pair F-206 AC 4 exists to
+    // forbid, and the per-row indication AC 1 asks for is for a row that really does come from
+    // another snapshot: a dropped one, where `current` is undefined and `source` is `item`
+    // already. Raised on #110 review round 3 and confirmed as the intended semantics.
     return {
       id: item.checklist_item_id,
       planItemId: item.plan_item_id,

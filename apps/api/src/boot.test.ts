@@ -47,6 +47,24 @@ async function cyclicRulesetFile(): Promise<string> {
   return file;
 }
 
+/**
+ * The published ruleset with one rule's `verification.last_verified_date` set to a day that does
+ * not exist. Shaped like a date and accepted by any string check, and it is written to a Postgres
+ * `date` column, so a validator that lets it through moves the failure from boot to every plan
+ * generation that reaches that rule.
+ */
+async function badVerificationDateRulesetFile(): Promise<string> {
+  const published: { rules: { verification: { last_verified_date?: string } }[] } = JSON.parse(
+    await readFile(rulesFilePath(), "utf8"),
+  );
+  const rule = published.rules[0];
+  if (rule === undefined) throw new Error("published ruleset has no rules");
+  rule.verification.last_verified_date = "2026-13-45";
+  const file = join(mkdtempSync(join(tmpdir(), "pop-engine-boot-")), "bad-verified-date.json");
+  writeFileSync(file, JSON.stringify(published));
+  return file;
+}
+
 function runBoot(rulesFile: string): Promise<{ code: number | null; stderr: string }> {
   return new Promise((settle) => {
     const child = spawn("npx", ["tsx", "src/index.ts"], {
@@ -81,6 +99,17 @@ describe.runIf(databaseUrl.length > 0)("boot refuses a malformed ruleset before 
     expect(result.stderr).toMatch(/scoping is cyclic/);
     // The probe database has no permit_rules. Had the sync run first, that is the error we
     // would see instead, so its absence is the proof that nothing was written.
+    expect(result.stderr).not.toMatch(/permit_rules/);
+  }, 90_000);
+
+  it("fails on a verification date no calendar has, before any plan could be written", async () => {
+    // The point of catching this here rather than at the INSERT: a `date` column would refuse it
+    // too, but only once an organizer generated a plan, one plan at a time, on a running api that
+    // booted clean. Boot validation exists so a bad artifact never gets that far (F-201 AC 6).
+    const result = await runBoot(await badVerificationDateRulesetFile());
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/last_verified_date must be an ISO date/);
     expect(result.stderr).not.toMatch(/permit_rules/);
   }, 90_000);
 

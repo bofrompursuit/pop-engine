@@ -96,6 +96,26 @@ function requireString(object: JsonObject, key: string, label: string): string {
   return value;
 }
 
+/**
+ * A real `YYYY-MM-DD` calendar day, not merely a string shaped like one.
+ *
+ * The round trip is what rejects "2026-02-31" and "2026-13-45": `Date.parse` rolls an impossible
+ * day forward, so a value that survives the regex still fails to come back as itself. Both dates
+ * this guards reach a Postgres `date` column, and a column is the wrong place to find out: the api
+ * would boot clean on a bad artifact and then fail every plan write, per organizer, at the moment
+ * the plan is generated. Boot validation exists so that never happens (F-201 AC 6).
+ */
+function requireIsoDate(value: string, label: string): void {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(parsed) ||
+    new Date(parsed).toISOString().slice(0, 10) !== value
+  ) {
+    validationError(`${label} must be an ISO date`);
+  }
+}
+
 function parseSource(value: unknown, label: string): JsonObject {
   const source = requireObject(value, label);
   requireString(source, "citation", label);
@@ -170,6 +190,14 @@ function parseRule(
   if (!VERIFICATION_STATUSES.has(verificationStatus)) {
     validationError(`${label}.verification.status has unsupported value "${verificationStatus}"`);
   }
+  // Optional (F-206: a date is stored only when every contributing rule publishes one), but when
+  // it is published it is written to `permit_plan_items.last_verified_date`, a `date` column.
+  if (verification.last_verified_date !== undefined) {
+    requireIsoDate(
+      requireString(verification, "last_verified_date", `${label}.verification`),
+      `${label}.verification.last_verified_date`,
+    );
+  }
 
   const source = rule.source === undefined ? null : parseSource(rule.source, `${label}.source`);
   if (source === null && verificationStatus !== "COVERAGE_GAP") {
@@ -193,14 +221,7 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   }
 
   const snapshotDate = requireString(ruleset, "snapshot_date", "ruleset");
-  const parsedSnapshotDate = Date.parse(`${snapshotDate}T00:00:00Z`);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate) ||
-    Number.isNaN(parsedSnapshotDate) ||
-    new Date(parsedSnapshotDate).toISOString().slice(0, 10) !== snapshotDate
-  ) {
-    validationError("ruleset.snapshot_date must be an ISO date");
-  }
+  requireIsoDate(snapshotDate, "ruleset.snapshot_date");
 
   const status = requireString(ruleset, "status", "ruleset");
   if (!status.startsWith("APPROVED")) {
