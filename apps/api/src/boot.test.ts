@@ -67,6 +67,21 @@ async function verificationDateRulesetFile(date: string, name: string): Promise<
   return file;
 }
 
+/**
+ * The published ruleset with an unusable reminder offset. F-203 reads these from the artifact rather
+ * than from a constant, so a bad value that boots clean becomes an alert that never sends or one
+ * that fires after the deadline it warns about, discovered per organizer.
+ */
+async function badAlertOffsetRulesetFile(): Promise<string> {
+  const published: { config: { alert_offsets: { deadline_reminder: unknown } } } = JSON.parse(
+    await readFile(rulesFilePath(), "utf8"),
+  );
+  published.config.alert_offsets.deadline_reminder = { days_before: [7, -1] };
+  const file = join(mkdtempSync(join(tmpdir(), "pop-engine-boot-")), "bad-alert-offset.json");
+  writeFileSync(file, JSON.stringify(published));
+  return file;
+}
+
 function runBoot(rulesFile: string): Promise<{ code: number | null; stderr: string }> {
   return new Promise((settle) => {
     const child = spawn("npx", ["tsx", "src/index.ts"], {
@@ -125,6 +140,17 @@ describe.runIf(databaseUrl.length > 0)("boot refuses a malformed ruleset before 
 
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/last_verified_date has no year 0000/);
+    expect(result.stderr).not.toMatch(/permit_rules/);
+  }, 90_000);
+
+  it("fails on a reminder offset that would fire after the deadline", async () => {
+    // config.alert_offsets is an authoritative input for F-203 (its spec states the offsets are
+    // config, not code), so an unusable one is refused here rather than at the first send. A
+    // negative offset is the clearest case: it schedules the warning after the date it warns about.
+    const result = await runBoot(await badAlertOffsetRulesetFile());
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/days_before\[1\] must be a positive whole number/);
     expect(result.stderr).not.toMatch(/permit_rules/);
   }, 90_000);
 

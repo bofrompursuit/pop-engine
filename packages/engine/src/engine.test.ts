@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PermitPlan, PublishedHolidayCalendar
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.6 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.7 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -879,7 +879,7 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.6");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.7");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
@@ -1492,7 +1492,7 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
         "utf8",
       ),
     );
-    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.6" })).toThrow(
+    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.7" })).toThrow(
       /level_field/,
     );
   });

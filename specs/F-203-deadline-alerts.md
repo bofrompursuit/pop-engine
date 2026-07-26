@@ -16,13 +16,13 @@ As an independent organizer, I get an email/SMS before each filing deadline, inc
 
 `alerts` rows, sent by the in-process poller (60s tick, ARCHITECTURE):
 
-| alert_type | When scheduled |
-|---|---|
-| deadline_reminder | `latest_apply_date − 7 days` and `latest_apply_date − 1 day` per dated permit item |
-| slack_warning | immediately at checklist creation when the plan verdict is FEASIBLE-AT-RISK ("apply within N days") |
-| dependency_unlocked | at `apply_after_date` for gated items (Parks→NYPD) |
+| alert_type          | When scheduled                                                                                      |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| deadline_reminder   | `latest_apply_date − 7 days` and `latest_apply_date − 1 day` per dated permit item                  |
+| slack_warning       | immediately at checklist creation when the plan verdict is FEASIBLE-AT-RISK ("apply within N days") |
+| dependency_unlocked | at `apply_after_date` for gated items (Parks→NYPD)                                                  |
 
-Reminder offsets (7/1) are config, not code.
+Reminder offsets (7/1) are config, not code: they are published at `config.alert_offsets.deadline_reminder.days_before` in the ruleset (nyc.v2.7 onward), keyed by `alert_type`. A later reminder kind therefore needs no change to the ruleset's own schema, only a new key — but that is a claim about the ruleset and not about persistence: migration 001 constrains `alerts.alert_type` to exactly `deadline_reminder`, `slack_warning` and `dependency_unlocked`, so a new kind cannot be inserted until an ordered forward migration widens that CHECK. Both steps are needed and the config shape only removes one of them. The offsets are PopEngine policy and never an agency deadline, which alert copy must not blur.
 
 ## Acceptance Criteria
 

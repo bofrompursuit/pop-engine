@@ -39,7 +39,7 @@ type PublishedRule = {
 };
 
 const publishedRuleset: { rules: PublishedRule[]; advisories: PublishedRule[] } = JSON.parse(
-  readFileSync(repoFile("rules/nyc-rules.v2.6.json"), "utf8"),
+  readFileSync(repoFile("rules/nyc-rules.v2.7.json"), "utf8"),
 );
 
 const ruleset = parseEngineRuleset(publishedRuleset);

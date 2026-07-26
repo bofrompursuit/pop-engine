@@ -7,7 +7,7 @@ import { loadRuleset, syncPermitRules, validateRuleset, type PublishedRuleset } 
 
 type JsonObject = Record<string, unknown>;
 
-const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url));
+const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url));
 const packageFile = fileURLToPath(new URL("../../../package.json", import.meta.url));
 const originalRulesFile = process.env.RULES_FILE;
 
@@ -29,6 +29,10 @@ function firstRule(ruleset: JsonObject): JsonObject {
 
 function firstCondition(ruleset: JsonObject): JsonObject {
   return object(array(object(firstRule(ruleset).trigger).all)[0]);
+}
+
+function alertOffsets(ruleset: JsonObject): JsonObject {
+  return object(object(ruleset.config).alert_offsets);
 }
 
 function firstVerification(ruleset: JsonObject): JsonObject {
@@ -59,8 +63,8 @@ describe("ruleset validation", () => {
     const ruleset = await loadRuleset();
 
     expect(ruleset.schema).toBe("popengine-rules/v2");
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.6");
-    expect(ruleset.snapshotDate).toBe("2026-07-25");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.7");
+    expect(ruleset.snapshotDate).toBe("2026-07-26");
     expect(ruleset.intakeFields).toHaveLength(33);
     expect(ruleset.rules).toHaveLength(33);
     expect(ruleset.advisories).toHaveLength(4);
@@ -96,7 +100,7 @@ describe("ruleset validation", () => {
   it("honors RULES_FILE", async () => {
     process.env.RULES_FILE = rulesFile;
     await expect(loadRuleset()).resolves.toMatchObject({
-      rulesetVersion: "nyc.v2.6",
+      rulesetVersion: "nyc.v2.7",
     });
   });
 
@@ -145,6 +149,94 @@ describe("ruleset validation", () => {
         ruleset.snapshot_date = "0000-01-01";
       },
       error: /snapshot_date has no year 0000/,
+    },
+    // F-203 states these offsets are config rather than code, so the artifact is the contract and
+    // an unusable value has to be a boot failure. Left to runtime it is an api that starts clean
+    // and then schedules nothing, or fires after the deadline it warns about, one organizer at a
+    // time — the same deferred-failure shape as an unvalidated `last_verified_date`.
+    {
+      name: "alert offsets missing entirely",
+      mutate: (ruleset) => {
+        delete object(ruleset.config).alert_offsets;
+      },
+      error: /alert_offsets must be an object/,
+    },
+    {
+      name: "alert offsets carrying no deadline_reminder",
+      mutate: (ruleset) => {
+        object(ruleset.config).alert_offsets = { note: "only metadata" };
+      },
+      error: /alert_offsets\.deadline_reminder is required/,
+    },
+    {
+      // The closed half is about the NAMED entry, not about the map being nonempty: an artifact
+      // configuring some other type still leaves F-203 with nothing to read at the path it uses.
+      name: "alert offsets carrying a different type instead",
+      mutate: (ruleset) => {
+        object(ruleset.config).alert_offsets = {
+          slack_warning: { days_before: [3] },
+          note: "no deadline_reminder",
+        };
+      },
+      error: /alert_offsets\.deadline_reminder is required/,
+    },
+    {
+      name: "an alert type with no days_before",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = {};
+      },
+      error: /days_before must be an array/,
+    },
+    {
+      name: "an empty days_before",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [] };
+      },
+      error: /days_before must not be empty/,
+    },
+    {
+      name: "a string offset",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, "1"] };
+      },
+      error: /days_before\[1\] must be a positive whole number/,
+    },
+    {
+      name: "a negative offset, which would fire after the deadline",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, -1] };
+      },
+      error: /days_before\[1\] must be a positive whole number/,
+    },
+    {
+      name: "a zero offset, which is the deadline rather than a warning",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, 0] };
+      },
+      error: /days_before\[1\] must be a positive whole number/,
+    },
+    {
+      name: "a fractional offset, which lands mid-day",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, 1.5] };
+      },
+      error: /days_before\[1\] must be a positive whole number/,
+    },
+    {
+      name: "a duplicated offset, which would send twice",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, 1, 7] };
+      },
+      error: /repeats 7, which would send the same reminder twice/,
+    },
+    {
+      name: "a later alert type whose days_before is unusable",
+      mutate: (ruleset) => {
+        // Unknown keys are alert types by design. The open half still checks the ONE shape this
+        // file understands, so a future entry using `days_before` is held to the same rules.
+        alertOffsets(ruleset).slack_warning = { days_before: ["soon"] };
+      },
+      error: /slack_warning\.days_before\[0\] must be a positive whole number/,
     },
     {
       name: "unapproved status",
@@ -346,6 +438,35 @@ describe("ruleset validation", () => {
     const ruleset = await readRawRuleset();
     mutate(ruleset);
     expect(() => validateRuleset(ruleset)).toThrow(error);
+  });
+
+  it("accepts a later alert kind that schedules by something other than days_before", async () => {
+    // The open half, asserted rather than described. The published note says each alert type owns an
+    // object precisely so a kind scheduling by an absolute date or an hour offset can add its own
+    // field, so requiring `days_before` of every entry rejected exactly the extension the artifact
+    // invites — which is what F-305 and F-413 are named in that note to do.
+    for (const futureEntry of [
+      { at_time: "09:00", timezone: "America/New_York" },
+      { hours_before: [48, 6] },
+      { absolute_date: "2026-08-01" },
+      // No recognised field at all: accepted rather than guessed at, since there is no field name to
+      // require without predicting the mechanism.
+      { pending_design: true },
+    ]) {
+      const ruleset = await readRawRuleset();
+      alertOffsets(ruleset).f305_digest = futureEntry;
+      expect(() => validateRuleset(ruleset), JSON.stringify(futureEntry)).not.toThrow();
+    }
+  });
+
+  it("still requires deadline_reminder when a later kind is present", async () => {
+    // The two halves at once: an artifact may add any kind it likes and still may not drop the one
+    // F-203 reads. This is the case that fails if either half is collapsed into the other.
+    const ruleset = await readRawRuleset();
+    const offsets = alertOffsets(ruleset);
+    offsets.f305_digest = { at_time: "09:00" };
+    delete offsets.deadline_reminder;
+    expect(() => validateRuleset(ruleset)).toThrow(/deadline_reminder is required/);
   });
 
   it("accepts the years either side of the one Postgres has no room for", async () => {

@@ -28,11 +28,11 @@ export type PublishedRuleset = {
 };
 
 const EXPECTED_SCHEMA = "popengine-rules/v2";
-const EXPECTED_RULESET_VERSION = "nyc.v2.6";
+const EXPECTED_RULESET_VERSION = "nyc.v2.7";
 const EXPECTED_RULE_COUNT = 33;
 const EXPECTED_ADVISORY_COUNT = 4;
 const DEFAULT_RULES_FILE = fileURLToPath(
-  new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url),
+  new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url),
 );
 
 export const RULE_KINDS = new Set([
@@ -142,6 +142,95 @@ function requireIsoDate(value: string, label: string): void {
   }
 }
 
+/**
+ * The alert type F-203 schedules its reminders from. Named because it is the one entry this
+ * validator closes over: the feature reads `config.alert_offsets.deadline_reminder.days_before`
+ * exactly, so that path existing and being usable is not a matter of taste.
+ */
+const REQUIRED_ALERT_TYPE = "deadline_reminder";
+
+/**
+ * A `days_before` list: one reminder per entry, scheduled at the item's `latest_apply_date` minus
+ * that many whole days.
+ *
+ * Extracted so the closed and open halves below cannot drift into checking it differently.
+ */
+function requireDaysBefore(value: unknown, label: string): void {
+  const days = requireArray(value, label);
+  if (days.length === 0) {
+    validationError(`${label} must not be empty`);
+  }
+  const seen = new Set<number>();
+  for (const [index, day] of days.entries()) {
+    const at = `${label}[${index}]`;
+    // A fraction lands mid-day, a negative fires after the deadline it warns about, and zero is the
+    // deadline itself rather than a warning — none of the three is a reminder.
+    if (typeof day !== "number" || !Number.isInteger(day) || day <= 0) {
+      validationError(`${at} must be a positive whole number of days`);
+    }
+    if (seen.has(day)) {
+      validationError(`${at} repeats ${day}, which would send the same reminder twice`);
+    }
+    seen.add(day);
+  }
+}
+
+/**
+ * The reminder offsets F-203 schedules from (`config.alert_offsets`), checked at boot.
+ *
+ * F-203 states these are config rather than code, so the artifact is the contract and an
+ * implementer reads it rather than a constant. That makes an unusable value a boot failure and not
+ * a runtime one: the alternative is an api that starts clean and then schedules nothing, a negative
+ * offset that fires after the deadline, or a fractional one that lands mid-day, discovered per
+ * organizer at the moment the alert should have gone out. Same reasoning as `last_verified_date`,
+ * which is validated here for the same reason.
+ *
+ * THIS VALIDATOR IS DELIBERATELY CLOSED IN ONE PLACE AND OPEN EVERYWHERE ELSE, and the two halves
+ * are not a compromise between each other — they answer different questions. Collapsing either into
+ * the other reintroduces a defect this shape was reviewed into fixing, so the split is stated here
+ * rather than left to be inferred:
+ *
+ * CLOSED — `deadline_reminder` and its `days_before`. F-203 reads that exact path, so an artifact
+ * without it boots an api with no configuration for the feature and defers the failure to wherever
+ * F-203 first looks. Checking only that SOME type is present let an artifact carrying, say, only
+ * `slack_warning` pass. Do not relax this to "at least one alert type": that is what it was.
+ *
+ * OPEN — every other key. Keys are `alerts.alert_type` values and the published note says each type
+ * owns an object precisely so a later kind (F-305, F-413) can schedule by an absolute date or an
+ * hour offset instead. Requiring `days_before` of every entry rejected exactly the extension the
+ * note invites. So an unknown type is accepted with whatever shape it declares, and `days_before`
+ * is checked only when the entry declares one — validating what this file understands without
+ * predicting what it does not. Do not "fix" this by enumerating future types: the enumeration is
+ * the thing the shape exists to avoid.
+ *
+ * What the open half deliberately does not do: an unknown entry declaring no recognised field is
+ * accepted rather than rejected as empty. There is no field name to require without guessing the
+ * mechanism, and `alerts.alert_type` is CHECK-constrained in migration 001, so an unusable new kind
+ * cannot reach persistence without a forward migration reviewing it anyway.
+ */
+function requireAlertOffsets(value: unknown, label: string): void {
+  const offsets = requireObject(value, label);
+
+  // The closed half.
+  if (!Object.hasOwn(offsets, REQUIRED_ALERT_TYPE)) {
+    validationError(
+      `${label}.${REQUIRED_ALERT_TYPE} is required; F-203 schedules its reminders from it`,
+    );
+  }
+  const required = requireObject(offsets[REQUIRED_ALERT_TYPE], `${label}.${REQUIRED_ALERT_TYPE}`);
+  requireDaysBefore(required.days_before, `${label}.${REQUIRED_ALERT_TYPE}.days_before`);
+
+  // The open half.
+  for (const alertType of Object.keys(offsets)) {
+    // `note` is metadata on the map itself, not an alert type.
+    if (alertType === "note" || alertType === REQUIRED_ALERT_TYPE) continue;
+    const entry = requireObject(offsets[alertType], `${label}.${alertType}`);
+    if (entry.days_before !== undefined) {
+      requireDaysBefore(entry.days_before, `${label}.${alertType}.days_before`);
+    }
+  }
+}
+
 function parseSource(value: unknown, label: string): JsonObject {
   const source = requireObject(value, label);
   requireString(source, "citation", label);
@@ -248,6 +337,9 @@ export function validateRuleset(value: unknown): PublishedRuleset {
 
   const snapshotDate = requireString(ruleset, "snapshot_date", "ruleset");
   requireIsoDate(snapshotDate, "ruleset.snapshot_date");
+
+  const config = requireObject(ruleset.config, "ruleset.config");
+  requireAlertOffsets(config.alert_offsets, "ruleset.config.alert_offsets");
 
   const status = requireString(ruleset, "status", "ruleset");
   if (!status.startsWith("APPROVED")) {
