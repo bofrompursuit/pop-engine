@@ -49,7 +49,7 @@ AI may draft and extract; it may never make the authoritative permit determinati
 - Every plan line shows its verification status. Source-bearing lines cite an official source; a source-less COVERAGE_GAP visibly says "source not yet established" and never invents one.
 - The full fixture suite passes (6 scenarios + boundary fixtures, `test-scenario-answer-key.md` v4): 100% of expected findings, zero false omissions, zero false additions, correct verdicts.
 - Zero fabricated permit facts; RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders both readings.
-- The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.7 to APPROVED before the demo.
+- The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.8 to APPROVED before the demo.
 - Nothing in the core path is mocked, seeded, or hardcoded to look like engine output.
 
 ## Green Gate (target end of day 8) — the demo decision point
@@ -67,7 +67,7 @@ Permitted demo fallbacks for stretch features: seeded RSVP data, simulated email
 
 One integration point (the `events` schema — agreed by all four devs before any lane codes); four lanes with minimal merge conflicts:
 
-- **Dev 1 — Rules engine + verdict:** F-201, F-102; owns engine fidelity to `rules/nyc-rules.v2.7.json` and the fixture suite. Verify: full fixture suite (scenarios + boundaries) passes as automated tests.
+- **Dev 1 — Rules engine + verdict:** F-201, F-102; owns engine fidelity to `rules/nyc-rules.v2.8.json` and the fixture suite. Verify: full fixture suite (scenarios + boundaries) passes as automated tests.
 - **Dev 2 — Intake + plan UI:** F-101 (incl. contradiction checks, "I don't know"), F-206, plan rendering. Verify: Scenario A renders end-to-end with citations + snapshot banner.
 - **Dev 3 — Checklist + portals:** F-202, F-204. Verify: plan converts to checklist; every permit links to its portal with its document list.
 - **Dev 4 — Alerts + platform:** F-203, DB migrations, deploy, demo environment; **owns verification sign-off**: confirms the ruleset's SOURCE_CONFIRMED facts in a browser (evidence pre-collected in `VERIFICATION-SOURCES.md`) and works the open research items (OPEN-QUESTIONS §2). Verify: a seeded deadline fires a real email/SMS; `BASELINE.md` flips nyc.v2.5 to APPROVED.
@@ -104,4 +104,4 @@ Performed manually: the rules JSON is versioned in git, the answer key is the te
 
 - One spec per F-id in `/specs`; work follows the two-track model and dependency graph above, not a core-then-stretch sequence. F-206 plan rendering follows F-201, while its checklist integration waits for F-202. Phases 2+ get specs when scheduled, not now.
 - F-201's acceptance suite is the fixture set in `test-scenario-answer-key.md` (v4, derived from the ruleset). Authority for any disagreement: primary source → published rule → approved fixture → engine output → UI copy; fix the lower level, never bend the engine to a broken expectation.
-- `rules/nyc-rules.v2.7.json` is the crown jewel; version it like code. No fact enters it without an evidence reference to `VERIFICATION-SOURCES.md`; gaps are RESEARCH_REQUIRED, conflicts are OFFICIAL_CONFLICT, never guesses.
+- `rules/nyc-rules.v2.8.json` is the crown jewel; version it like code. No fact enters it without an evidence reference to `VERIFICATION-SOURCES.md`; gaps are RESEARCH_REQUIRED, conflicts are OFFICIAL_CONFLICT, never guesses.

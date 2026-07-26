@@ -19,7 +19,7 @@ import type { EventIntake, HolidayCalendar, PermitPlan, PublishedHolidayCalendar
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url)),
+    fileURLToPath(new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url)),
     "utf8",
   ),
 );
@@ -42,7 +42,7 @@ const parkIntake: EventIntake = {
   alcohol: false,
 };
 
-/** A two-rule ruleset in the published shape, for behaviors nyc.v2.7 does not exercise. */
+/** A two-rule ruleset in the published shape, for behaviors nyc.v2.8 does not exercise. */
 function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRuleset> {
   return parseEngineRuleset({
     ruleset_version: "test.v1",
@@ -443,22 +443,46 @@ describe("typed deadlines", () => {
 });
 
 describe("published bound inclusivity", () => {
-  const rooftop = (eventDate: string): EventIntake => ({
-    ...parkIntake,
-    location_type: "private_venue",
-    headcount: 90,
-    amplified_sound: false,
-    event_date: eventDate,
-  });
+  /**
+   * A SYNTHETIC exclusive rule, because as of nyc.v2.8 NO PUBLISHED RULE DECLARES boundary
+   * "exclusive" any more. DOB-ASSEMBLY-001 was the only one, and v2.8 corrects it to inclusive
+   * against TPPN #07/96 and AC Table 28-112.8. The three assertions below used to read that rule
+   * off the published file; leaving them there would have left the engine's exclusive path with
+   * zero subjects, so they would have had to be deleted or the rule excluded — either of which
+   * removes the guard on a code path `lastValidFilingDate` still has and a future rule can still
+   * reach. Moved rather than dropped: the semantics stay exercised, on the same dates and the same
+   * 10-day calendar window the published rule used to supply, so the numbers below are unchanged
+   * from when they were read off nyc.v2.7.
+   *
+   * The published half of this coverage is NOT lost either — "leaves inclusive bounds alone" below
+   * still reads a published rule, so the default is still pinned to the data.
+   */
+  const exclusiveTenDay = syntheticRuleset([
+    {
+      id: "RULE-EXCLUSIVE-TEN",
+      kind: "permit",
+      trigger: { all: [{ field: "headcount", op: "gte", value: 75 }] },
+      output: {
+        permit_name: "x",
+        agency: "DOB",
+        deadline: { type: "published_minimum", calendar_days: 10, boundary: "exclusive" },
+      },
+      verification: { status: "SOURCE_CONFIRMED" },
+      source: { citation: "c", urls: ["https://example.test"] },
+    },
+  ]);
   const assemblyIn = (eventDate: string) =>
-    evaluate(rooftop(eventDate), ruleset, TODAY, calendar).findings.find((finding) =>
-      finding.ruleIds.includes("DOB-ASSEMBLY-001"),
-    );
+    evaluate(
+      { event_date: eventDate, headcount: 90 } as unknown as EventIntake,
+      exclusiveTenDay,
+      TODAY,
+      { id: exclusiveTenDay.calendarId, holidays: [] },
+    ).findings.find((finding) => finding.ruleIds.includes("RULE-EXCLUSIVE-TEN"));
 
   it("treats an exclusive published bound as closed on the boundary day itself", () => {
-    // DOB-ASSEMBLY-001 publishes boundary "exclusive" for its 10-day TPA window, because the DOB
-    // code note it already carried says the application "must be submitted earlier than 10 days
-    // before the event". Exactly 10 days out is therefore already too late.
+    // An exclusive bound means "earlier than 10 days before the event", so exactly 10 days out is
+    // already too late. This is the reading nyc.v2.7 gave DOB-ASSEMBLY-001 from a DOB code note;
+    // v2.8 withdrew it for that rule, but the engine behavior it pinned is unchanged.
     const onTheBoundary = assemblyIn("2026-08-01"); // TODAY is 2026-07-22: exactly 10 days out
     expect(onTheBoundary?.latestApplyDate).toBe("2026-07-21");
     expect(onTheBoundary?.deadlineStatus).toBe("published_deadline_missed");
@@ -479,6 +503,20 @@ describe("published bound inclusivity", () => {
     expect(dayBefore?.latestApplyDate).toBe("2026-07-22");
     expect(dayBefore?.deadlineStatus).not.toBe("published_deadline_missed");
     expect(dayBefore?.slackDays).toBe(0);
+  });
+
+  it("has no published rule left on the exclusive path, which is why the cases above are synthetic", () => {
+    // Pins the premise of the synthetic fixture above, so it cannot quietly become wrong. If a
+    // later ruleset publishes an exclusive bound again, this fails and whoever adds it should read
+    // the three cases above and decide whether to point them back at the published rule.
+    const exclusive = ruleset.rules
+      .filter((rule) => rule.deadline !== null)
+      .filter((rule) => {
+        const deadline = rule.deadline!;
+        return "boundary" in deadline && deadline.boundary === "exclusive";
+      })
+      .map((rule) => rule.id);
+    expect(exclusive).toEqual([]);
   });
 
   it("honors a boundary on a composite floor rather than only accepting one", () => {
@@ -691,7 +729,7 @@ describe("calendar arithmetic refuses a result outside the representable range",
     expect(() => addCalendarDays("1970-01-01", -100_000_001)).not.toThrow(EvaluationError);
   });
 
-  // Why this is safe to land: the longest window nyc.v2.7 publishes is 60 calendar days (SAPO
+  // Why this is safe to land: the longest window nyc.v2.8 publishes is 60 calendar days (SAPO
   // multi-block, rules[4]/[5]/[8]) and the longest business-day window is 15. Both are five orders
   // of magnitude short of the bound, so no published rule can reach the guard.
   it("is unreachable from anything the ruleset publishes", () => {
@@ -933,7 +971,7 @@ describe("ruleset parsing rejects anything it cannot evaluate", () => {
   });
 
   it("accepts the published ruleset unchanged", () => {
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.7");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.8");
     expect(ruleset.slackWarningDays).toBe(14);
     expect(ruleset.rules).toHaveLength(37);
   });
@@ -1311,6 +1349,18 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
         rulesMatch: JSON.stringify(reached(before)) === JSON.stringify(reached(after)),
         windowsMatch: JSON.stringify(windows(before)) === JSON.stringify(windows(after)),
         verdict: before.verdict,
+        // Exposed so a window that DOES move can be named rather than waved through by flipping
+        // `windowsMatch` to false. A bare `windowsMatch: false` would accept any movement at all,
+        // including a rule silently losing its date, which is the drift this whole block guards.
+        windowFor: (ruleId: string) => {
+          const pick = (plan: PermitPlan) => {
+            const finding = plan.findings.find((f) => f.ruleIds.includes(ruleId));
+            return finding === undefined
+              ? "no finding"
+              : `${finding.latestApplyDate}:${finding.deadlineStatus}`;
+          };
+          return { before: pick(before), after: pick(after) };
+        },
       };
     };
 
@@ -1350,11 +1400,34 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
     // plan replays as two findings from the v2.5 file (kept at git 81320c7) and a v2.6 plan as one
     // from this one. Nothing was normalized across the bump. What must not move did not: same
     // verdict, same rules reached, same date and status on each.
+    //
+    // nyc.v2.8 ALSO moves a window on this intake, and unlike the grouping change that is a
+    // REGULATORY correction: at headcount 150 in a private venue this intake reaches
+    // DOB-ASSEMBLY-001, whose filing lead v2.8 corrects from 10 calendar days on an exclusive
+    // bound to 10 BUSINESS days on an inclusive bound (TPPN #07/96; AC Table 28-112.8). So
+    // `windowsMatch` is false here BY DESIGN. It is asserted as a named, exact move rather than
+    // by excluding the rule from the comparison: excluding it would drop the guard permanently and
+    // a later real drift on that rule would replay clean. A v2.3 plan still replays as its own era
+    // computed it — that is the point of reading each artifact under its own semantics — and the
+    // v2.8 date is what a v2.8 plan gets.
     expect(tentOnBoundary).toMatchObject({
       verdictMatches: true,
       rulesMatch: true,
-      windowsMatch: true,
+      windowsMatch: false,
       findingsMatch: false,
+    });
+    expect(tentOnBoundary.windowFor("DOB-ASSEMBLY-001")).toEqual({
+      // v2.3: 10 calendar days back from 2026-09-16 is the 6th, exclusive makes it the 5th.
+      before: "2026-09-05:on_track",
+      // v2.8: 10 business days back from 2026-09-16, inclusive, is the 2nd — two weekends earlier.
+      after: "2026-09-02:on_track",
+    });
+    // And every OTHER window on this intake is unmoved, so `windowsMatch: false` above cannot hide
+    // a second movement behind the one being accounted for.
+    expect(tentOnBoundary.windowFor("DOB-TENT-001")).toEqual({
+      // 15 business days back from 2026-09-16, unchanged across both eras.
+      before: "2026-08-26:on_track",
+      after: "2026-08-26:on_track",
     });
     expect(tentOnBoundary.verdict).toBe("CONDITIONAL");
 
@@ -1546,7 +1619,7 @@ describe("facts the ruleset publishes rather than the engine assuming (nyc.v2.4)
         "utf8",
       ),
     );
-    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.7" })).toThrow(
+    expect(() => parseEngineRuleset({ ...v23, ruleset_version: "nyc.v2.8" })).toThrow(
       /level_field/,
     );
   });

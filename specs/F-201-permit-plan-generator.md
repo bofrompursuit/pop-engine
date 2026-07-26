@@ -1,8 +1,8 @@
 # F-201 · Permit Plan Generator
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
-**Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.7 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
-**Updated:** 2026-07-22 against nyc.v2.1; retargeted to nyc.v2.5 on 2026-07-25, to nyc.v2.6 on 2026-07-25, and to nyc.v2.7 on 2026-07-26. v2.7 publishes one config key and moves no plan. v2.6 changes one plan: Scenario E renders eight findings rather than nine, the two DOB temporary-structure rules merging into one line as the answer key has specified since fixtures v3.
+**Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-101, ruleset nyc.v2.8 ratified (BASELINE.md) · **Feeds:** F-102, F-202, F-203, F-204
+**Updated:** 2026-07-22 against nyc.v2.1; retargeted to nyc.v2.5 on 2026-07-25, to nyc.v2.6 on 2026-07-25, to nyc.v2.7 on 2026-07-26, and to nyc.v2.8 on 2026-07-26. v2.8 CHANGES A PLAN: DOB-ASSEMBLY-001's TPA lead is corrected from ten calendar days on an exclusive bound to ten BUSINESS days on an inclusive bound, both moves landing together because the boundary alone would have moved the deadline later than a value already known wrong. In production that finding now renders NOT_CALCULABLE (the pinned holiday calendar is unpublished, SPEC-CONFLICT #130); the fixture suite supplies an empty holiday list and computes a date, so suite and product disagree by design. v2.7 publishes one config key and moves no plan. v2.6 changes one plan: Scenario E renders eight findings rather than nine, the two DOB temporary-structure rules merging into one line as the answer key has specified since fixtures v3.
 
 ## User Story
 
@@ -11,7 +11,7 @@ As an independent organizer, I get the complete list of requirements my specific
 ## Inputs
 
 - An `events` row (F-101 fields) + its `revision_counter`.
-- `rules/nyc-rules.v2.7.json` (authoritative, loaded in-memory at boot; AD-2/AD-9).
+- `rules/nyc-rules.v2.8.json` (authoritative, loaded in-memory at boot; AD-2/AD-9).
 - `today` and the pinned holiday calendar (injected; the engine never reads the clock; AD-6/AD-11).
 
 ## Outputs

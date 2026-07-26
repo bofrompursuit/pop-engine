@@ -620,8 +620,12 @@ export const UNCONSUMED_INTAKE_FIELDS: Readonly<Record<string, string>> = {
     "Collected for the Health Code Art. 88 private-function exemption, which DOHMH-EXEMPTION-001 " +
     "renders as an advisory on event_open_to_public alone. Open on issue #89.",
   venue_has_assembly_approval:
-    "DOB-ASSEMBLY-001 describes branching on it in prose, but its trigger reads location_type and " +
-    "headcount only, so answering it changes nothing. Open on issue #89, blocks F-102 AC 6.",
+    "Would drive DOB-ASSEMBLY-001's coverage confirmation, which is statute-backed but not yet " +
+    "implemented: AC 28-117.1.3 requires an amendment for any change inconsistent with the venue's " +
+    "certificate, so an existing approval narrows the question rather than settling it. The rule " +
+    "now says that in its notes instead of describing a branch nothing evaluates, but its trigger " +
+    "still reads location_type and headcount only, so answering this changes no output. Open on " +
+    "issue #89, blocks F-102 AC 6.",
 };
 
 /**

@@ -28,11 +28,11 @@ export type PublishedRuleset = {
 };
 
 const EXPECTED_SCHEMA = "popengine-rules/v2";
-const EXPECTED_RULESET_VERSION = "nyc.v2.7";
+const EXPECTED_RULESET_VERSION = "nyc.v2.8";
 const EXPECTED_RULE_COUNT = 33;
 const EXPECTED_ADVISORY_COUNT = 4;
 const DEFAULT_RULES_FILE = fileURLToPath(
-  new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url),
+  new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url),
 );
 
 export const RULE_KINDS = new Set([
@@ -182,7 +182,7 @@ export const MAX_REPRESENTABLE_DAYS_BEFORE = 719_528;
  * whole number of days from 1 to 3650." That spec is the approved artifact this constant enforces —
  * change it there first, then here, and it is deliberately alone on this line. Rationale, from the
  * spec: an offset counts days back from a filing deadline, and the longest window published in
- * nyc.v2.7 is 60 days, so 3,650 never binds on anything real while still refusing nonsense. It is
+ * nyc.v2.8 is 60 days, so 3,650 never binds on anything real while still refusing nonsense. It is
  * ~200× smaller than `MAX_REPRESENTABLE_DAYS_BEFORE`, so in practice
  * this is the bound that does the work; the representable one documents the mechanical ceiling and
  * catches the case where this is ever raised past what the arithmetic can take.
@@ -228,7 +228,7 @@ function requireDaysBefore(value: unknown, label: string): void {
     if (day > MAX_PRODUCT_DAYS_BEFORE) {
       validationError(
         `${at} is ${day}, beyond the ${MAX_PRODUCT_DAYS_BEFORE}-day maximum reminder offset; the ` +
-          `longest window nyc.v2.7 publishes is 60 days`,
+          `longest window nyc.v2.8 publishes is 60 days`,
       );
     }
     if (seen.has(day)) {
