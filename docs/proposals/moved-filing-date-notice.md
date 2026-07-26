@@ -42,10 +42,49 @@ These are drafted as criteria for adoption into F-202, in F-202's numbering styl
 
 **AC-N (the notice).** When a checklist item at status `submitted` or `approved` shows a `latest_apply_date` different from the one displayed when the organizer last worked that row, the checklist surfaces a notice on that row. The notice states that the filing date moved. It then states the **project's** knowledge of what to do about it, never the agency's silence:
 
-- where a published procedure has been established for that requirement **in the state the row is in**, the notice states it with its citation;
-- where no published procedure was located, the notice says exactly that, in those terms: no published procedure was found, confirm with the agency.
+- where a published procedure has been established for that requirement **in the state the row is in**, the notice states it with its citation **and its own verification status**, per the branches below;
+- where a search was run and located nothing, the notice says exactly that, in those terms: no published procedure was found, confirm with the agency;
+- where **no search has been run** for that requirement, the notice says _that_, and does not borrow the wording above. See AC-N+6.
+
+**The procedure carries its own verification state, and the notice renders it.** A procedure is a published regulatory fact like any other, so it gets the treatment F-206 AC 2 already requires of every plan line, not a private exemption for being new. Collapsing every status into "here is the procedure" or "nothing found" would let a procedure marked OFFICIAL_CONFLICT reach an organizer looking settled, which is the one outcome this product refuses everywhere else:
+
+| Procedure status  | What the notice renders                                                 |
+| ----------------- | ----------------------------------------------------------------------- |
+| SOURCE_CONFIRMED  | the procedure with its citation                                         |
+| RESEARCH_REQUIRED | the procedure, plus "confirm with agency" **visibly**, not in a tooltip |
+| OFFICIAL_CONFLICT | **both readings with both sources**, never resolved to one              |
+| COVERAGE_GAP      | says no source is published and asserts nothing further                 |
+
+This is the same status vocabulary F-201 AC 2 and F-206 AC 2 use, deliberately, so a reader does not have to learn a second one. It is also the reason §5 needs field-level verification metadata: without it there is no status to render here, and AC-N+1's requirement to load procedure verification metadata has nothing to load.
 
 The notice never says that an agency publishes nothing. Two unsuccessful research passes establish what this project failed to locate, not what the agency has. Section 4's caveat is not a footnote on the research, it is a constraint on the copy: asserting agency silence turns incomplete research into regulatory advice, which is the failure this product is built against. (Corrected on review; an earlier draft of this criterion had the notice say the agency publishes nothing.)
+
+### Known defect in AC-N: the trigger is wider than the premise
+
+**Read this before AC-N is adopted.** It is a defect in the premise, not in the drafting, and it is not resolved below. It is recorded here rather than in a footnote because a reader who meets AC-N and not this paragraph will implement the wrong thing carefully.
+
+**What the trigger detects:** the filing date PopEngine **computes** for this requirement changed between two plans.
+
+**What the procedures address:** the date **on the filed application or granted permit** changed. 50 RCNY 1-07 is about amending an application's date.
+
+Those are different sets, and the trigger is neither sufficient nor necessary for the premise.
+
+**Not sufficient.** `latest_apply_date` is computed from the event date, the rule's published lead time, and for business-day rules the pinned holiday calendar. Every one of the other inputs can move with the event date untouched:
+
+- a newer ruleset changes a lead time (`published_minimum`, `business_days_minimum`). This repository bumped its ruleset six times in one week;
+- a level or size input changes, so `published_minimum_by_level` resolves to a different number of days. `SAPO-PLAZA-001` is exactly this shape, and SAPO is the one agency for which an amendment procedure is established;
+- the pinned holiday calendar changes. This one is scheduled rather than hypothetical: `us-ny-business-days@2026.1` currently carries an **empty** holiday list, published as RESEARCH_REQUIRED. The day it is published, every `business_days_minimum` date moves at once, which is `DOB-TENT-001`, `SLA-ONEDAY-001` and `SLA-CATERING-001`, and every `submitted` row among them would be told to ask its agency about amending a date that never changed.
+
+**Not necessary.** The inverse also holds. An event moved between two days that `subtractBusinessDays` maps to the same deadline leaves `latest_apply_date` identical, so the notice stays silent although the date on the application genuinely changed. That is the case the organizer most needs and the trigger cannot see it.
+
+**Why this is not fixed by narrowing the trigger to event-date edits.** The checklist cannot see which intake field moved. It compares two computed dates on two plans; #117 established that the row cannot even reconstruct which plan was on screen without persisting it. "Only fire when the event date changed" is not expressible against what the checklist holds.
+
+**What resolving it would take**, neither of which is proposed here:
+
+1. **Record the cause of the change at regeneration.** Persist enough with the plan to answer "did the event date move between these two plans, or did something else". That is a plan-writer and schema change of the same class as §5 step 3, and it is the only option that lets the criteria keep selecting an amendment procedure honestly.
+2. **Describe the recomputation instead of implying the application's date moved.** Wording that would be true as things stand, offered because the brief asks for it if it exists: _"The filing date PopEngine computes for this requirement has changed since you last worked this row. If your event date has changed, confirm with the agency whether your existing application needs amending."_
+
+**Option 2 does not close this finding, and should not be recorded as though it does.** It removes the false statement, which is worth having, but AC-N would still _select_ an amendment procedure on a trigger that does not establish the amendment's premise, and it pushes the discrimination onto the organizer, who at least does know whether their event date moved. It is a mitigation, not a fix. The fix is option 1.
 
 **AC-N+1 (the procedure comes from the row's own source plan).** The procedure text, its citation and its verification metadata are read from the same versioned plan data the row's other values and its provenance come from, never from the live rules file.
 
@@ -54,6 +93,18 @@ Without this the notice reproduces the defect SPEC-CONFLICT #115 was filed over.
 **AC-N+2 (a notice, never a requirement).** The notice changes nothing else about the row. No status changes, no status transition is blocked, nothing is gated on it, and the row stays fully editable. Everything the organizer could do before the date moved, they can still do.
 
 **AC-N+3 (persistence, not derivation).** The filing date the organizer worked against is **persisted at the moment they work the row**, and is never derived afterwards from plan timestamps.
+
+**"Work the row" is defined as an enumerated set of actions, not left to the implementer.** F-202 treats status changes, note edits and document uploads as separate user actions, and uploads do not go through the same endpoint, so "when they work the row" is ambiguous exactly where it is load-bearing. Every action below acknowledges the date on screen, so every one records it:
+
+| Action          | Endpoint                                  | Records the displayed date                               |
+| --------------- | ----------------------------------------- | -------------------------------------------------------- |
+| Status change   | `PATCH /api/checklist-items/:id`          | yes                                                      |
+| Note edit       | `PATCH /api/checklist-items/:id`          | yes                                                      |
+| Document upload | `POST /api/checklist-items/:id/documents` | **yes**, and this is the one an implementation will miss |
+
+The upload path is called out because it is the likeliest omission and the most damaging: an organizer uploading their filed application while looking at the current filing date has plainly seen it, and a later regeneration would otherwise warn them about a date they already worked against. An implementation that records only on `PATCH` satisfies the words and not the criterion.
+
+Deletion of a document is deliberately **not** in the set: it withdraws work rather than acknowledging a date. Any action added to F-202 later must be classified explicitly against this list rather than inheriting a default.
 
 The reason is not stylistic. `permit_plans.generated_at` defaults to `current_timestamp`, which in PostgreSQL is the **generating transaction's start time**, while the plan becomes visible only at COMMIT. Timestamp ordering therefore cannot distinguish a plan that was visible to the organizer from one still uncommitted: a checklist update landing inside a generation transaction carries a later timestamp than a plan nobody could see. A derivation reads that invisible plan as what the organizer worked against and **suppresses the notice for work done against a date the organizer could not have seen**.
 
@@ -68,6 +119,12 @@ It compounds with AC-N+3. Returning the row to `submitted` is itself work, so th
 Recorded rather than papered over, and the trigger set is deliberately **not** widened to hide it: adding `in_progress` would show the notice to every organizer who has filed nothing, which is the false direction for copy that tells someone to contact an agency. Closing it properly means tracking **whether the requirement was ever filed and is still live** as its own fact, separate from the current status label, which is a further contract change beyond the column #117 adds. Until that exists, the exclusion stands and this paragraph is the record of what it misses.
 
 ---
+
+**AC-N+6 (unsurveyed is its own state, and says so).** A requirement nobody has researched must not wear the copy that reports an unsuccessful search.
+
+"No published procedure was found" is defined in AC-N as the outcome of a search that ran and located nothing. Four reachable findings have had no search at all (§4.2), and giving them that wording would state a result this project never obtained, which is the same overclaim as asserting agency silence, one step further back. The distinction is cheap to keep and impossible to recover once collapsed.
+
+So a third branch, with its own copy and its own metadata: **not yet checked**. Wording of the shape _"PopEngine has not yet checked what this agency publishes about a changed filing date. Confirm with the agency."_ Both branches send the organizer to the same place, which is why the temptation is to merge them; they differ in what the product claims about itself, which is why they must not be. A row in this state is also a work item, and it should be visible as one to whoever picks up §5 step 2, which a shared "found nothing" string would hide.
 
 ## 3. Edge cases the criteria must cover
 
@@ -94,6 +151,12 @@ An earlier draft of this table had a row per permit type, because the external s
 - **One finding was split across two rows with different verdicts.** `FDNY-GENERATOR-001` is a single rule, published as `FDNY Generator/Battery Permit`, triggered by `any(generator_gasoline_gallons > 2.5, generator_diesel_gallons > 10, battery_system_kwh > 20)`. The draft gave "FDNY generator / fuel" a REAPPLY procedure and "FDNY battery" a NOT PUBLISHED verdict. Published row by row, a **battery-only** event would have rendered a procedure whose source covers postponing an inspection of fuelled equipment. Where one finding spans trigger paths with different evidence, the procedure may only be shown when the **triggering facts are the ones its source covers**, and every other path falls back. Expressing that needs procedure metadata conditioned on the trigger path, which is a further reason the schema work in §5 cannot be skipped.
 - **Rows were surveyed that the notice can never reach, and rows it can reach were missed.** AC-N fires only when a `latest_apply_date` moves, so a finding that never carries one is out of scope no matter what its agency publishes. Checked against `rules/nyc-rules.v2.6.json`, not assumed.
 
+**A rule id is still one level off, which round 2 did not catch.** `packages/engine/src/findings.ts` merges findings that share a `dedupe_key`, keeping the first finding's fields and concatenating the rule ids, and `checklist.ts` defines a row's identity as the **whole sorted rule-id set** (`requirementKey`). So a checklist row is not a rule, it is a set of them, and the survey must be keyed to the set.
+
+`nyc.v2.6` publishes one such key, `dob-structure`, shared by `DOB-TENT-001` (`business_days_minimum`, dated) and `DOB-TALL-STRUCTURE-001` (no deadline). PR #116 is what gave `DOB-TENT-001` that key. When both trigger, the merged row keeps the tent rule's filing date, so **it reaches the notice**, and carries both rule ids, so it is a requirement the survey has no entry for. An implementation matching by rule id would find the tent-only research and attach it to a line that also asserts the tall-structure requirement, whose scope was never surveyed.
+
+This is the same defect as the FDNY generator/battery split one level up: round 2 moved the survey from permit type to rule id, and rule id is still not what a row is.
+
 ### 4.2 Scope, checked against the published ruleset
 
 **Trackable findings that can carry a filing date, and can therefore reach the notice: 13.**
@@ -114,13 +177,21 @@ An earlier draft of this table had a row per permit type, because the external s
 | `SLA-ONEDAY-001`         | `business_days_minimum`      | **no**                       |
 | `SLA-CATERING-001`       | `business_days_minimum`      | **no**                       |
 
-**Trackable findings that never carry a filing date, so the notice cannot reach them: 10.** `DOHMH-VENDOR-PERMIT-001`, `FDNY-FUEL-001`, `FDNY-OPENFLAME-001`, `FDNY-GENERATOR-001` and `DOB-STAGE-001` are `research_required`; `SAPO-INSURANCE-001` is `before_issuance`; `SAPO-INSURANCE-BLOCK-PARTY-RIDE-001`, `PARKS-EVENT-EXACTLY-20-001`, `DOB-PROP-TRUSS-001` and `DOB-TALL-STRUCTURE-001` publish no deadline at all.
+**Requirements formed by a merge.** One more reachable requirement exists that is not a single rule:
+
+| Requirement (sorted rule-id set)                                        | Why it is reachable                                          | Surveyed?                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------- |
+| `DOB-TENT-001` + `DOB-TALL-STRUCTURE-001` (`dedupe_key: dob-structure`) | the merge keeps the tent rule's `business_days_minimum` date | **no**, only `DOB-TENT-001` alone was |
+
+**Trackable findings that never carry a filing date on their own, so the notice cannot reach them unmerged: 10.** `DOHMH-VENDOR-PERMIT-001`, `FDNY-FUEL-001`, `FDNY-OPENFLAME-001`, `FDNY-GENERATOR-001` and `DOB-STAGE-001` are `research_required`; `SAPO-INSURANCE-001` is `before_issuance`; `SAPO-INSURANCE-BLOCK-PARTY-RIDE-001`, `PARKS-EVENT-EXACTLY-20-001`, `DOB-PROP-TRUSS-001` and `DOB-TALL-STRUCTURE-001` publish no deadline at all.
+
+**"On their own" is doing real work in that sentence.** `DOB-TALL-STRUCTURE-001` carries no deadline and an earlier revision of this section therefore filed it as unreachable, full stop. That is true of the rule and false of the row: merged under `dob-structure` it rides a dated finding straight into the notice. Any future `dedupe_key` has the same effect, so reachability is a property of the requirement, not of the rule, and this list must be re-derived whenever a dedupe key is added or changed.
 
 **Not a checklist row at all:** `DOHMH-ORGANIZER-NOTIFY-001` is kind `notification`, so it never becomes a trackable item under F-202 AC 1. The earlier draft surveyed it anyway.
 
 **So the survey was misaligned in both directions.** Four of its eight rows described findings the notice can never reach (DOHMH TFSE, FDNY generator/battery, FDNY fuel, FDNY open flame), one described a finding that is not a checklist row (DOHMH Article 88), and **four dated findings were never surveyed**: `SAPO-BLOCK-PARTY-001`, `DOB-ASSEMBLY-001`, `SLA-ONEDAY-001`, `SLA-CATERING-001`. The reviewer named the last three; `SAPO-BLOCK-PARTY-001` is this pass's own finding, and it is the instructive one, because 50 RCNY 1-07 is a SAPO rule and the temptation is to assume it reaches a SAPO permit the survey did not name. It may well. That is a reading, not a citation, and it is exactly the inheritance §4.4 forbids.
 
-**The unsurveyed four fall to the located-nothing wording until surveyed.** An unsurveyed finding does not inherit a neighbour's procedure, not from the same agency and not from the same rule family. They are not researched here: this document records the gap so it is scoped, and scoping it is not the same as closing it.
+**The unsurveyed four fall to the NOT-YET-CHECKED wording of AC-N+6, not to the located-nothing wording.** An earlier revision of this section sent them to "no published procedure was found", which reports a search that was never run; that is corrected here. An unsurveyed finding also does not inherit a neighbour's procedure, not from the same agency and not from the same rule family. They are not researched here: this document records the gap so it is scoped, and scoping it is not the same as closing it.
 
 ### 4.3 What was established
 
@@ -135,14 +206,14 @@ An earlier draft of this table had a row per permit type, because the external s
 | `SAPO-STREET-SMALL/MEDIUM/LARGE/XL-001`, `SAPO-PLAZA-001` | **AMEND**, filed application and granted permit                  | Title 50 RCNY 1-07: an applicant proposing to amend the date of a filed application **or a granted permit** must notify SAPO in writing; the Director approves or denies after agency and community board review. Scope covers both states explicitly. Not extended to `SAPO-BLOCK-PARTY-001`, which the survey did not cover.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `NYPD-SOUND-001`                                          | **NOT PUBLISHED**                                                | §10-108 publishes the date field, the five-day deadline and the revocation authority. No change procedure located.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `PARKS-EVENT-001`, `PARKS-TUA-001`                        | **NOT PUBLISHED**                                                | 56 RCNY 2-08(d) lets **Parks** offer an alternative date after a denial. That is an agency power, not an applicant procedure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `DOB-TENT-001`                                            | **NOT PUBLISHED**                                                | Post Approval Amendments exist for approved-scope changes, but nothing located says a date-only change is a PAA rather than a new filing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `DOB-TENT-001` **alone**                                  | **NOT PUBLISHED**                                                | Post Approval Amendments exist for approved-scope changes, but nothing located says a date-only change is a PAA rather than a new filing. Surveyed for the tent requirement only: the merged `DOB-TENT-001` + `DOB-TALL-STRUCTURE-001` requirement is a different line and is **not yet checked** (AC-N+6).                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `FDNY-GENERATOR-001`                                      | **Researched, currently unreachable. Falls to located-nothing.** | FDNY District Office Street-Fair/Special Event Guide, pp. 2-3: if the **inspection** must be postponed, the applicant requests cancellation and creates a new inspection request. p. 21 ties the inspection date to the event's first day; p. 23 lists gasoline and diesel generators. Three limits, any one of which is disqualifying on its own: the guide does not address re-dating an already-issued permit; the guide covers fuelled equipment while the same finding is also triggered by `battery_system_kwh` alone; and the rule's deadline is `research_required`, so the finding carries no `latest_apply_date` and the notice cannot fire on it at all. Retained as research in case the deadline becomes calculable, **not** as a procedure to publish. |
 | `DOHMH-VENDOR-PERMIT-001`                                 | **NOT PUBLISHED**, and unreachable                               | The permit is annual, and the located amendment form covers contacts and addresses, not an event date. Deadline is `research_required`, so the notice cannot reach it either way.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `FDNY-FUEL-001`, `FDNY-OPENFLAME-001`                     | **NOT PUBLISHED**, and unreachable                               | No procedure located for a date change. Both are `research_required`, so the notice cannot reach them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### 4.4 No inheritance
 
-A procedure applies to the findings its source covers and to no others. Not to another finding of the same agency, not to another rule in the same family, not to another trigger path of the same rule, and not to a state the source does not address. Every one of the four defects above is a different way of violating that one rule, which is why it is stated once here rather than repeated per row.
+A procedure applies to the requirements its source covers and to no others. Not to another finding of the same agency, not to another rule in the same family, not to another trigger path of the same rule, not to a state the source does not address, and **not to a merged requirement that adds a rule the source never mentioned**. Every one of the four defects above is a different way of violating that one rule, which is why it is stated once here rather than repeated per row.
 
 ### Method note: where to look next time
 
