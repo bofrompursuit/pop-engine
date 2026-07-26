@@ -1,0 +1,395 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
+import { formatSnapshotDate } from "../plan/snapshot-banner";
+import {
+  ACCEPTED_DOCUMENT_TYPES,
+  documentRejection,
+  type ChecklistItem,
+  type PlanContext,
+  type SourcePlan,
+} from "./checklist-api";
+
+// One checklist row. F-202 AC 2–5 and AC 8 all land here, and the row is deliberately the whole
+// unit of rendering: F-204's portal deep links, F-205's insurance card and F-206's per-row
+// provenance all attach to a checklist item, so a row is one component with one set of inputs
+// rather than markup spread across the view.
+//
+// Nothing here composes regulatory prose. Every string an organizer reads is either published in
+// the rules artifact and carried through the plan, or one of the schema's own status tokens.
+
+const humanize = (token: string): string => token.replace(/_/g, " ");
+
+const displayName = (context: PlanContext): string =>
+  context.permitName ?? context.ruleIds.join(", ");
+
+/**
+ * Whether this row has anything to say about timing. `deadlineStatus` is always set, so
+ * `not_applicable` with no dates, no prose and no published deadline means there is nothing to
+ * render.
+ */
+const hasDeadlineData = (context: PlanContext): boolean =>
+  context.deadlineDisplay !== null ||
+  context.latestApplyDate !== null ||
+  context.applyAfterDate !== null ||
+  context.deadlineStatus !== "not_applicable" ||
+  context.deadline !== null;
+
+/**
+ * The published deadline's own type, for a rule that states a kind of deadline but no prose and
+ * no computable date. SAPO-INSURANCE-001 publishes `{type: "before_issuance"}` and nothing else,
+ * and it is a trackable insurance line, so without this its checklist row would be silent about
+ * when the certificate has to exist.
+ */
+const deadlineTypeLabel = (context: PlanContext): string | null =>
+  context.deadlineDisplay === null &&
+  context.latestApplyDate === null &&
+  context.applyAfterDate === null &&
+  context.deadlineStatus === "not_applicable" &&
+  context.deadline !== null
+    ? humanize(context.deadline.type)
+    : null;
+
+/** Two snapshot pairs are the same pair, so the row has nothing the banner has not already said. */
+const samePlan = (left: SourcePlan, right: SourcePlan): boolean =>
+  left.rulesetVersion === right.rulesetVersion && left.snapshotDate === right.snapshotDate;
+
+/**
+ * The regulatory content of a row, shared by trackable items and by the read-only context lines,
+ * because the two say exactly the same things about a requirement and only differ in whether the
+ * organizer can act on them.
+ */
+export function PlanContextBody({
+  context,
+  currentPlan,
+}: {
+  context: PlanContext;
+  /**
+   * The snapshot the checklist's banner states. A row whose values came from that same snapshot
+   * does not repeat it; a row from a different one states its own (F-206 AC 4, F-202 AC 8).
+   */
+  currentPlan: SourcePlan;
+}) {
+  const ruleIds = context.ruleIds.join(", ");
+
+  return (
+    <>
+      <p className="check-item__meta">
+        {/* advisory and note lines legitimately publish no agency, so the label is omitted
+            rather than rendered empty. */}
+        {context.agency !== null && <span>{context.agency}</span>}
+        <span>{humanize(context.disposition)}</span>
+        <span className="check-item__rule-ids">{ruleIds}</span>
+      </p>
+
+      {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
+          on the row itself rather than discover in a tooltip. */}
+      {context.verificationStatus === "RESEARCH_REQUIRED" && (
+        <p className="check-item__caveat" role="note">
+          {CONFIRM_WITH_AGENCY}
+        </p>
+      )}
+
+      {/* Both readings of an official conflict, verbatim; never resolved to one silently. */}
+      {context.conflictText !== null && (
+        <p className="check-item__caveat">{context.conflictText}</p>
+      )}
+      {context.noteText !== null && context.noteText !== context.conflictText && (
+        <p className="check-item__text">{context.noteText}</p>
+      )}
+
+      {/* AC 5: the deadline context lives where the work happens. The published prose is optional
+          and ten dated rules omit it, so any deadline data at all renders the block. */}
+      {hasDeadlineData(context) && (
+        <p className="check-item__deadline">
+          {context.deadlineDisplay !== null && <span>{context.deadlineDisplay}</span>}
+          {deadlineTypeLabel(context) !== null && <span>{deadlineTypeLabel(context)}</span>}
+          {context.latestApplyDate !== null && (
+            <span>
+              {context.deadlineDisplay !== null && " · "}apply by {context.latestApplyDate}
+            </span>
+          )}
+          {/* When pursuit can realistically begin, NOT a bar on filing earlier: the strictness of
+              the ordering is RESEARCH_REQUIRED on the dependency rule, so "not before" would
+              assert a sequence the verification owner declined to assert. */}
+          {context.applyAfterDate !== null && (
+            <span>
+              {" · "}earliest realistic filing {context.applyAfterDate}
+            </span>
+          )}
+          {context.deadlineStatus !== "not_applicable" && (
+            <span>
+              {" · "}
+              {humanize(context.deadlineStatus)}
+            </span>
+          )}
+        </p>
+      )}
+      {context.timelineUnresolvedReason !== null && (
+        <p className="check-item__text">{context.timelineUnresolvedReason}</p>
+      )}
+      {context.deadlineUnknownFields.length > 0 && (
+        <p className="check-item__text">
+          depends on: {context.deadlineUnknownFields.map(humanize).join(", ")}
+        </p>
+      )}
+
+      {context.feeDisplay !== null && <p className="check-item__text">{context.feeDisplay}</p>}
+
+      {/* Some rules publish no portal URL at all: NYPD-SOUND-001 names the precinct and the form
+          number instead, and that text is the entire filing route for the row. */}
+      {context.portalUrl !== null ? (
+        <p className="check-item__text">
+          <a href={context.portalUrl} target="_blank" rel="noreferrer noopener">
+            {context.portalName ?? context.portalUrl}
+          </a>
+        </p>
+      ) : (
+        context.portalName !== null && <p className="check-item__text">{context.portalName}</p>
+      )}
+      {context.portalInstructions !== null && (
+        <p className="check-item__text">{context.portalInstructions}</p>
+      )}
+
+      {context.publishedNotes.map((note) => (
+        <p className="check-item__text" key={note}>
+          {note}
+        </p>
+      ))}
+
+      {context.verificationStatus === "COVERAGE_GAP" && context.sources.length === 0 && (
+        <p className="check-item__text">source not yet established</p>
+      )}
+      {context.sources.length > 0 && (
+        <ul className="check-item__citations">
+          {context.sources.map((source) => (
+            <li key={`${source.ruleId}:${source.citation}`}>
+              <span>{source.citation}</span>
+              {source.urls.map((url, index) => (
+                <a key={url} href={url} target="_blank" rel="noreferrer noopener">
+                  source {source.urls.length > 1 ? index + 1 : ""}
+                </a>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* AC 8: the plan whose values this row is showing, read off the row and never off the live
+          rules file. The version and the date travel together, because a pinned version beside
+          another source's date is a pair that never existed. Rows from the checklist's own
+          snapshot do not repeat what the banner already states. */}
+      {!samePlan(context.sourcePlan, currentPlan) && (
+        <p className="check-item__provenance">
+          Dates from rules snapshot {context.sourcePlan.rulesetVersion}
+          {context.sourcePlan.snapshotDate === null
+            ? " · publication date not recorded for that plan"
+            : ` · published ${formatSnapshotDate(context.sourcePlan.snapshotDate)}`}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** A read-only line: an advisory, a notification or a prohibition. Never a trackable task. */
+export function ContextLine({
+  context,
+  currentPlan,
+}: {
+  context: PlanContext;
+  currentPlan: SourcePlan;
+}) {
+  const headingId = `context-${context.ruleIds.join("-")}`;
+
+  return (
+    <article className="check-item check-item--context" aria-labelledby={headingId}>
+      <div className="check-item__head">
+        <h3 className="check-item__name" id={headingId}>
+          {displayName(context)}
+        </h3>
+        <span className="badge">context</span>
+      </div>
+      <PlanContextBody context={context} currentPlan={currentPlan} />
+    </article>
+  );
+}
+
+export type ChecklistItemCardProps = {
+  item: ChecklistItem;
+  currentPlan: SourcePlan;
+  /** Resolves to a failure message, or null when the change was saved. */
+  onStatusChange: (status: ChecklistStatus) => Promise<string | null>;
+  onNotesSave: (notes: string) => Promise<string | null>;
+  /** Resolves to a failure and whether sending the same file again is worth doing. */
+  onUpload: (file: File) => Promise<{ message: string; retryable: boolean } | null>;
+  onDownload: (documentId: string) => Promise<string | null>;
+};
+
+export function ChecklistItemCard({
+  item,
+  currentPlan,
+  onStatusChange,
+  onNotesSave,
+  onUpload,
+  onDownload,
+}: ChecklistItemCardProps) {
+  const name = displayName(item);
+  const [notesDraft, setNotesDraft] = useState(item.notes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  /** Run one organizer action, holding the row while it is in flight and reporting what it said. */
+  const run = async (action: () => Promise<string | null>) => {
+    setBusy(true);
+    setFailure(null);
+    const message = await action();
+    setFailure(message);
+    setBusy(false);
+  };
+
+  const upload = async () => {
+    if (file === null) return;
+    setBusy(true);
+    setFailure(null);
+    const failed = await onUpload(file);
+    // A failed upload changes nothing about the item and leaves no metadata behind, so the file
+    // stays selected and the same button sends it again (spec edge case).
+    if (failed === null) {
+      setFile(null);
+      if (fileInput.current !== null) fileInput.current.value = "";
+    }
+    setFailure(
+      failed === null
+        ? null
+        : failed.retryable
+          ? `${failed.message} The file is still selected, so you can try the upload again.`
+          : failed.message,
+    );
+    setBusy(false);
+  };
+
+  const chooseFile = (chosen: File | null) => {
+    setFailure(chosen === null ? null : documentRejection(chosen));
+    setFile(chosen);
+  };
+
+  return (
+    <article
+      className={item.inLatestPlan ? "check-item" : "check-item check-item--dropped"}
+      aria-labelledby={`check-${item.id}`}
+    >
+      <div className="check-item__head">
+        <h3 className="check-item__name" id={`check-${item.id}`}>
+          {name}
+        </h3>
+        <span className={`badge badge--${item.status}`}>{humanize(item.status)}</span>
+      </div>
+
+      {/* AC 6: a requirement the current plan no longer raises is struck through and kept, with
+          its status, notes and documents. Nothing is ever deleted. */}
+      {!item.inLatestPlan && (
+        <p className="check-item__retained" role="note">
+          The current plan no longer raises this requirement. It is kept with everything recorded
+          against it; nothing has been deleted.
+        </p>
+      )}
+
+      <PlanContextBody context={item} currentPlan={currentPlan} />
+
+      <div className="check-item__track">
+        <label className="check-item__field">
+          <span className="check-item__field-label">Status</span>
+          {/* AC 2: any transition, in any order. Agencies are messy, so the control offers every
+              status from every status rather than a next-step ladder. */}
+          <select
+            className="check-item__select"
+            aria-label={`Status for ${name}`}
+            value={item.status}
+            disabled={busy}
+            onChange={(event) => {
+              const status = event.target.value as ChecklistStatus;
+              void run(() => onStatusChange(status));
+            }}
+          >
+            {CHECKLIST_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {humanize(status)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="check-item__field">
+          <span className="check-item__field-label">Notes</span>
+          <textarea
+            className="check-item__notes"
+            aria-label={`Notes for ${name}`}
+            rows={2}
+            value={notesDraft}
+            disabled={busy}
+            onChange={(event) => setNotesDraft(event.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="check-item__button"
+          disabled={busy || notesDraft === (item.notes ?? "")}
+          onClick={() => void run(() => onNotesSave(notesDraft))}
+        >
+          Save notes
+        </button>
+      </div>
+
+      <div className="check-item__documents">
+        {item.documents.length > 0 && (
+          <ul className="check-item__document-list">
+            {item.documents.map((document) => (
+              <li key={document.id}>
+                <span>{document.filename}</span>
+                <button
+                  type="button"
+                  className="check-item__button"
+                  disabled={busy}
+                  onClick={() => void run(() => onDownload(document.id))}
+                >
+                  Download
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <label className="check-item__field">
+          <span className="check-item__field-label">
+            Add a document (PDF, PNG or JPG, up to 10 MB)
+          </span>
+          <input
+            ref={fileInput}
+            type="file"
+            aria-label={`Add a document to ${name}`}
+            accept={ACCEPTED_DOCUMENT_TYPES.join(",")}
+            disabled={busy}
+            onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <button
+          type="button"
+          className="check-item__button"
+          disabled={busy || file === null || documentRejection(file) !== null}
+          onClick={() => void upload()}
+        >
+          {busy ? "Working…" : "Upload"}
+        </button>
+      </div>
+
+      {failure !== null && (
+        <p className="check-item__error" role="alert">
+          {failure}
+        </p>
+      )}
+    </article>
+  );
+}
