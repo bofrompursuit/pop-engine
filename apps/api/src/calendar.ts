@@ -134,13 +134,17 @@ export class MissingHolidayCalendarError extends Error {
  *   - §3314.4.1.5, adjustable suspended scaffold installation and removal, again 24-48 hours:
  *     "Should the notification date fall on a weekend or official holiday, the notification shall be
  *     made on the last business day before the commencement date of the installation or removal."
- * Against that, the TUP materials publish the 15-business-day lead and stop. Checked 2026-07-26:
- * the TUP page (nyc.gov/site/buildings/industry/tup.page), the TUP intake form and checklist
- * (nyc.gov/assets/buildings/pdf/tup-formchecklist.pdf) and the TUP service notice
- * (nyc.gov/assets/buildings/pdf/tup-sn.pdf) contain no definition of "business day", no weekend or
- * holiday rule, and no cross-reference to §3306.3.1 or to either of the others. The form and
- * checklist do not use the words "business day", "holiday" or "weekend" at all. Those are the
- * observables, and they are where this stops.
+ * Against that, the TUP materials publish the lead and stop. Checked 2026-07-26, and stated per
+ * source because they do not all say the same thing: the TUP page
+ * (nyc.gov/site/buildings/industry/tup.page) and the TUP service notice
+ * (nyc.gov/assets/buildings/pdf/tup-sn.pdf) each state the lead as "no later than 15 business days
+ * prior"; the TUP intake form and checklist (nyc.gov/assets/buildings/pdf/tup-formchecklist.pdf)
+ * states no lead time at all, being a document checklist plus fees and submission mechanics. None of
+ * the three defines "business day", states a weekend or holiday rule, or cross-references §3306.3.1
+ * or either of the others. Those are the observables, and they are where this stops. The per-source
+ * split matters enough to keep: an earlier draft of this paragraph attributed the lead to all three
+ * at once, which is false of the checklist, and docs/VERIFICATION-SOURCES.md Round 5 carries the
+ * same breakdown in a table.
  *
  * WHAT THE OMISSION MEANS IS NOT ESTABLISHED, and no located source reaches it. Nothing in the TUP
  * materials, in Chapter 33, or anywhere else consulted says the omission was considered, and no
