@@ -460,6 +460,22 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     // recalculated, not patched (PRD principle 6). A dropped requirement keeps the dates of
     // the last plan that raised it, which is the honest last-known state.
     const source = current ?? item;
+    // A row describes two objects, which is worth stating because nothing said so before. The
+    // persisted half is the organizer's: `id`, `planItemId`, `status`, `notes`, `documents`.
+    // Everything `planContext` returns is regulatory content read off `source`, `sourcePlan`
+    // included, so on a still-required row that provenance names the LATEST plan.
+    //
+    // That last part is UNRESOLVED, not settled, and this comment does not claim it is right.
+    // SPEC-CONFLICT #115: F-202 AC 8 and F-206:28 say a retained row is attributed through its
+    // plan-item relationship and never to the checklist's current plan, which would name the
+    // persisted item; F-206 AC 4 forbids pairing a version with data it never carried, and the row
+    // renders the latest plan's recalculated dates (PRD principle 6), which would name the latest
+    // plan. No attribution satisfies both while the values come from the latest plan, so the
+    // resolution is an approved-artifact decision and #115 holds it. Described here so the next
+    // reader knows which behaviour they are looking at and that it is contested.
+    //
+    // A DROPPED row is not in dispute: `current` is undefined, `source` is `item`, and every
+    // artifact agrees it reports the plan that raised it.
     return {
       id: item.checklist_item_id,
       planItemId: item.plan_item_id,

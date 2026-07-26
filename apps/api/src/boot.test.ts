@@ -47,6 +47,26 @@ async function cyclicRulesetFile(): Promise<string> {
   return file;
 }
 
+/**
+ * The published ruleset with one rule's `verification.last_verified_date` replaced.
+ *
+ * Every value passed here is shaped like a date and accepted by any string check, and the field is
+ * written to a Postgres `date` column — so a validator that lets one through moves the failure from
+ * boot to every plan generation that reaches that rule, one organizer at a time, on an api that
+ * booted clean.
+ */
+async function verificationDateRulesetFile(date: string, name: string): Promise<string> {
+  const published: { rules: { verification: { last_verified_date?: string } }[] } = JSON.parse(
+    await readFile(rulesFilePath(), "utf8"),
+  );
+  const rule = published.rules[0];
+  if (rule === undefined) throw new Error("published ruleset has no rules");
+  rule.verification.last_verified_date = date;
+  const file = join(mkdtempSync(join(tmpdir(), "pop-engine-boot-")), name);
+  writeFileSync(file, JSON.stringify(published));
+  return file;
+}
+
 function runBoot(rulesFile: string): Promise<{ code: number | null; stderr: string }> {
   return new Promise((settle) => {
     const child = spawn("npx", ["tsx", "src/index.ts"], {
@@ -81,6 +101,30 @@ describe.runIf(databaseUrl.length > 0)("boot refuses a malformed ruleset before 
     expect(result.stderr).toMatch(/scoping is cyclic/);
     // The probe database has no permit_rules. Had the sync run first, that is the error we
     // would see instead, so its absence is the proof that nothing was written.
+    expect(result.stderr).not.toMatch(/permit_rules/);
+  }, 90_000);
+
+  it("fails on a verification date no calendar has, before any plan could be written", async () => {
+    // The point of catching this here rather than at the INSERT: a `date` column would refuse it
+    // too, but only once an organizer generated a plan, one plan at a time, on a running api that
+    // booted clean. Boot validation exists so a bad artifact never gets that far (F-201 AC 6).
+    const result = await runBoot(await verificationDateRulesetFile("2026-13-45", "bad-date.json"));
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/last_verified_date must be an ISO date/);
+    expect(result.stderr).not.toMatch(/permit_rules/);
+  }, 90_000);
+
+  it("fails on ISO year zero, which the calendar round trip alone lets through", async () => {
+    // The one value where a JS date check and a Postgres `date` cast disagree. ISO 8601 has a year
+    // zero and ECMAScript implements it, so "0000-01-01" is correctly shaped AND round-trips
+    // unchanged — it passed the validator, booted the api clean, and would have failed at the
+    // INSERT instead: the deferred failure boot validation exists to prevent, reached through the
+    // validator rather than around it. Driven as a real boot because that is the claim being made.
+    const result = await runBoot(await verificationDateRulesetFile("0000-01-01", "year-zero.json"));
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/last_verified_date has no year 0000/);
     expect(result.stderr).not.toMatch(/permit_rules/);
   }, 90_000);
 

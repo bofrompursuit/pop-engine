@@ -426,6 +426,15 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       });
     });
 
+    // A test pinning a still-required row's `sourcePlan` to the latest plan was removed here, and
+    // is deliberately not replaced. It asserted one side of SPEC-CONFLICT #115: F-202 AC 8 and
+    // F-206:28 say a retained row is attributed through its plan-item relationship and never to
+    // the checklist's current plan, while F-206 AC 4 forbids pairing a version with data it never
+    // carried — and the row renders the latest plan's recalculated dates, so no attribution
+    // satisfies all three. Whichever way #115 resolves, a test asserting the current behaviour is
+    // correct would be asserting the losing side. The dropped-row case is not in dispute and stays
+    // asserted above.
+
     it("carries the apply_after date of a dependency-gated item (AC 5, Scenario C)", async () => {
       const { body } = await checklistFor("C");
       const gated = body.items.find((item) => item.ruleIds[0] === "NYPD-SOUND-001");

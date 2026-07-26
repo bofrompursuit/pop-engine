@@ -96,6 +96,52 @@ function requireString(object: JsonObject, key: string, label: string): string {
   return value;
 }
 
+/**
+ * A `YYYY-MM-DD` day that a Postgres `date` column will store as itself.
+ *
+ * Both dates this guards reach a `date` column, and a column is the wrong place to find out: the
+ * api would boot clean on a bad artifact and then fail every plan write, per organizer, at the
+ * moment the plan is generated. Boot validation exists so that never happens (F-201 AC 6). That
+ * makes the promise here specific — not "this parses in JS" but "this survives the column" — so all
+ * three clauses below are load-bearing and each rejects a class the others let through.
+ *
+ * 1. THE SHAPE excludes a wide class Postgres would otherwise accept and reinterpret. `date` input
+ *    takes `today`, `epoch`, `infinity`, `-infinity`, ordinal `2026-189`, `20260718`, `2026/07/18`,
+ *    `July 18, 2026`, `4713-01-01 BC` and years past 9999 — every one of which would become a
+ *    published verification date that no source states. It also excludes `2026-7-18`, which
+ *    Postgres accepts and pads, so the response and the row read back would disagree.
+ * 2. THE ROUND TRIP rejects impossible days inside the shape — "2026-02-31", "2026-13-45" — because
+ *    `Date.parse` rolls them forward, so they do not come back as themselves.
+ * 3. YEAR 0000 is the one place clauses 1 and 2 agree and Postgres does not. ISO 8601 has a year
+ *    zero and ECMAScript implements it, so "0000-01-01" satisfies the shape and round-trips
+ *    unchanged; Postgres has no year 0 (1 BC is followed by 1 AD) and refuses it at the cast. Left
+ *    to clause 2 alone this was the deferred failure the whole check exists to stop, surviving
+ *    inside the check.
+ *
+ * That clause 3 is the ONLY such place is measured rather than assumed. Every string the shape
+ * admits was cast against Postgres 16 and compared with this predicate — the full year axis
+ * 0000–9999, the full month and day axes, February 28 and 29 of all 10,000 years, and each month's
+ * last and first-invalid day across the boundary years. 30,488 values: the two disagree on year
+ * 0000 and nowhere else, no value that both accept is stored as a different day, and DateStyle
+ * changes only how a date is rendered, never how `YYYY-MM-DD` is read. So the JS check standing in
+ * for the cast is justified over the space it admits, not merely hoped to be.
+ */
+function requireIsoDate(value: string, label: string): void {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(parsed) ||
+    new Date(parsed).toISOString().slice(0, 10) !== value
+  ) {
+    validationError(`${label} must be an ISO date`);
+  }
+  // Named separately because the value is a legal ISO date, so "must be an ISO date" would send an
+  // operator looking for a typo that is not there.
+  if (value.startsWith("0000-")) {
+    validationError(`${label} has no year 0000; Postgres dates run 1 BC to 1 AD with none between`);
+  }
+}
+
 function parseSource(value: unknown, label: string): JsonObject {
   const source = requireObject(value, label);
   requireString(source, "citation", label);
@@ -170,6 +216,14 @@ function parseRule(
   if (!VERIFICATION_STATUSES.has(verificationStatus)) {
     validationError(`${label}.verification.status has unsupported value "${verificationStatus}"`);
   }
+  // Optional (F-206: a date is stored only when every contributing rule publishes one), but when
+  // it is published it is written to `permit_plan_items.last_verified_date`, a `date` column.
+  if (verification.last_verified_date !== undefined) {
+    requireIsoDate(
+      requireString(verification, "last_verified_date", `${label}.verification`),
+      `${label}.verification.last_verified_date`,
+    );
+  }
 
   const source = rule.source === undefined ? null : parseSource(rule.source, `${label}.source`);
   if (source === null && verificationStatus !== "COVERAGE_GAP") {
@@ -193,14 +247,7 @@ export function validateRuleset(value: unknown): PublishedRuleset {
   }
 
   const snapshotDate = requireString(ruleset, "snapshot_date", "ruleset");
-  const parsedSnapshotDate = Date.parse(`${snapshotDate}T00:00:00Z`);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate) ||
-    Number.isNaN(parsedSnapshotDate) ||
-    new Date(parsedSnapshotDate).toISOString().slice(0, 10) !== snapshotDate
-  ) {
-    validationError("ruleset.snapshot_date must be an ISO date");
-  }
+  requireIsoDate(snapshotDate, "ruleset.snapshot_date");
 
   const status = requireString(ruleset, "status", "ruleset");
   if (!status.startsWith("APPROVED")) {
