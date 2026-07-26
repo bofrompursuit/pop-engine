@@ -525,7 +525,7 @@ describe("AC 3 · documents upload and download", () => {
   // The connection dropped with no response. That is NOT the same as nothing being stored: the
   // request may have been processed and committed before the drop, and the api mints a fresh
   // document id and storage key per request, so a one-click resend would store a second copy.
-  it("refreshes the checklist and clears the file when an upload never completed", async () => {
+  it("refreshes the checklist and keeps the file when an upload never completed", async () => {
     let attempts = 0;
     const calls = stubApi({
       [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
@@ -545,13 +545,19 @@ describe("AC 3 · documents upload and download", () => {
     const row = rowFor(STREET_MEDIUM);
     expect((await within(row).findByRole("alert")).textContent).toBe(
       "The connection did not complete, so whether this document was stored is not known. " +
-        "The checklist has been refreshed, so check whether it is listed before uploading it again.",
+        "The checklist has been refreshed; it may not show an upload that is still finishing. " +
+        "The file is still selected — uploading it again is safe, because the same file cannot be " +
+        "stored twice on this item.",
     );
     // Reconciled rather than guessed: the list itself is the answer, and it is re-read.
     expect(checklistReads(calls)).toHaveLength(2);
-    // No one-click resend of something that may already be stored. Upload is inert until a file
-    // is chosen again, which survives a page reload in a way a disabled button does not.
-    expect(within(row).getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(true);
+    // The file stays selected and Upload stays live, which is now the RIGHT affordance rather
+    // than a hazard: the api derives the document id from the upload key, so sending the same
+    // file again is the same document. Clearing it used to be the guard; the guard moved to the
+    // write, where a client that cannot observe its own request no longer has to.
+    expect(within(row).getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(
+      false,
+    );
     expect(attempts).toBe(1);
   });
 

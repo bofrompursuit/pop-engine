@@ -275,12 +275,12 @@ export function ChecklistItemCard({
     setBusy(true);
     setFailure(null);
     const failed = await onUpload(file);
-    // The file is kept for a resend ONLY when the api stored nothing, which is the spec's
-    // retryable edge case. Keeping it after an upload that may have landed offered a one-click
-    // resend of a document the message itself said might already be there, and the api mints a
-    // new id and storage key per request, so that click stores a duplicate. Clearing it does not
-    // forbid a second upload — the organizer can pick the file again — it stops the accident.
-    if (failed === null || failed.outcome !== "not_stored") {
+    // The file is cleared only when the document is known to be stored, because then there is
+    // nothing left to do with it. It used to be cleared for an uncertain outcome as well, to stop
+    // a one-click resend of something that might already be there — that guard is gone because
+    // what it guarded against is gone: the api now derives the document id from the upload key,
+    // so sending the same file again is the same document, not a second one.
+    if (failed === null || failed.outcome === "stored") {
       setFile(null);
       if (fileInput.current !== null) fileInput.current.value = "";
     }
@@ -293,7 +293,11 @@ export function ChecklistItemCard({
             // organizer needs to know is that nothing landed, and that the file they picked is the
             // one still selected.
             `${failed.message} Nothing was stored, so the file is still selected.`
-          : failed.message,
+          : failed.outcome === "unknown"
+            ? // The one thing an organizer can act on, and it is now safe: the file is still
+              // selected and sending it again cannot produce a second copy.
+              `${failed.message} The file is still selected — uploading it again is safe, because the same file cannot be stored twice on this item.`
+            : failed.message,
     );
     setBusy(false);
   };

@@ -201,14 +201,17 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     if (result.outcome === "not_stored")
       return { message: result.message, outcome: result.outcome };
 
-    // Anything else may be on the item already. Rather than guess, or ask the organizer to guess,
-    // re-read the checklist so the document list itself is the answer — it is the same list a page
-    // reload would show, which is why this is reconciling rather than disabling a button.
+    // Anything else may be on the item already, so the checklist is re-read and the list shown
+    // rather than guessed at. The re-read is deliberately NOT the safety mechanism: it can finish
+    // before a still-running upload commits, so the list it shows may be a moment early. What
+    // makes that harmless is on the write — the api derives the document id from the upload key,
+    // so a second attempt with the same file is the same document. The list is information; the
+    // key is the guarantee.
     const failure = await reload(requested);
     return {
       message:
         failure === null
-          ? `${result.message} The checklist has been refreshed, so check whether it is listed before uploading it again.`
+          ? `${result.message} The checklist has been refreshed; it may not show an upload that is still finishing.`
           : `${result.message} The checklist could not be refreshed either: ${failure}`,
       outcome: result.outcome,
     };

@@ -43,7 +43,7 @@ export function createApp(dependencies: AppDependencies): Express {
       // X-Filename carries a document upload's display name (F-202). A preflight that lists a
       // header this allowlist omits fails in the browser before the route is ever reached, and
       // web and api are separately hosted, so that is the normal path rather than an edge case.
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Filename");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Filename, X-Upload-Key");
       res.sendStatus(204);
       return;
     }

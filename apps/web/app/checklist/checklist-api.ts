@@ -413,6 +413,26 @@ export async function updateChecklistItem(
   return { ok: true, item };
 }
 
+/**
+ * The idempotency key for uploading this file, derived from the file itself.
+ *
+ * It has to survive a page reload, because the case that motivates it is an organizer whose
+ * upload was interrupted, who refreshes and picks the same file again. Anything held in component
+ * state, or in this tab's storage, is gone by then — so nothing is held. The key is a function of
+ * what the organizer re-selects, which means re-selecting the same file reproduces it across a
+ * reload, a new tab, or a restarted browser.
+ *
+ * `lastModified` is what keeps it honest in the other direction: a corrected file saved under the
+ * same name is a different key and a different document, which is what an organizer replacing an
+ * application expects. Uploading a byte-identical file to the same item twice does collapse into
+ * one document, and that is the intended reading — a second copy of the same file on the same
+ * requirement is the accident this exists to prevent, not a case worth preserving.
+ *
+ * ASCII by construction, so it is a legal header value with no encoding step of its own.
+ */
+export const uploadKey = (file: File): string =>
+  `${file.size}-${file.lastModified}-${encodeURIComponent(file.name)}`;
+
 /** Why this file cannot be uploaded, or null when it can (AC 3). */
 export function documentRejection(file: File): string | null {
   if (!(ACCEPTED_DOCUMENT_TYPES as readonly string[]).includes(file.type)) {
@@ -435,6 +455,10 @@ export function documentRejection(file: File): string | null {
  * name throws a `TypeError` while the request is being constructed, before a byte is sent, and
  * the throw lands in the same `catch` as a network failure. A valid PDF was unuploadable and the
  * organizer was told the API could not be reached. The api decodes it back (`decodeFilename`).
+ *
+ * `X-Upload-Key` is what makes a repeat harmless. The api derives the document id and the storage
+ * key from it, so the same key names the same document however many times it arrives — and a
+ * client that cannot observe whether a request landed no longer has to.
  */
 export async function uploadDocument(
   apiBaseUrl: string,
@@ -446,7 +470,11 @@ export async function uploadDocument(
     response = await fetch(`${apiBaseUrl}/api/checklist-items/${itemId}/documents`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": file.type, "X-Filename": encodeURIComponent(file.name) },
+      headers: {
+        "Content-Type": file.type,
+        "X-Filename": encodeURIComponent(file.name),
+        "X-Upload-Key": uploadKey(file),
+      },
       body: file,
     });
   } catch {

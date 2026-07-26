@@ -10,6 +10,7 @@ import {
   MAX_DOCUMENT_BYTES,
   updateChecklistItem,
   uploadDocument,
+  uploadKey,
 } from "./checklist-api";
 import { checklistBody, planContext, STREET_MEDIUM, trackedItem } from "./checklist-fixtures";
 
@@ -383,6 +384,55 @@ describe("uploadDocument", () => {
     expect(result).toEqual({ ok: true, document: { id: "doc-1", filename: name } });
     expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)["X-Filename"]).toBe(
       encoded,
+    );
+  });
+
+  // The key has to survive a page reload, because the case it exists for is an organizer whose
+  // upload was interrupted, who refreshes and picks the same file again. Nothing is stored to
+  // achieve that: the key is a function of the file, so re-selecting it reproduces the key in a
+  // new tab, a new session, or a restarted browser.
+  it("derives an upload key that a fresh File object reproduces", () => {
+    const bytes = new Uint8Array(8);
+    const picked = new File([bytes], "\u7533\u8bf7\u4e66.pdf", {
+      type: "application/pdf",
+      lastModified: 1769472000000,
+    });
+    // The same file, chosen again after a reload: a different object, same attributes.
+    const repicked = new File([bytes], "\u7533\u8bf7\u4e66.pdf", {
+      type: "application/pdf",
+      lastModified: 1769472000000,
+    });
+
+    expect(uploadKey(repicked)).toBe(uploadKey(picked));
+    // ASCII by construction, so it is a legal header value with no encoding step of its own.
+    expect([...uploadKey(picked)].every((character) => character.charCodeAt(0) <= 0x7f)).toBe(true);
+  });
+
+  it("derives a different key for a file edited under the same name", () => {
+    const original = new File([new Uint8Array(8)], "application.pdf", {
+      type: "application/pdf",
+      lastModified: 1769472000000,
+    });
+    const corrected = new File([new Uint8Array(9)], "application.pdf", {
+      type: "application/pdf",
+      lastModified: 1769558400000,
+    });
+
+    // Replacing a filed application is a new document, not a repeat of the old one.
+    expect(uploadKey(corrected)).not.toBe(uploadKey(original));
+  });
+
+  it("sends the upload key so the api can make a repeat the same document", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(201, { id: "doc-1", filename: "a.pdf" }));
+    const file = new File([new Uint8Array(8)], "a.pdf", {
+      type: "application/pdf",
+      lastModified: 1769472000000,
+    });
+
+    await uploadDocument("https://api.example.com", "item-1", file);
+
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)["X-Upload-Key"]).toBe(
+      uploadKey(file),
     );
   });
 

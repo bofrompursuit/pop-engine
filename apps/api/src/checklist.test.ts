@@ -917,6 +917,92 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(storedKey).toBe(`checklist-items/${itemId}/${storedKey?.split("/")[2]}`);
     });
 
+    // The root of the duplicate-document defect, fixed at the write instead of at the read.
+    // Three review rounds tried to stop the client repeating a request whose result it could not
+    // observe; a client cannot know that, so the repeat is made harmless instead.
+    it("stores one document however many times the same upload key arrives", async () => {
+      const storage = fakeStorage();
+      const { eventId, body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = () =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .set("X-Upload-Key", "1024-1769472000000-application.pdf")
+          .send(PDF);
+
+      const first = await send();
+      const second = await send();
+      // A third from a "different session": the key is derived from the file, so a reload and a
+      // re-pick reproduce it. That is the case the read-side fixes could not cover.
+      const third = await send();
+
+      expect(first.status).toBe(201);
+      // 200, not 201: nothing was created, which is the distinction the checklist endpoint draws.
+      expect(second.status).toBe(200);
+      expect(third.status).toBe(200);
+      expect(second.body.id).toBe(first.body.id);
+      expect(third.body.id).toBe(first.body.id);
+
+      const { rows } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM documents WHERE checklist_item_id = $1",
+        [itemId],
+      );
+      expect(rows[0]?.count).toBe("1");
+      // And one object, because the storage key is derived from the same id.
+      expect(storage.objects.size).toBe(1);
+
+      const listed = await request(appWith(storage)).get(`/api/events/${eventId}/checklist`);
+      expect(
+        (listed.body.items as ChecklistItemView[]).find((item) => item.id === itemId)?.documents,
+      ).toHaveLength(1);
+    });
+
+    it("stores two documents for two different upload keys", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = (key: string) =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .set("X-Upload-Key", key)
+          .send(PDF);
+
+      // Same name, edited: a different size or timestamp is a different key and a different
+      // document, which is what replacing a filed application looks like.
+      const first = await send("1024-1769472000000-application.pdf");
+      const second = await send("2048-1769558400000-application.pdf");
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.id).not.toBe(first.body.id);
+      expect(storage.objects.size).toBe(2);
+    });
+
+    it("keeps minting a fresh document when a client sends no upload key", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = () =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .send(PDF);
+
+      const first = await send();
+      const second = await send();
+
+      // Additive: a client that sends no key gets exactly the previous behaviour rather than an
+      // error, and two uploads remain two documents.
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.id).not.toBe(first.body.id);
+    });
+
     // Every accepted type is one a browser renders inline, so a plain signed GET previews the
     // document under a control labelled Download. The disposition is signed with the URL, so it
     // cannot be stripped by whoever holds the link.
@@ -1938,12 +2024,14 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         .options("/api/checklist-items/00000000-0000-4000-8000-000000000000/documents")
         .set("Origin", "http://localhost:3000")
         .set("Access-Control-Request-Method", "POST")
-        .set("Access-Control-Request-Headers", "content-type,x-filename");
+        .set("Access-Control-Request-Headers", "content-type,x-filename,x-upload-key");
 
       expect(response.status).toBe(204);
-      expect((response.headers["access-control-allow-headers"] ?? "").toLowerCase()).toContain(
-        "x-filename",
-      );
+      const allowed = (response.headers["access-control-allow-headers"] ?? "").toLowerCase();
+      expect(allowed).toContain("x-filename");
+      // Without this the browser drops the idempotency key on a cross-origin upload, and every
+      // repeat becomes a new document again — the failure would be invisible from the api's side.
+      expect(allowed).toContain("x-upload-key");
     });
   });
 });
