@@ -162,11 +162,23 @@ describe("ruleset validation", () => {
       error: /alert_offsets must be an object/,
     },
     {
-      name: "alert offsets configuring no alert type",
+      name: "alert offsets carrying no deadline_reminder",
       mutate: (ruleset) => {
         object(ruleset.config).alert_offsets = { note: "only metadata" };
       },
-      error: /alert_offsets must configure at least one alert type/,
+      error: /alert_offsets\.deadline_reminder is required/,
+    },
+    {
+      // The closed half is about the NAMED entry, not about the map being nonempty: an artifact
+      // configuring some other type still leaves F-203 with nothing to read at the path it uses.
+      name: "alert offsets carrying a different type instead",
+      mutate: (ruleset) => {
+        object(ruleset.config).alert_offsets = {
+          slack_warning: { days_before: [3] },
+          note: "no deadline_reminder",
+        };
+      },
+      error: /alert_offsets\.deadline_reminder is required/,
     },
     {
       name: "an alert type with no days_before",
@@ -218,9 +230,10 @@ describe("ruleset validation", () => {
       error: /repeats 7, which would send the same reminder twice/,
     },
     {
-      name: "a later alert type whose offsets are unusable",
+      name: "a later alert type whose days_before is unusable",
       mutate: (ruleset) => {
-        // Unknown keys are alert types by design, so a new one is validated like the first.
+        // Unknown keys are alert types by design. The open half still checks the ONE shape this
+        // file understands, so a future entry using `days_before` is held to the same rules.
         alertOffsets(ruleset).slack_warning = { days_before: ["soon"] };
       },
       error: /slack_warning\.days_before\[0\] must be a positive whole number/,
@@ -425,6 +438,35 @@ describe("ruleset validation", () => {
     const ruleset = await readRawRuleset();
     mutate(ruleset);
     expect(() => validateRuleset(ruleset)).toThrow(error);
+  });
+
+  it("accepts a later alert kind that schedules by something other than days_before", async () => {
+    // The open half, asserted rather than described. The published note says each alert type owns an
+    // object precisely so a kind scheduling by an absolute date or an hour offset can add its own
+    // field, so requiring `days_before` of every entry rejected exactly the extension the artifact
+    // invites — which is what F-305 and F-413 are named in that note to do.
+    for (const futureEntry of [
+      { at_time: "09:00", timezone: "America/New_York" },
+      { hours_before: [48, 6] },
+      { absolute_date: "2026-08-01" },
+      // No recognised field at all: accepted rather than guessed at, since there is no field name to
+      // require without predicting the mechanism.
+      { pending_design: true },
+    ]) {
+      const ruleset = await readRawRuleset();
+      alertOffsets(ruleset).f305_digest = futureEntry;
+      expect(() => validateRuleset(ruleset), JSON.stringify(futureEntry)).not.toThrow();
+    }
+  });
+
+  it("still requires deadline_reminder when a later kind is present", async () => {
+    // The two halves at once: an artifact may add any kind it likes and still may not drop the one
+    // F-203 reads. This is the case that fails if either half is collapsed into the other.
+    const ruleset = await readRawRuleset();
+    const offsets = alertOffsets(ruleset);
+    offsets.f305_digest = { at_time: "09:00" };
+    delete offsets.deadline_reminder;
+    expect(() => validateRuleset(ruleset)).toThrow(/deadline_reminder is required/);
   });
 
   it("accepts the years either side of the one Postgres has no room for", async () => {
