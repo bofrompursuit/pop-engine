@@ -68,6 +68,36 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     holidays: [],
   });
 
+  // The missing-list path, stated outright. These tests used to reach it by passing production's
+  // own `pinnedCalendar`, which degrades only for as long as no list is published — so publishing
+  // one would have flipped them from "exercises the missing-list path" to "fails", and the path
+  // itself would have gone untested at the moment it mattered most. The behaviour under test is
+  // "the calendar publishes no list", so the calendar says that.
+  const unpublishedCalendar = (calendarId: string): HolidayCalendar => ({
+    id: calendarId,
+    holidays: null,
+  });
+
+  /**
+   * What the pinned-calendar notification below says when it fails, since the failure is the whole
+   * point of it. It must not read as "you broke something": publishing this list is one of the
+   * resolutions SPEC-CONFLICT #130 records, and an approved criterion is unsatisfiable until one of
+   * them happens.
+   */
+  const PUBLICATION_IS_A_RESOLUTION = [
+    `A holiday list is now published for the ruleset's pinned calendar.`,
+    `THIS IS AN EXPECTED RESOLUTION OF SPEC-CONFLICT #130, NOT A REGRESSION:`,
+    `F-201 AC 10 and ARCHITECTURE AD-11 both require business-day math against this calendar, and`,
+    `neither is satisfiable in production while no list exists. This assertion is a notification,`,
+    `so that publishing lands in one visible place instead of silently moving three plan dates.`,
+    `Before deleting it, read the doc comment on PUBLISHED_HOLIDAY_CALENDARS in`,
+    `apps/api/src/calendar.ts: it records what blocked publication — no source consulted defines`,
+    `"business day" for a filing lead, which is the independent reason, and one calendar id spans`,
+    `a city agency and a state agency whose published STAFF holiday schedules differ, which matters`,
+    `only if a staff closure stops a filing counter and nothing establishes that it does — and #130`,
+    `records the resolutions and their costs. If those are answered, delete this test and close #130.`,
+  ].join(" ");
+
   // The app serves the intake routes alongside the plan routes, so it takes their
   // dependencies too. These tests drive only the plan routes; the intake contract and
   // the pool are the same ones the api boots with.
@@ -291,7 +321,9 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     // Scenario A triggers no business-day rule, so its plan is fully computable. Withholding it
     // because some other rule would have needed a holiday list helps nobody.
     const eventId = await insertEvent();
-    const response = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+    const response = await request(appWith(unpublishedCalendar)).post(
+      `/api/events/${eventId}/plan`,
+    );
 
     expect(response.status).toBe(201);
     expect(response.body.verdict).toBe("INFEASIBLE");
@@ -312,10 +344,24 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
   it("warns operators that the pinned calendar has no published holiday list", () => {
     // Plans still generate; the warning is how an operator learns why business-day lines are
     // undated, instead of an organizer discovering it.
-    const warning = holidayCalendarWarning(pinnedCalendar(ruleset.calendarId));
+    const warning = holidayCalendarWarning(unpublishedCalendar(ruleset.calendarId));
     expect(warning).toContain("no published holiday list");
     expect(warning).toContain(ruleset.calendarId);
     expect(holidayCalendarWarning({ id: "published@2026", holidays: [] })).toBeNull();
+  });
+
+  it("notifies when a list is published for the pinned calendar (SPEC-CONFLICT #130)", () => {
+    // A notification, NOT an invariant. An empty pinned calendar is the current unresolved state,
+    // not the correct steady one: F-201 AC 10 requires Scenario F's business-day count "against the
+    // pinned calendar" and ARCHITECTURE AD-11 requires real business-day math against it, and
+    // neither can happen while nothing is published. Publishing the list is one of the resolutions
+    // SPEC-CONFLICT #130 records, so this failing means the conflict was resolved.
+    //
+    // It exists because that change would otherwise be silent. Every other test in this file now
+    // states its own calendar, so publication moves three production plan dates and breaks nothing
+    // — one visible failure carrying an explanation beats none, and it beats the two bare
+    // NOT_CALCULABLE failures the old arrangement would have produced.
+    expect(pinnedCalendar(ruleset.calendarId).holidays, PUBLICATION_IS_A_RESOLUTION).toBeNull();
   });
 
   it("derives today in the jurisdiction's own calendar, not UTC", () => {
@@ -364,7 +410,9 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
       venue_license_covers_event_area: "no",
     });
 
-    const degraded = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+    const degraded = await request(appWith(unpublishedCalendar)).post(
+      `/api/events/${eventId}/plan`,
+    );
     expect(degraded.status).toBe(201);
     const withoutList = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
       finding.ruleIds.includes("SLA-ONEDAY-001"),
