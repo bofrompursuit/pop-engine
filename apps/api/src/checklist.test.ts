@@ -30,7 +30,7 @@ import {
 import { createApp } from "./app";
 import { createPlanService } from "./plan";
 import { loadRuleset, rulesFilePath } from "./ruleset";
-import { DocumentStorageError, type DocumentStorage } from "./storage";
+import { attachmentDisposition, DocumentStorageError, type DocumentStorage } from "./storage";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 
@@ -65,8 +65,9 @@ const fakeStorage = (): FakeStorage => {
       const receivedStream = typeof (body as { pipe?: unknown }).pipe === "function";
       objects.set(key, { body: await collect(body), contentType, sizeBytes, receivedStream });
     },
-    signedDownloadUrl: async (key, expiresInSeconds) =>
-      `https://storage.test/${key}?X-Amz-Expires=${expiresInSeconds}`,
+    signedDownloadUrl: async (key, expiresInSeconds, filename) =>
+      `https://storage.test/${key}?X-Amz-Expires=${expiresInSeconds}` +
+      `&response-content-disposition=${encodeURIComponent(attachmentDisposition(filename))}`,
     remove: async (key) => {
       objects.delete(key);
     },
@@ -880,6 +881,155 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const [storedKey] = [...storage.objects.keys()];
       expect(storedKey).toBe(`checklist-items/${itemId}/${storedKey?.split("/")[2]}`);
       expect(storedKey).not.toContain("passwd");
+    });
+
+    // A header value is a ByteString, so the browser cannot send these names raw: the client
+    // percent-encodes and this decodes. Letters and marks survive in any script; everything else
+    // becomes `_`, which still excludes control characters, the invisible bidi/format characters
+    // that can reverse how a name reads, and every path separator.
+    it.each([
+      ["Chinese", "%E7%94%B3%E8%AF%B7%E4%B9%A6.pdf", "\u7533\u8bf7\u4e66.pdf"],
+      [
+        "Cyrillic",
+        "%D0%B7%D0%B0%D1%8F%D0%B2%D0%BA%D0%B0.pdf",
+        "\u0437\u0430\u044f\u0432\u043a\u0430.pdf",
+      ],
+      ["emoji", "%F0%9F%98%80.pdf", "_.pdf"],
+      ["a right-to-left override", "a%E2%80%AEb.pdf", "a_b.pdf"],
+      ["an encoded path", "..%2F..%2Fetc%2Fpasswd", "passwd"],
+      ["a plain ascii name", "sapo-application.pdf", "sapo-application.pdf"],
+      ["an unencodable stray percent", "50%.pdf", "50_.pdf"],
+    ])("decodes %s filename into a display name", async (_label, sent, expected) => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${itemId}/documents`)
+        .set("Content-Type", "application/pdf")
+        .set("X-Filename", sent)
+        .send(PDF);
+
+      expect(upload.status).toBe(201);
+      expect(upload.body.filename).toBe(expected);
+      // Whatever the name, it never reaches the storage key.
+      const [storedKey] = [...storage.objects.keys()];
+      expect(storedKey).toBe(`checklist-items/${itemId}/${storedKey?.split("/")[2]}`);
+    });
+
+    // The root of the duplicate-document defect, fixed at the write instead of at the read.
+    // Three review rounds tried to stop the client repeating a request whose result it could not
+    // observe; a client cannot know that, so the repeat is made harmless instead.
+    it("stores one document however many times the same upload key arrives", async () => {
+      const storage = fakeStorage();
+      const { eventId, body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = () =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .set("X-Upload-Key", "1024-1769472000000-application.pdf")
+          .send(PDF);
+
+      const first = await send();
+      const second = await send();
+      // A third from a "different session": the key is derived from the file, so a reload and a
+      // re-pick reproduce it. That is the case the read-side fixes could not cover.
+      const third = await send();
+
+      expect(first.status).toBe(201);
+      // 200, not 201: nothing was created, which is the distinction the checklist endpoint draws.
+      expect(second.status).toBe(200);
+      expect(third.status).toBe(200);
+      expect(second.body.id).toBe(first.body.id);
+      expect(third.body.id).toBe(first.body.id);
+
+      const { rows } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM documents WHERE checklist_item_id = $1",
+        [itemId],
+      );
+      expect(rows[0]?.count).toBe("1");
+      // And one object, because the storage key is derived from the same id.
+      expect(storage.objects.size).toBe(1);
+
+      const listed = await request(appWith(storage)).get(`/api/events/${eventId}/checklist`);
+      expect(
+        (listed.body.items as ChecklistItemView[]).find((item) => item.id === itemId)?.documents,
+      ).toHaveLength(1);
+    });
+
+    it("stores two documents for two different upload keys", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = (key: string) =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .set("X-Upload-Key", key)
+          .send(PDF);
+
+      // Same name, edited: a different size or timestamp is a different key and a different
+      // document, which is what replacing a filed application looks like.
+      const first = await send("1024-1769472000000-application.pdf");
+      const second = await send("2048-1769558400000-application.pdf");
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.id).not.toBe(first.body.id);
+      expect(storage.objects.size).toBe(2);
+    });
+
+    it("keeps minting a fresh document when a client sends no upload key", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+      const send = () =>
+        request(appWith(storage))
+          .post(`/api/checklist-items/${itemId}/documents`)
+          .set("Content-Type", "application/pdf")
+          .set("X-Filename", "application.pdf")
+          .send(PDF);
+
+      const first = await send();
+      const second = await send();
+
+      // Additive: a client that sends no key gets exactly the previous behaviour rather than an
+      // error, and two uploads remain two documents.
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.id).not.toBe(first.body.id);
+    });
+
+    // Every accepted type is one a browser renders inline, so a plain signed GET previews the
+    // document under a control labelled Download. The disposition is signed with the URL, so it
+    // cannot be stripped by whoever holds the link.
+    it("signs the download so it saves rather than previewing, under the stored name", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${itemId}/documents`)
+        .set("Content-Type", "application/pdf")
+        .set("X-Filename", "%E7%94%B3%E8%AF%B7%E4%B9%A6.pdf")
+        .send(PDF);
+      const link = await request(appWith(storage)).get(
+        `/api/documents/${upload.body.id as string}/url`,
+      );
+
+      expect(link.status).toBe(200);
+      const disposition = new URL(link.body.url as string).searchParams.get(
+        "response-content-disposition",
+      );
+      expect(disposition).toContain("attachment;");
+      // Both forms: an ASCII fallback that cannot break out of the header, and the real name.
+      expect(disposition).toContain(`filename="___.pdf"`);
+      expect(disposition).toContain(
+        `filename*=UTF-8''${encodeURIComponent("\u7533\u8bf7\u4e66.pdf")}`,
+      );
     });
 
     it("keeps the item's state and writes no metadata row when storage is unreachable", async () => {
@@ -1744,6 +1894,9 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(response.status).toBe(500);
       expect(storage.objects.size).toBe(0);
       expect(JSON.stringify(response.body)).not.toContain("foreign key");
+      // Established as not stored, so it carries no unknown marker: resending here is safe and
+      // the client must not be sent to reconcile a document that provably does not exist.
+      expect(response.body.storedOutcome).toBeUndefined();
     });
 
     it("deletes the object when the connection failed and the row is confirmed absent", async () => {
@@ -1823,6 +1976,9 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(response.status).toBe(500);
       // Unknown is not the same as failed, so the bytes stay and the key is logged for cleanup.
       expect(storage.objects.size).toBe(1);
+      // And the client is told it is unknown. Every other failure here stored nothing, so a bare
+      // 500 reads as "safe to resend" — which in this one case duplicates a committed row.
+      expect(response.body.storedOutcome).toBe("unknown");
     });
 
     it("still reports the write failure when the compensating delete also fails", async () => {
@@ -1868,12 +2024,14 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         .options("/api/checklist-items/00000000-0000-4000-8000-000000000000/documents")
         .set("Origin", "http://localhost:3000")
         .set("Access-Control-Request-Method", "POST")
-        .set("Access-Control-Request-Headers", "content-type,x-filename");
+        .set("Access-Control-Request-Headers", "content-type,x-filename,x-upload-key");
 
       expect(response.status).toBe(204);
-      expect((response.headers["access-control-allow-headers"] ?? "").toLowerCase()).toContain(
-        "x-filename",
-      );
+      const allowed = (response.headers["access-control-allow-headers"] ?? "").toLowerCase();
+      expect(allowed).toContain("x-filename");
+      // Without this the browser drops the idempotency key on a cross-origin upload, and every
+      // repeat becomes a new document again — the failure would be invisible from the api's side.
+      expect(allowed).toContain("x-upload-key");
     });
   });
 });

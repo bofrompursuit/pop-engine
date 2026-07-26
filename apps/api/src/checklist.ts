@@ -15,7 +15,7 @@
 // the checklist's own rows cannot answer it: a regeneration that removes every trackable
 // requirement leaves nothing to compare, and that is the case the prompt most needs to fire in.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { DatabaseError } from "pg";
@@ -77,6 +77,56 @@ const SIGNATURE_BYTES = Math.max(
 const DOWNLOAD_URL_TTL_SECONDS = 300;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Namespace for the deterministic document ids below. A fixed, arbitrary UUID, as RFC 4122 §4.3
+ * requires: it only has to be constant, so that the same key always names the same document.
+ */
+const UPLOAD_NAMESPACE = "f2b0c1a4-6d3e-4f57-9a8b-0c2d4e6f8a10";
+
+/**
+ * The document id a given upload key names, derived rather than minted.
+ *
+ * This is what makes the upload idempotent, and it is the root of a defect that took three review
+ * rounds to reach. `POST .../documents` used to mint a fresh id and a fresh storage key on every
+ * request, so any repeat stored a second object and a second row. Everything built on top of that
+ * — a retryable flag, then a three-state outcome, then a reconciling re-read — was the client
+ * trying not to repeat a request whose result it could not observe. None of it could be made
+ * airtight, because a client cannot know whether a request it never saw the answer to landed.
+ *
+ * Deriving the id removes the question instead of answering it. The same key from the same item
+ * names the same row and the same object however many times it arrives, so a repeat is the same
+ * document rather than another one, and a racing read is harmless.
+ *
+ * RFC 4122 version 5 (SHA-1, namespace + name), which is the standard shape for exactly this. No
+ * migration: `documents.id` is already the primary key, so the uniqueness this relies on is the
+ * constraint that has always been there.
+ */
+function documentIdFor(checklistItemId: string, uploadKey: string): string {
+  const namespace = Buffer.from(UPLOAD_NAMESPACE.replace(/-/g, ""), "hex");
+  const hash = createHash("sha1")
+    .update(namespace)
+    .update(`${checklistItemId}:${uploadKey}`, "utf8")
+    .digest();
+  // Version 5 in the high nibble of byte 6, RFC 4122 variant in the top bits of byte 8.
+  hash[6] = ((hash[6] as number) & 0x0f) | 0x50;
+  hash[8] = ((hash[8] as number) & 0x3f) | 0x80;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * The client's idempotency key for this upload, or null when it sent none.
+ *
+ * Bounded and reduced to a conservative character set for the same reason the filename is: it is
+ * untrusted input. It never reaches storage or SQL directly — it is hashed — so this is about
+ * keeping the key stable and small rather than about escaping.
+ */
+function uploadKeyOf(supplied: string | undefined): string | null {
+  if (supplied === undefined) return null;
+  const cleaned = supplied.replace(/[^A-Za-z0-9%._~-]/g, "_").slice(0, 200);
+  return cleaned === "" ? null : cleaned;
+}
 
 export type ChecklistDependencies = {
   database: Pool;
@@ -625,14 +675,41 @@ const handle =
   };
 
 /**
- * A display name only. The client's filename is untrusted: it is reduced to its last path
- * segment and a conservative character set, and it never contributes to the storage key.
+ * Everything a header value cannot carry, percent-decoded back.
+ *
+ * A header value is a ByteString, so a browser cannot put "文件.pdf" in one — constructing the
+ * request throws before a byte is sent. The client therefore percent-encodes the name and this
+ * undoes it. Decoding happens BEFORE the path split below, deliberately: `..%2F..%2Fetc%2Fpasswd`
+ * decoded after splitting would still be a path, and the split is what makes a filename a name.
+ *
+ * A value that is not valid percent-encoding is used as sent rather than rejected. It is a display
+ * name; a literal `%` in a filename from some other client is not worth a failed upload.
+ */
+function decodeFilename(supplied: string | undefined): string {
+  if (supplied === undefined) return "";
+  try {
+    return decodeURIComponent(supplied);
+  } catch {
+    return supplied;
+  }
+}
+
+/**
+ * A display name only. The client's filename is untrusted: it is reduced to its last path segment
+ * and a bounded character set, and it never contributes to the storage key.
+ *
+ * Letters, numbers and combining marks are kept in any script, so an organizer who names a file in
+ * Chinese gets that name back rather than a row of underscores. Everything else becomes `_`, which
+ * still excludes the classes that make a display name dangerous: control characters, the bidi and
+ * other invisible format characters (`\p{Cf}`) that can reverse how a name reads on screen, and
+ * every path separator and shell metacharacter.
  */
 function displayFilename(supplied: string | undefined, extension: string): string {
-  const lastSegment = (supplied ?? "").split(/[\\/]/).pop() ?? "";
+  const lastSegment = decodeFilename(supplied).split(/[\\/]/).pop() ?? "";
   const cleaned = lastSegment
-    .replace(/[^A-Za-z0-9._-]/g, "_")
-    .replace(/^\.+/, "")
+    .replace(/[^\p{L}\p{N}\p{M}._ -]/gu, "_")
+    .replace(/^[.\s]+/u, "")
+    .trim()
     .slice(0, 120);
   return cleaned === "" ? `document.${extension}` : cleaned;
 }
@@ -919,25 +996,57 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         return;
       }
 
-      // The key is generated, never derived from the filename: a caller cannot choose where
-      // its bytes land or overwrite another item's document.
-      const storageKey = `checklist-items/${checklistItemId}/${randomUUID()}.${accepted.extension}`;
+      // The id names the document, and the key names its bytes. With an upload key both are
+      // derived from it, so a repeat overwrites the same object and collides with the same row
+      // instead of creating a second of each; without one they are random, which is the previous
+      // behaviour and what a client that sends no key still gets.
+      //
+      // Neither is derived from the FILENAME: a caller still cannot choose where its bytes land or
+      // reach another item's document, because the item id is inside the hash.
+      const uploadKey = uploadKeyOf(req.get("x-upload-key"));
+      const documentId =
+        uploadKey === null ? randomUUID() : documentIdFor(checklistItemId, uploadKey);
+      const storageKey = `checklist-items/${checklistItemId}/${documentId}.${accepted.extension}`;
       // Storage first, metadata second: a failed upload leaves no row pointing at bytes that
       // are not there (spec edge case), and the client can simply retry. The request itself is
       // what gets streamed — a body that ended inside the peek is re-sent from the head, since
       // an ended stream cannot be unshifted.
       await storage.put(storageKey, ended ? Readable.from(head) : req, contentType, sizeBytes);
 
-      const documentId = randomUUID();
       const filename = displayFilename(req.get("x-filename"), accepted.extension);
       try {
         const { rows: created } = await database.query<DocumentRow>(
           `INSERT INTO documents (id, checklist_item_id, filename, content_type, size_bytes, storage_key)
            VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO NOTHING
            RETURNING id, checklist_item_id, filename, content_type, size_bytes, uploaded_at`,
           [documentId, checklistItemId, filename, contentType, sizeBytes, storageKey],
         );
-        res.status(201).json(documentView(created[0] as DocumentRow));
+        const stored = created[0];
+        if (stored !== undefined) {
+          res.status(201).json(documentView(stored));
+          return;
+        }
+
+        // The id was already there: this key has been uploaded before, so this request IS that
+        // document rather than another one. Answered 200 rather than 201 — nothing was created —
+        // which is the same distinction `POST /events/:id/checklist` already draws.
+        //
+        // Scoped by `checklist_item_id` as well as by id. The id derives from the item, so a row
+        // under a different item cannot collide with it short of a SHA-1 collision; the scope
+        // makes that structural rather than probabilistic, and a miss is a conflict rather than
+        // another item's document handed to this caller.
+        const { rows: existing } = await database.query<DocumentRow>(
+          `SELECT id, checklist_item_id, filename, content_type, size_bytes, uploaded_at
+             FROM documents WHERE id = $1 AND checklist_item_id = $2`,
+          [documentId, checklistItemId],
+        );
+        const previous = existing[0];
+        if (previous === undefined) {
+          res.status(409).json({ error: "that upload key names a document on another item" });
+          return;
+        }
+        res.status(200).json(documentView(previous));
       } catch (error) {
         const outcome = await metadataOutcome(database, documentId, error);
         if (outcome.state === "written") {
@@ -954,11 +1063,23 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         } else {
           // Nobody can say whether the row landed. Deleting on that would leave a document the
           // organizer can click and get nothing from, so the bytes stay and the key is logged.
+          //
+          // And the client is TOLD it is unknown rather than left to infer it from a bare 500.
+          // Every other failure here stored nothing — a refusal never reached storage, and the
+          // not_written path above deletes the object — so a client that reads a 500 as "safe to
+          // resend" is right in every case except this one, which is exactly the case where
+          // resending duplicates a committed row. `storedOutcome` is the api's own three-state
+          // answer (`metadataOutcome`) carried onto the wire instead of being flattened by it.
           console.error(
             `document ${documentId} may have been written for object ${storageKey}; the object ` +
               `is kept and needs reconciling by hand (metadata outcome: ${outcome.state})`,
             error,
           );
+          res.status(500).json({
+            error: "the document may have been stored; the checklist will show whether it was",
+            storedOutcome: "unknown",
+          });
+          return;
         }
         throw error;
       }
@@ -980,7 +1101,11 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         return;
       }
       res.json({
-        url: await storage.signedDownloadUrl(document.storage_key, DOWNLOAD_URL_TTL_SECONDS),
+        url: await storage.signedDownloadUrl(
+          document.storage_key,
+          DOWNLOAD_URL_TTL_SECONDS,
+          document.filename,
+        ),
         filename: document.filename,
         expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
       });
