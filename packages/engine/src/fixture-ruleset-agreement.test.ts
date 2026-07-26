@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { evaluate, parseEngineRuleset, triggerFields } from "./index";
 import { UNCONSUMED_INTAKE_FIELDS } from "./ruleset";
-import type { EventIntake, HolidayCalendar } from "./types";
+import type { EventIntake, Finding, HolidayCalendar, PermitPlan } from "./types";
 import {
   FIXTURE_TODAY,
   SCENARIO_INTAKE_FIXTURES,
@@ -224,6 +224,96 @@ function reachedIn(scenario: string): string[] {
   return plan.verdictDetail.trace
     .filter((entry) => entry.result === "true" || entry.result === "unknown")
     .map((entry) => entry.ruleId);
+}
+
+/**
+ * A scenario's whole markdown section, so the output readers below split it the same way the
+ * id reader above does rather than each inventing its own idea of where a scenario starts.
+ */
+function sectionFor(scenario: string): string {
+  const section = answerKey
+    .split(/^## Scenario /m)
+    .find((candidate) => candidate.startsWith(`${scenario} `));
+  if (section === undefined) throw new Error(`answer key has no Scenario ${scenario} section`);
+  return section;
+}
+
+/** The plan the engine produces for a scenario's documented intake. */
+function planFor(scenario: string): PermitPlan {
+  const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
+  if (fixture === undefined) throw new Error(`no intake fixture for Scenario ${scenario}`);
+  return evaluate(fixtureSubmission(fixture) as EventIntake, ruleset, FIXTURE_TODAY, calendar);
+}
+
+/**
+ * The engine's own deadline statuses, read off the type rather than retyped, so a status the engine
+ * gains is not silently absent from what this reader recognises.
+ *
+ * Restricted to these five on purpose: the key writes `→ TOKEN` for several things that are not
+ * statuses at all (`→ SAPO`, `→ PACO`, `→ VERIFIED`), so a scrape matching any uppercase token
+ * after an arrow would compare prose to a status field.
+ */
+const DEADLINE_STATUSES: readonly Finding["deadlineStatus"][] = [
+  "on_track",
+  "deadline_approaching",
+  "published_deadline_missed",
+  "not_calculable",
+  "not_applicable",
+];
+
+/** The four verdicts, in the spelling the key uses (`FEASIBLE-AT-RISK`) and the engine's. */
+const VERDICT_BY_DOCUMENTED_NAME: Readonly<Record<string, PermitPlan["verdict"]>> = {
+  FEASIBLE: "FEASIBLE",
+  "FEASIBLE-AT-RISK": "FEASIBLE_AT_RISK",
+  CONDITIONAL: "CONDITIONAL",
+  INFEASIBLE: "INFEASIBLE",
+};
+
+/**
+ * One numbered line from a scenario's "Expected findings" block that names a rule, with whatever
+ * outputs the key states about it.
+ *
+ * The block, not the whole section: Scenario D's fixture-guard note and the demo notes name rule ids
+ * outside it, and the verdict line states a verdict that is the plan's rather than a finding's.
+ */
+type DocumentedFinding = {
+  readonly ruleId: string;
+  readonly dates: readonly string[];
+  readonly status: Finding["deadlineStatus"] | null;
+  readonly line: string;
+};
+
+function documentedFindings(scenario: string): DocumentedFinding[] {
+  const block = sectionFor(scenario)
+    .split("**Expected findings:**")[1]
+    ?.split("**EXPECTED VERDICT")[0];
+  if (block === undefined) throw new Error(`Scenario ${scenario} has no expected-findings block`);
+
+  const documented: DocumentedFinding[] = [];
+  for (const line of block.split("\n")) {
+    const ruleId = new RegExp(RULE_ID.source).exec(line)?.[0];
+    if (ruleId === undefined) continue;
+    const statuses = DEADLINE_STATUSES.filter((status) => line.includes(status.toUpperCase()));
+    documented.push({
+      ruleId,
+      dates: [...line.matchAll(/\b(20\d\d-\d\d-\d\d)\b/g)].map((match) => match[1]!),
+      // Two statuses on one line would make "the status this line states" ambiguous, so it states
+      // none rather than the reader picking.
+      status: statuses.length === 1 ? statuses[0]! : null,
+      line: line.trim(),
+    });
+  }
+  return documented;
+}
+
+/** The verdict the key states for a scenario, in the engine's spelling. */
+function documentedVerdict(scenario: string): PermitPlan["verdict"] {
+  const stated = /\*\*EXPECTED VERDICT:\s*[^A-Z]*([A-Z][A-Z-]+)/.exec(sectionFor(scenario))?.[1];
+  const verdict = stated === undefined ? undefined : VERDICT_BY_DOCUMENTED_NAME[stated];
+  if (verdict === undefined) {
+    throw new Error(`Scenario ${scenario} states no verdict this reader recognises: ${stated}`);
+  }
+  return verdict;
 }
 
 /**
@@ -661,6 +751,192 @@ describe("the fixture suite and the published ruleset agree", () => {
         ruleIds.length,
         `dedupe key "${key}" is declared only by ${ruleIds[0]}`,
       ).toBeGreaterThan(1);
+    }
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // The key's OUTPUTS, not just its rule ids.
+  //
+  // Until now this file reduced each "Expected findings" block to its rule ids, so the key's filing
+  // dates, deadline statuses and expected verdicts were compared to nothing at all: change Scenario
+  // A's documented deadline from July 12 to July 13, or its verdict from INFEASIBLE to FEASIBLE,
+  // and every check above stayed green (#89 item 8).
+  //
+  // `acceptance.test.ts` asserts those same outputs but stores them as TypeScript literals rather
+  // than reading the key, and the audit called that a second source of truth for one fact. The
+  // duplication is not what made drift silent, though — the MISSING EDGE was. The three artifacts
+  // form a triangle: the key, the engine, and those literals. `acceptance.test.ts` closes
+  // engine-to-literals. This block closes key-to-engine. With both edges live, a key that disagrees
+  // with a literal must fail one of them, so no third check is needed and the literals can stay
+  // where a reader can see them. That is why they are left alone rather than derived or deleted:
+  // moving every output check into markdown parsing would trade a readable, robust check for a
+  // fragile one, and a parser that silently matches nothing reports green — which is the failure
+  // the scrape guards below exist for.
+  //
+  // The transitivity closes only where the two overlap. Outputs `acceptance.test.ts` asserts and
+  // this block does not read can still drift, which is the argument for reading as much of the key
+  // as can be read without interpreting its prose.
+  // ---------------------------------------------------------------------------------------------
+
+  it.each(scenarios)(
+    "Scenario %s's documented verdict is the one the engine reaches",
+    (scenario) => {
+      expect(planFor(scenario).verdict, `Scenario ${scenario} verdict`).toBe(
+        documentedVerdict(scenario),
+      );
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s's documented deadline statuses are the ones the engine assigns",
+    (scenario) => {
+      const plan = planFor(scenario);
+      const statusByRuleId = new Map(
+        plan.findings.flatMap((finding) =>
+          finding.ruleIds.map((ruleId) => [ruleId, finding.deadlineStatus] as const),
+        ),
+      );
+      const disagreements = documentedFindings(scenario)
+        .filter((documented) => documented.status !== null)
+        .filter((documented) => statusByRuleId.get(documented.ruleId) !== documented.status)
+        .map(
+          (documented) =>
+            `${documented.ruleId}: key says ${documented.status}, engine says ${
+              statusByRuleId.get(documented.ruleId) ?? "no finding"
+            }`,
+        );
+      expect(disagreements, `Scenario ${scenario} deadline statuses`).toEqual([]);
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s states no date the engine does not produce for that finding",
+    (scenario) => {
+      const plan = planFor(scenario);
+      const fixture = SCENARIO_INTAKE_FIXTURES.find((entry) => entry.scenario === scenario);
+      const eventDate = String(
+        (fixtureSubmission(fixture!) as Record<string, unknown>).event_date ?? "",
+      );
+
+      const disagreements: string[] = [];
+      for (const documented of documentedFindings(scenario)) {
+        if (documented.dates.length === 0) continue;
+        const finding = plan.findings.find((candidate) =>
+          candidate.ruleIds.includes(documented.ruleId),
+        );
+        // Which of a finding's dates a line states is not fixed, and inferring it from the prose
+        // would be a second reading of the document. Scenario F is the case that settles it: its
+        // SLA-ONEDAY-001 line says "only 14 business days remain to 2026-08-11", and that date is
+        // the EVENT date, not the filing deadline the engine computes (2026-07-21). So the rule is
+        // that every date the key states about a finding must be a date the engine actually
+        // produced for it — its filing deadline, its earliest-filing date, or the event both are
+        // measured from. That still fails the drift this check exists for, because an invented date
+        // is none of the three.
+        const permitted = [finding?.latestApplyDate, finding?.applyAfterDate, eventDate].filter(
+          (date): date is string => typeof date === "string" && date.length > 0,
+        );
+        for (const date of documented.dates) {
+          if (!permitted.includes(date)) {
+            disagreements.push(
+              `${documented.ruleId}: key states ${date}, engine has ${permitted.join(", ") || "no dates"}`,
+            );
+          }
+        }
+      }
+      expect(disagreements, `Scenario ${scenario} documented dates`).toEqual([]);
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s's stated finding count is the number the engine emits",
+    (scenario) => {
+      // The grouping half of #89 item 8, and the check that would have caught item 6: the key said
+      // Scenario E had eight findings while the published rules produced nine, and every id-set
+      // comparison above passed because both artifacts named the same nine ids — the disagreement
+      // was purely how they grouped. A count is the one statement about grouping the key makes in
+      // words, so it is the one that can be compared without interpreting its numbering. Its
+      // numbered items are NOT one-per-finding: Scenario B's item 4 is a negative statement naming
+      // no rule, and Scenario F's item 2 is a branch listing three alternatives, so counting items
+      // would compare two different things.
+      const written: Readonly<Record<string, number>> = {
+        one: 1,
+        two: 2,
+        three: 3,
+        four: 4,
+        five: 5,
+        six: 6,
+        seven: 7,
+        eight: 8,
+        nine: 9,
+        ten: 10,
+      };
+      const stated = new RegExp(`\\b(${Object.keys(written).join("|")}) findings\\b`).exec(
+        sectionFor(scenario),
+      );
+      if (stated === null) return;
+      expect(planFor(scenario).findings.length, `Scenario ${scenario} finding count`).toBe(
+        written[stated[1]!],
+      );
+    },
+  );
+
+  it("Scenario A's documented rescope verdicts are the ones the engine re-evaluates to", () => {
+    // The scope half: the rescopes are documented outputs that nothing evaluated. Paired by the
+    // suggestion's own value appearing in the bullet ("size=medium" for value `medium`), not by
+    // mapping the key's shorthand field name onto the registry's, and the count is asserted below
+    // so a pairing that stops matching fails rather than quietly comparing nothing.
+    const plan = planFor("A");
+    const bullets = sectionFor("A")
+      .split("\n")
+      .filter((line) => /^- \([a-z]\) /.test(line));
+    expect(bullets.length, "A documents rescope bullets").toBeGreaterThan(0);
+
+    const compared: string[] = [];
+    const disagreements: string[] = [];
+    for (const suggestion of plan.verdictDetail.rescopeSuggestions) {
+      const value = String(suggestion.change.value).replace(/_/g, " ");
+      const matching = bullets.filter((bullet) => bullet.includes(value));
+      if (matching.length !== 1) continue;
+      const stated = /→[^→]*?\b(FEASIBLE-AT-RISK|FEASIBLE|CONDITIONAL|INFEASIBLE)\b/.exec(
+        matching[0]!,
+      )?.[1];
+      // (c) documents which findings drop rather than a verdict, so it states none and is skipped.
+      if (stated === undefined) continue;
+      compared.push(value);
+      const documented = VERDICT_BY_DOCUMENTED_NAME[stated]!;
+      if (suggestion.reevaluatedVerdict !== documented) {
+        disagreements.push(
+          `${value}: key says ${documented}, engine re-evaluates to ${suggestion.reevaluatedVerdict}`,
+        );
+      }
+    }
+    expect(disagreements, "A's rescope verdicts").toEqual([]);
+    // Guards the pairing: A documents a verdict for two of its three rescopes.
+    expect(compared.sort(), "rescopes whose documented verdict was compared").toEqual([
+      "medium",
+      "small",
+    ]);
+  });
+
+  it("reads an output out of the key for every scenario, so a reformat cannot empty these", () => {
+    // The scrape guard the checks above depend on. A key whose formatting drifts would make every
+    // reader return nothing, and each `toEqual([])` would pass while comparing nothing — the shape
+    // this whole file exists to refuse.
+    const statusesRead = scenarios.flatMap((scenario) =>
+      documentedFindings(scenario).filter((documented) => documented.status !== null),
+    );
+    const datesRead = scenarios.flatMap((scenario) =>
+      documentedFindings(scenario).flatMap((documented) => documented.dates),
+    );
+    expect(statusesRead.length, "deadline statuses read out of the key").toBeGreaterThanOrEqual(12);
+    expect(datesRead.length, "dates read out of the key").toBeGreaterThanOrEqual(8);
+    for (const scenario of scenarios) {
+      expect(
+        documentedFindings(scenario).length,
+        `Scenario ${scenario} findings read out of the key`,
+      ).toBeGreaterThan(0);
+      // Throws rather than returning a default if the verdict line stops matching.
+      expect(documentedVerdict(scenario)).toBeDefined();
     }
   });
 
