@@ -1049,14 +1049,41 @@ describe("the fixture suite and the published ruleset agree", () => {
     // grows a documented output fails until someone extends the comparison to cover it.
     expect(statusesRead.length, "deadline statuses read out of the key").toBe(16);
     expect(datesRead.length, "dates read out of the key").toBe(8);
-    // Per scenario for the same reason: the totals above could stay right while one scenario's
-    // block stopped parsing and another gained a line.
+    // Per scenario, and per OUTPUT rather than per line. Counting lines was the hole: it claimed to
+    // stop one scenario's block going quiet while another grew, and did not, because a status or a
+    // date can move BETWEEN scenarios without any line count changing. Remove ON_TRACK from
+    // Scenario A's NYPD line and add it to Scenario E's DOB line and every earlier assertion holds:
+    // the global 16 is unchanged, both lines still parse so both counts are unchanged, and both
+    // findings are `on_track` so every engine comparison still agrees. A had stopped stating an
+    // expected status and the suite was green.
+    //
+    // Counts of the parsed outputs, not their identities, because the identities are what the
+    // status and date comparisons above already assert against the engine finding by finding; a
+    // second copy here would mean two places to update for one approved key change. What is needed
+    // is the shape of what was read, per scenario, which is what a migration changes.
     expect(
       Object.fromEntries(
-        scenarios.map((scenario) => [scenario, documentedFindings(scenario).length]),
+        scenarios.map((scenario) => {
+          const documented = documentedFindings(scenario);
+          return [
+            scenario,
+            {
+              findings: documented.length,
+              statuses: documented.filter((entry) => entry.status !== null).length,
+              dates: documented.flatMap((entry) => entry.dates).length,
+            },
+          ];
+        }),
       ),
-      "findings read out of the key per scenario",
-    ).toEqual({ A: 5, B: 3, C: 4, D: 4, E: 8, F: 6 });
+      "outputs read out of the key per scenario",
+    ).toEqual({
+      A: { findings: 5, statuses: 4, dates: 2 },
+      B: { findings: 3, statuses: 1, dates: 1 },
+      C: { findings: 4, statuses: 2, dates: 1 },
+      D: { findings: 4, statuses: 3, dates: 1 },
+      E: { findings: 8, statuses: 5, dates: 2 },
+      F: { findings: 6, statuses: 1, dates: 1 },
+    });
     for (const scenario of scenarios) {
       // Throws rather than returning a default if the verdict line stops matching.
       expect(documentedVerdict(scenario)).toBeDefined();
