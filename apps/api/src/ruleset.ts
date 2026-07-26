@@ -177,11 +177,13 @@ export const MAX_REPRESENTABLE_DAYS_BEFORE = 719_528;
 /**
  * The longest reminder offset the product will accept, independent of what the arithmetic can hold.
  *
- * PRODUCT JUDGMENT, NOT A MECHANICAL LIMIT, AND NOT YET RATIFIED — the product owner proposed 3,650
- * days (10 years) and has not signed it off, so this is the one number to change at review and it is
- * deliberately alone on this line. Rationale: an offset counts days back from a filing deadline, and
- * the longest window published in nyc.v2.7 is 60 days, so 3,650 never binds on anything real while
- * still refusing nonsense. It is ~200× smaller than `MAX_REPRESENTABLE_DAYS_BEFORE`, so in practice
+ * PRODUCT POLICY, NOT A MECHANICAL LIMIT. Ratified 2026-07-26 (product-owner approved) and published
+ * in `specs/F-203-deadline-alerts.md`, which owns the alert offsets: "A published offset must be a
+ * whole number of days from 1 to 3650." That spec is the approved artifact this constant enforces —
+ * change it there first, then here, and it is deliberately alone on this line. Rationale, from the
+ * spec: an offset counts days back from a filing deadline, and the longest window published in
+ * nyc.v2.7 is 60 days, so 3,650 never binds on anything real while still refusing nonsense. It is
+ * ~200× smaller than `MAX_REPRESENTABLE_DAYS_BEFORE`, so in practice
  * this is the bound that does the work; the representable one documents the mechanical ceiling and
  * catches the case where this is ever raised past what the arithmetic can take.
  */

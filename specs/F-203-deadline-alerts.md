@@ -1,6 +1,6 @@
 # F-203 · Deadline Alerts
 
-**Status:** APPROVED (2026-07-25) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
+**Status:** APPROVED (2026-07-25; maximum reminder offset ratified 2026-07-26, product-owner approved, resolving the P1 on PR #125) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 2; happy path) · **Lane:** Dev 4 · **Depends on:** F-202 (scheduling happens at checklist creation) · **Feeds:** F-305/F-413 reuse the plumbing (post-MVP)
 
 ## User Story
@@ -22,7 +22,7 @@ As an independent organizer, I get an email/SMS before each filing deadline, inc
 | slack_warning       | immediately at checklist creation when the plan verdict is FEASIBLE-AT-RISK ("apply within N days") |
 | dependency_unlocked | at `apply_after_date` for gated items (Parks→NYPD)                                                  |
 
-Reminder offsets (7/1) are config, not code: they are published at `config.alert_offsets.deadline_reminder.days_before` in the ruleset (nyc.v2.7 onward), keyed by `alert_type`. A later reminder kind therefore needs no change to the ruleset's own schema, only a new key — but that is a claim about the ruleset and not about persistence: migration 001 constrains `alerts.alert_type` to exactly `deadline_reminder`, `slack_warning` and `dependency_unlocked`, so a new kind cannot be inserted until an ordered forward migration widens that CHECK. Both steps are needed and the config shape only removes one of them. The offsets are PopEngine policy and never an agency deadline, which alert copy must not blur.
+Reminder offsets (7/1) are config, not code: they are published at `config.alert_offsets.deadline_reminder.days_before` in the ruleset (nyc.v2.7 onward), keyed by `alert_type`. A later reminder kind therefore needs no change to the ruleset's own schema, only a new key — but that is a claim about the ruleset and not about persistence: migration 001 constrains `alerts.alert_type` to exactly `deadline_reminder`, `slack_warning` and `dependency_unlocked`, so a new kind cannot be inserted until an ordered forward migration widens that CHECK. Both steps are needed and the config shape only removes one of them. The offsets are PopEngine policy and never an agency deadline, which alert copy must not blur. A published offset must be a whole number of days from 1 to 3650. The ceiling is PopEngine policy, not an agency limit: it sits far above the longest window the ruleset publishes (60 days) so it never binds on a real deadline, while refusing values the calendar arithmetic cannot represent.
 
 ## Acceptance Criteria
 
