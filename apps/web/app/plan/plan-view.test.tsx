@@ -389,12 +389,18 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
         }),
       );
 
-      expect(logged).toHaveBeenCalledWith(
-        expect.stringContaining("no source URL"),
-        expect.objectContaining({
-          ruleId: "PARKS-EVENT-001",
-          citation: "Parks borough office, by phone",
-        }),
+      // Awaited, not asserted directly: the log fires from an effect, so it is not guaranteed to
+      // have run by the time the article is queryable. Asserting it synchronously passed locally
+      // and failed in CI, where coverage instrumentation moves the flush — a race in the test, not
+      // in the component.
+      await waitFor(() =>
+        expect(logged).toHaveBeenCalledWith(
+          expect.stringContaining("no source URL"),
+          expect.objectContaining({
+            ruleId: "PARKS-EVENT-001",
+            citation: "Parks borough office, by phone",
+          }),
+        ),
       );
       // The organizer is not told: they can do nothing with it, and the citation is still correct.
       expect(line.getByText("Parks borough office, by phone")).toBeDefined();
