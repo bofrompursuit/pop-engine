@@ -17,8 +17,27 @@ function toEpochDay(date: string): number {
   return parsed / MILLISECONDS_PER_DAY;
 }
 
+/**
+ * `toISOString` switches to an extended year outside 0000–9999, so `.slice(0, 10)` would truncate
+ * `-000001-12-31T…` to `"-000001-12"` — ten characters that are not a date, returned with no error.
+ *
+ * `ISO_DATE` is the guard. A round-trip compare like `toEpochDay`'s above is NOT: the truncated
+ * string reparses to the same instant, so `"-000001-12"` and `"+275760-09"` each compare equal to
+ * themselves and the check passes. `toEpochDay`'s three guards catch different things and only the
+ * first applies here — `ISO_DATE` rejects a malformed shape, the `Number.isNaN` check rejects an
+ * unparseable one, and the round-trip catches an overflow date like `2026-02-31` normalising to
+ * `2026-03-03`. Past ±8.64e15 ms `toISOString` throws `RangeError` on its own; this covers the much
+ * wider band below that where it returns a wrong answer instead.
+ */
 function fromEpochDay(epochDay: number): string {
-  return new Date(epochDay * MILLISECONDS_PER_DAY).toISOString().slice(0, 10);
+  const date = new Date(epochDay * MILLISECONDS_PER_DAY).toISOString().slice(0, 10);
+  if (!ISO_DATE.test(date)) {
+    throw new EvaluationError(
+      `epoch day ${epochDay} is outside the representable calendar range (years 0000-9999): ` +
+        `date arithmetic produced "${date}", which is not a calendar date`,
+    );
+  }
+  return date;
 }
 
 export function addCalendarDays(date: string, days: number): string {
