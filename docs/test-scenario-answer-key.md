@@ -31,7 +31,7 @@ _Replaces the v1 anchor, whose universal 60-day SAPO lead was contradicted by pr
 4. DOHMH-ORGANIZER-NOTIFY-001 — organizer notifies DOHMH ≥30 days = by **2026-07-27** → DEADLINE_APPROACHING (5 days)
 5. SAPO-INSURANCE-001 — $1M liability, City additional insured, before issuance
 
-**EXPECTED VERDICT: ✗ INFEASIBLE (as scoped)** — blocking finding: SAPO Street Event (Large); copy: "the published 45-day filing deadline passed on July 12."
+**EXPECTED VERDICT: ✗ INFEASIBLE (as scoped)** — blocking finding: Street Event Permit (Large); copy: "the published 45-day filing deadline passed on July 12."
 **Expected rescopes (each a full re-evaluation):**
 
 - (a) **size=medium** → 30-day deadline = 2026-07-27 → FEASIBLE-AT-RISK, "apply within 5 days" (DOHMH notification also lands 07-27)
