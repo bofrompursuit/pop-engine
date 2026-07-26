@@ -215,6 +215,41 @@ A second fetch-confirmed pass run to verify the external (Codex) assessment of r
 - **Agency vocabulary in use**, for anyone adding values: `SAPO (Mayor's Office CECM)`, `DOB`, `DOB (+ FDNY Public Assembly Permit)`, `FDNY`, `NYC Parks`, `NYC Parks Revenue Division`, `DOHMH`, `NYPD`, `NYC DEP`, `NY State Liquor Authority`.
 - Four agencies named by CECM are unmodeled in v2.1 (DCWP, DOT, HRA, SDOH). The SDOH 5,000-attendee threshold in particular has no corresponding rule and no intake field. Candidates for the post-capstone 59-rule set, sourced here.
 
+## Round 5 — 2026-07-26 (does a published agency closure stop that agency's filing counter? DOB and SLA — SPEC-CONFLICT #130)
+
+**Purpose:** `OPEN-QUESTIONS.md` §2 item R-10 (holiday-calendar source for `us-ny-business-days@2026`), and the prior question R-10 turns on — whether any published source defines "business day" for a DOB or SLA filing lead. Recorded so the reasoning in `apps/api/src/calendar.ts` rests on a dossier entry rather than on a doc comment alone. **Nothing here is a verification and nothing is promoted.** `PUBLISHED_HOLIDAY_CALENDARS` stays empty, the three business-day rules keep rendering NOT_CALCULABLE, and no holiday date is published by this round.
+
+**Note on a gap this closes.** Neither pass below was in this dossier before 2026-07-26, though R-10 has been in scope since Round 1: the research lived only in the `calendar.ts` doc comment across PR #129 (`d692e24`, `8a5bd4a`, `44e25b8`) and PR #133. That was the pre-existing state, not something either PR introduced, and this entry is where it stops being true.
+
+**The question, unchanged since Round 4's successor pass:** does an agency's published closure stop that agency's _filing_ counter? Every candidate holiday list depends on it, and no source located in either pass answers it.
+
+**Outcome: NOT PUBLISHED, for both DOB and SLA, reached independently twice.**
+
+**Pass A** (PR #129) — the city Office of Payroll Administration holiday list, the state Civil Service pass-day treatment, DCAS PSB 440-2, the federal OPM schedule, General Construction Law §24 and §25-a, and Public Officers Law §62. Result: staff-holiday divergence established; the filing-counter link not established. Two leads left open (GCL §25-a, POL §62) and recorded as leads in `calendar.ts`, not as answers.
+
+**Pass B** (2026-07-26, this round) — an independent pass over the DOB TUP page, the DOB closure calendar, ABC Law §97 and §98, and 9 NYCRR Part 29. Same result: NOT PUBLISHED for both agencies. **Auditing caveat, stated because it bounds what this pass is worth:** pass B's own retrievals were reported to this round, not re-fetched here, and no quoted text or retrieval metadata was carried over for the closure calendar, ABC §97/§98 or 9 NYCRR Part 29. Those four are therefore an _uncorroborated concurring result_, not fetched evidence on file. Anyone promoting anything on the strength of pass B must fetch them first. They are named rather than omitted so that whoever retrieves them knows where to start, but under this dossier's own method rule above — "unfetched links were excluded" — they are not eligible to be cited as evidence, and this entry does not cite them as such. Pass B also treated POL §62 as a general lead; `calendar.ts` keeps the narrower statement, that §62 reaches state and county offices but not DOB, a city agency.
+
+**Fetched first-hand in this round (quote on file, URL retrieved 2026-07-26 with a browser user-agent):**
+
+- `https://www.nyc.gov/assets/buildings/codes-pdf/cons_codes_2022/2022BC_Chapter33_Con_DemoSafetyWBwm.pdf` — DOB's own published Building Code Chapter 33, as amended by Local Law 77 of 2023. The amlegal mirror of §3306.3.1 (`codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-185903`) carries the same section but returns HTTP 403 to automated retrieval, so the DOB PDF is the copy on file.
+- `https://www.nyc.gov/site/buildings/industry/tup.page` — the Temporary Use Permit page.
+- `https://www.nyc.gov/assets/buildings/pdf/tup-formchecklist.pdf` — the TUP intake form and checklist.
+- `https://www.nyc.gov/assets/buildings/pdf/tup-sn.pdf` — the TUP service notice.
+
+**What Chapter 33 publishes, verbatim.** DOB publishes an explicit weekend-and-holiday rule for a backward-counted notice in three places, each attached to a 24-48 hour notice counted back from a commencement date:
+
+| Section     | Notice                                        | Published weekend/holiday rule                                                                                                                                                                                                                                                               |
+| ----------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3306.3.1   | Demolition, notice to the department          | "If the notification date falls on a weekend or official holiday, the permit holder shall notify the department on the last business day before the commencement date."                                                                                                                      |
+| §3304.3.1   | Soil and foundation work                      | "Should the notification date fall on a weekend or official holiday, the permit holder ... shall notify the department on the last business day before the commencement date." Its cancellation notice rolls the other way, to "the next business day after the intended commencement date." |
+| §3314.4.1.5 | Adjustable suspended scaffold install/removal | "Should the notification date fall on a weekend or official holiday, the notification shall be made on the last business day before the commencement date of the installation or removal."                                                                                                   |
+
+**What the TUP materials publish.** The page, the intake form and checklist, and the service notice all carry the lead as "no later than 15 business days prior" and stop. Confirmed absent from all three: any definition of "business day", any weekend or holiday rule, and any cross-reference to §3306.3.1 or to either of the others. The form and checklist do not contain the strings "business day", "holiday" or "weekend" at all.
+
+**Candidate assessment (NOT ADDRESS, for triage only):** none of the three Chapter 33 sections addresses the TUP filing lead. Each governs a different notification, each is counted in clock hours rather than business days, and the TUP materials incorporate none of them. Chapter 33 uses "business day" in all three rules and never defines it, so it does not close the definitional gap either. **What the omission means is not established:** no located source speaks to whether the TUP silence was considered or simply never addressed, and the clock-hour framing of all three analogues is a complete innocent explanation on its own. An earlier draft of the `calendar.ts` comment called the omission a "deliberate silence"; that inferred agency intent from absent text and was withdrawn in review of PR #133. What the evidence does establish is narrower and still useful: DOB has a published practice of writing such rules, so the TUP omission is not explained by DOB lacking a mechanism for one.
+
+**What would unblock publication**, unchanged by this round: a source establishing, per agency, that that agency's published closure stops that agency's filing counter. Not a better list of dates.
+
 ## Suggested Dev 4 Workflow
 
 1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.
