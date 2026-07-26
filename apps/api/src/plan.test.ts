@@ -78,6 +78,25 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     holidays: null,
   });
 
+  /**
+   * What the pinned-calendar notification below says when it fails, since the failure is the whole
+   * point of it. It must not read as "you broke something": publishing this list is one of the
+   * resolutions SPEC-CONFLICT #130 records, and an approved criterion is unsatisfiable until one of
+   * them happens.
+   */
+  const PUBLICATION_IS_A_RESOLUTION = [
+    `A holiday list is now published for the ruleset's pinned calendar.`,
+    `THIS IS AN EXPECTED RESOLUTION OF SPEC-CONFLICT #130, NOT A REGRESSION:`,
+    `F-201 AC 10 and ARCHITECTURE AD-11 both require business-day math against this calendar, and`,
+    `neither is satisfiable in production while no list exists. This assertion is a notification,`,
+    `so that publishing lands in one visible place instead of silently moving three plan dates.`,
+    `Before deleting it, read the doc comment on PUBLISHED_HOLIDAY_CALENDARS in`,
+    `apps/api/src/calendar.ts: it records what blocked publication — one calendar id spanning a`,
+    `city agency and a state agency whose closures and observance rules differ, and no source`,
+    `establishing that a published closure stops a filing counter — and #130 records the`,
+    `resolutions and their costs. If those are answered, delete this test and close #130.`,
+  ].join(" ");
+
   // The app serves the intake routes alongside the plan routes, so it takes their
   // dependencies too. These tests drive only the plan routes; the intake contract and
   // the pool are the same ones the api boots with.
@@ -330,14 +349,18 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(holidayCalendarWarning({ id: "published@2026", holidays: [] })).toBeNull();
   });
 
-  it("publishes no list for the ruleset's pinned calendar, on purpose", () => {
-    // The one assertion about production's own calendar, and a deliberate tripwire: publishing
-    // `us-ny-business-days@2026.1` fails here and nowhere else, because every other test now
-    // states its calendar outright. The doc comment on PUBLISHED_HOLIDAY_CALENDARS records why
-    // the list was researched and then not published — one calendar id spans a city agency and a
-    // state agency whose closures differ, and no source defines "business day" for a filing lead.
-    // If you are here because this failed, read that comment before deleting this test.
-    expect(pinnedCalendar(ruleset.calendarId).holidays).toBeNull();
+  it("notifies when a list is published for the pinned calendar (SPEC-CONFLICT #130)", () => {
+    // A notification, NOT an invariant. An empty pinned calendar is the current unresolved state,
+    // not the correct steady one: F-201 AC 10 requires Scenario F's business-day count "against the
+    // pinned calendar" and ARCHITECTURE AD-11 requires real business-day math against it, and
+    // neither can happen while nothing is published. Publishing the list is one of the resolutions
+    // SPEC-CONFLICT #130 records, so this failing means the conflict was resolved.
+    //
+    // It exists because that change would otherwise be silent. Every other test in this file now
+    // states its own calendar, so publication moves three production plan dates and breaks nothing
+    // — one visible failure carrying an explanation beats none, and it beats the two bare
+    // NOT_CALCULABLE failures the old arrangement would have produced.
+    expect(pinnedCalendar(ruleset.calendarId).holidays, PUBLICATION_IS_A_RESOLUTION).toBeNull();
   });
 
   it("derives today in the jurisdiction's own calendar, not UTC", () => {

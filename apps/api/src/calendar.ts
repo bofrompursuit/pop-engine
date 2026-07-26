@@ -54,15 +54,14 @@ export class MissingHolidayCalendarError extends Error {
  * the next day thereafter") and states no Saturday rule at all, while DCAS Personnel Services
  * Bulletin 440-2 and OPM both roll a Saturday holiday back to the preceding Friday.
  *
- * THE DEEPER GAP, and the actual reason this stays empty: no source defines "business day" for a
- * filing lead. GCL §24 (nysenate.gov/legislation/laws/GCN/24) enumerates public holidays; it does
- * not say an agency's filing counter stops on them. GCL §25-a extends a period that ENDS on a
- * Saturday, Sunday or public holiday, while this engine counts BACKWARD from an event date
- * (`subtractBusinessDays`), so §25-a never reaches the arithmetic. The DOB Temporary Use Permit
- * page publishes "no later than 15 business days prior" without defining the unit, and the ruleset
- * defines it no further. Every candidate list is therefore an inference about what a published
- * closure means for a filing, not a published fact — and a comment can document an inference
- * without authorizing it.
+ * THE DEEPER GAP, and the actual reason this stays empty: no source consulted here defines
+ * "business day" for a filing lead. GCL §24 (nysenate.gov/legislation/laws/GCN/24) enumerates
+ * public holidays; it does not say an agency's filing counter stops on them. The DOB Temporary Use
+ * Permit page publishes "no later than 15 business days prior" without defining the unit, and the
+ * ruleset defines it no further. Two statutes bear on the question and NEITHER was run down; they
+ * are listed as unresolved leads below rather than dismissed here. Every candidate list is
+ * therefore an inference about what a published closure means for a filing, not a published fact —
+ * and a comment can document an inference without authorizing it.
  *
  * A UNION of the city and state closures was considered and rejected. It never counts a closed day
  * as open, so it can only move a deadline earlier, which reads as the safe direction and is not:
@@ -71,15 +70,40 @@ export class MissingHolidayCalendarError extends Error {
  * organizer their event cannot happen when it still can. F-201 AC 4 names over-prescribing as a
  * failure mode alongside overclaiming.
  *
- * Two notes for whoever picks this up:
- *   - Cite General CONSTRUCTION Law §24, path GCN/24. GCT/24 is General CITY Law §24, a different
- *     statute with no holidays in it; landing there suggests, wrongly, that the citation is bad.
- *   - One unexplored lead, offered as a lead and not as authority: NY Public Officers Law §62, on
- *     the transaction of business in state public offices. It sits closer to an SLA filing than an
- *     employee leave calendar does, and it does not touch DOB at all.
+ * A citation trap, before the leads: cite General CONSTRUCTION Law §24, path GCN/24. GCT/24 is
+ * General CITY Law §24, a different statute with no holidays in it; landing there suggests,
+ * wrongly, that the citation is bad.
+ *
+ * TWO UNRESOLVED LEADS. Neither was run down, and neither is excluded — they are recorded so the
+ * verification owner can judge them, not so this file's reasoning can be inherited.
+ *   - GENERAL CONSTRUCTION LAW §25-a (GCN/25-A), "Public holiday, Saturday or Sunday in statutes;
+ *     extension of time where performance of act is due on Saturday, Sunday or public holiday". Its
+ *     scope clause reaches this shape of deadline: "When any period of time, computed from a
+ *     certain day, within which or after which OR BEFORE WHICH an act is authorized or required to
+ *     be done, ends on a Saturday, Sunday or a public holiday, such act may be done on the next
+ *     succeeding business day". A filing lead is a period before which an act must be done, so
+ *     §25-a is not excluded by its own terms. What could NOT be established is whether a lead this
+ *     engine counts BACKWARD from an event date (`subtractBusinessDays`) is a period that "ends on"
+ *     a day in §25-a's sense, and if it is, what the "next succeeding business day" extension does
+ *     to a "no later than" filing date — moving a filing deadline later is a substantive change no
+ *     source consulted here authorizes. An earlier draft of this comment stated that §25-a "never
+ *     reaches the arithmetic"; that was a legal conclusion the text does not clearly support, and
+ *     it is withdrawn rather than left for the next reader to inherit.
+ *   - NY PUBLIC OFFICERS LAW §62 (PBO/62), "Business in public offices on public holidays":
+ *     "Holidays and Saturdays shall be considered as Sunday for all purposes relating to the
+ *     transaction of business in the public offices of the state". It sits closer to an SLA filing
+ *     than an employee leave calendar does, and it reaches state offices and county offices — not
+ *     DOB, which is a city agency, so it cannot answer the question for all three rules on its own.
  *
  * What would unblock this is not a better list of dates. It is a source establishing, per agency,
  * that the agency's published closure stops that agency's filing counter.
+ *
+ * MEANWHILE, AN APPROVED CRITERION CANNOT BE MET: F-201 AC 10 requires Scenario F's business-day
+ * count "against the pinned calendar" and ARCHITECTURE AD-11 requires real business-day math
+ * against it, and neither happens in production while this record is empty — the line renders
+ * NOT_CALCULABLE instead. That is recorded as SPEC-CONFLICT #130, which also states the resolutions
+ * and their costs. Publishing this list is one of them, so publication is an EXPECTED outcome here
+ * and not a regression; `plan.test.ts` notifies when it happens and says the same thing.
  */
 const PUBLISHED_HOLIDAY_CALENDARS: Readonly<Record<string, readonly string[]>> = {};
 
