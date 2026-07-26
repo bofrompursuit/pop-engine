@@ -142,6 +142,50 @@ function requireIsoDate(value: string, label: string): void {
   }
 }
 
+/**
+ * The reminder offsets F-203 schedules from (`config.alert_offsets`), checked at boot.
+ *
+ * F-203 states these are config rather than code, so the artifact is the contract and an
+ * implementer reads it rather than a constant. That makes an unusable value a boot failure and not
+ * a runtime one: the alternative is an api that starts clean and then schedules nothing, a negative
+ * offset that fires after the deadline, or a fractional one that lands mid-day, discovered per
+ * organizer at the moment the alert should have gone out. Same reasoning as `last_verified_date`,
+ * which is validated here for the same reason.
+ *
+ * The shape is deliberately open: keys are `alerts.alert_type` values so a later reminder kind is a
+ * data addition, so this validates the ENTRIES it finds rather than requiring a fixed set. `note`
+ * is metadata and skipped; every other key is treated as an alert type and must carry a usable
+ * `days_before`.
+ */
+function requireAlertOffsets(value: unknown, label: string): void {
+  const offsets = requireObject(value, label);
+  const alertTypes = Object.keys(offsets).filter((key) => key !== "note");
+  if (alertTypes.length === 0) {
+    validationError(`${label} must configure at least one alert type`);
+  }
+  for (const alertType of alertTypes) {
+    const entry = requireObject(offsets[alertType], `${label}.${alertType}`);
+    const days = requireArray(entry.days_before, `${label}.${alertType}.days_before`);
+    if (days.length === 0) {
+      validationError(`${label}.${alertType}.days_before must not be empty`);
+    }
+    const seen = new Set<number>();
+    for (const [index, day] of days.entries()) {
+      const at = `${label}.${alertType}.days_before[${index}]`;
+      // A reminder is scheduled at latest_apply_date minus this many whole days. A fraction lands
+      // mid-day, a negative fires after the deadline it warns about, and zero is the deadline
+      // itself rather than a warning — none of the three is a reminder.
+      if (typeof day !== "number" || !Number.isInteger(day) || day <= 0) {
+        validationError(`${at} must be a positive whole number of days`);
+      }
+      if (seen.has(day)) {
+        validationError(`${at} repeats ${day}, which would send the same reminder twice`);
+      }
+      seen.add(day);
+    }
+  }
+}
+
 function parseSource(value: unknown, label: string): JsonObject {
   const source = requireObject(value, label);
   requireString(source, "citation", label);
@@ -248,6 +292,9 @@ export function validateRuleset(value: unknown): PublishedRuleset {
 
   const snapshotDate = requireString(ruleset, "snapshot_date", "ruleset");
   requireIsoDate(snapshotDate, "ruleset.snapshot_date");
+
+  const config = requireObject(ruleset.config, "ruleset.config");
+  requireAlertOffsets(config.alert_offsets, "ruleset.config.alert_offsets");
 
   const status = requireString(ruleset, "status", "ruleset");
   if (!status.startsWith("APPROVED")) {

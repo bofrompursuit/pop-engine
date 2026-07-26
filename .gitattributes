@@ -1,0 +1,9 @@
+# The published ruleset is hashed byte-for-byte: docs/BASELINE.md carries a SHA-256 over the exact
+# bytes of the file, and `pnpm check:baseline` recomputes it from the working tree. Without this,
+# a checkout with core.autocrlf=true would convert LF to CRLF, hash different bytes, and fail the
+# integrity check on a clean tree — the guard reporting a corrupted artifact when nothing was
+# touched. Pinning EOLs keeps the published definition ("SHA-256 over the file bytes") true on
+# every platform rather than trading it for a checkout-dependent one.
+#
+# Anything else that gains a checksum row in the manifest needs pinning here too.
+rules/*.json text eol=lf

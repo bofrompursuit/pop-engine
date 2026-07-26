@@ -107,7 +107,7 @@ if (conflictMarkers.length > 0) {
 const approvedFiles = new Set();
 const unsupportedGlobs = [];
 const emptyGlobs = [];
-/** Rows publishing a digest: `{ file, expected, row }`. */
+/** Rows publishing a digest: `{ file, expected, row, malformed? }`. */
 const checksumClaims = [];
 for (const row of baseline.split(/\r?\n/)) {
   if (!row.startsWith("|")) continue;
@@ -120,8 +120,25 @@ for (const row of baseline.split(/\r?\n/)) {
 
   // A digest belongs to the artifact named in the same row, so the pairing is positional
   // rather than guessed: one path and one digest, or the row is ambiguous and says so.
-  const digests = [...row.matchAll(/sha256\s+`([0-9a-f]{64})`/gi)].map((m) => m[1].toLowerCase());
-  if (digests.length === 0) continue;
+  // Presence and validity are found SEPARATELY, on purpose. Matching only well-formed digests
+  // meant a row whose digest lost a character matched nothing, read as "publishes no checksum",
+  // and passed — a guard that stops guarding when its input is malformed, which is the same shape
+  // as the empty-glob case above and the reason that one fails rather than inspecting nothing. So
+  // `\bsha256\b` finds the CLAIM (it does not match "sha256sum" in prose) and the length and
+  // alphabet are checked afterwards, where a bad value fails distinctly from an absent one.
+  const claimed = [...row.matchAll(/\bsha256\b\s*`?([^`|\s]*)`?/gi)].map((m) => m[1] ?? "");
+  if (claimed.length === 0) continue;
+  const malformed = claimed.filter((value) => !/^[0-9a-fA-F]{64}$/.test(value));
+  if (malformed.length > 0) {
+    checksumClaims.push({
+      file: null,
+      expected: null,
+      row: cells[1] ?? row.slice(0, 60),
+      malformed: malformed.map((value) => `"${value}" (${value.length} chars)`).join(", "),
+    });
+    continue;
+  }
+  const digests = claimed.map((value) => value.toLowerCase());
   if (digests.length !== 1 || paths.length !== 1) {
     checksumClaims.push({ file: null, expected: null, row: cells[1] ?? row.slice(0, 60) });
     continue;
@@ -158,6 +175,13 @@ for (const rel of [...approvedFiles].sort()) {
 
 const checksumFailures = [];
 for (const claim of checksumClaims) {
+  if (claim.malformed !== undefined) {
+    checksumFailures.push(
+      `${claim.row}: sha256 claim is not 64 hex characters: ${claim.malformed}` +
+        "  (a malformed digest fails; it never reads as no digest)",
+    );
+    continue;
+  }
   if (claim.file === null) {
     checksumFailures.push(
       `${claim.row}: row publishes a sha256 but does not name exactly one artifact, so the digest ` +
