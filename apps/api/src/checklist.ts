@@ -465,17 +465,17 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     // Everything `planContext` returns is regulatory content read off `source`, `sourcePlan`
     // included, so on a still-required row that provenance names the LATEST plan.
     //
-    // That last part is UNRESOLVED, not settled, and this comment does not claim it is right.
-    // SPEC-CONFLICT #115: F-202 AC 8 and F-206:28 say a retained row is attributed through its
-    // plan-item relationship and never to the checklist's current plan, which would name the
-    // persisted item; F-206 AC 4 forbids pairing a version with data it never carried, and the row
-    // renders the latest plan's recalculated dates (PRD principle 6), which would name the latest
-    // plan. No attribution satisfies both while the values come from the latest plan, so the
-    // resolution is an approved-artifact decision and #115 holds it. Described here so the next
-    // reader knows which behaviour they are looking at and that it is contested.
+    // That last part was contested and is now settled: SPEC-CONFLICT #115 was resolved by amending
+    // F-206 Acceptance Criterion 4's mixed-checklist clause, which had said a retained row is
+    // *never* attributed to the checklist's current plan. That is true of a dropped row and false
+    // of a still-required one, and the criterion now states the two cases separately. F-202 AC 8 is
+    // unchanged and agrees: its "last plan that raised it" is the latest plan for a requirement
+    // that survives, and its purpose clause is that provenance is never copied from the live rules
+    // file or duplicated into checklist storage, which reading `sourcePlan` off `source` satisfies.
     //
-    // A DROPPED row is not in dispute: `current` is undefined, `source` is `item`, and every
-    // artifact agrees it reports the plan that raised it.
+    // Because both come off one object, neither case can print a version beside data it never
+    // carried. A DROPPED row was never in dispute: `current` is undefined, `source` is `item`, and
+    // it reports the plan that raised it.
     return {
       id: item.checklist_item_id,
       planItemId: item.plan_item_id,
@@ -708,9 +708,7 @@ async function removeOrphanedObject(storage: DocumentStorage, key: string): Prom
  * making a second trip for something it was just handed.
  */
 type MetadataOutcome =
-  | { state: "written"; row: DocumentRow }
-  | { state: "not_written" }
-  | { state: "unknown" };
+  { state: "written"; row: DocumentRow } | { state: "not_written" } | { state: "unknown" };
 
 /**
  * A rejected query is not the same as a rejected statement. If Postgres commits the insert and
