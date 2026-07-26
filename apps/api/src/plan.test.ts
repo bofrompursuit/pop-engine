@@ -68,6 +68,16 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     holidays: [],
   });
 
+  // The missing-list path, stated outright. These tests used to reach it by passing production's
+  // own `pinnedCalendar`, which degrades only for as long as no list is published — so publishing
+  // one would have flipped them from "exercises the missing-list path" to "fails", and the path
+  // itself would have gone untested at the moment it mattered most. The behaviour under test is
+  // "the calendar publishes no list", so the calendar says that.
+  const unpublishedCalendar = (calendarId: string): HolidayCalendar => ({
+    id: calendarId,
+    holidays: null,
+  });
+
   // The app serves the intake routes alongside the plan routes, so it takes their
   // dependencies too. These tests drive only the plan routes; the intake contract and
   // the pool are the same ones the api boots with.
@@ -291,7 +301,9 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     // Scenario A triggers no business-day rule, so its plan is fully computable. Withholding it
     // because some other rule would have needed a holiday list helps nobody.
     const eventId = await insertEvent();
-    const response = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+    const response = await request(appWith(unpublishedCalendar)).post(
+      `/api/events/${eventId}/plan`,
+    );
 
     expect(response.status).toBe(201);
     expect(response.body.verdict).toBe("INFEASIBLE");
@@ -312,10 +324,20 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
   it("warns operators that the pinned calendar has no published holiday list", () => {
     // Plans still generate; the warning is how an operator learns why business-day lines are
     // undated, instead of an organizer discovering it.
-    const warning = holidayCalendarWarning(pinnedCalendar(ruleset.calendarId));
+    const warning = holidayCalendarWarning(unpublishedCalendar(ruleset.calendarId));
     expect(warning).toContain("no published holiday list");
     expect(warning).toContain(ruleset.calendarId);
     expect(holidayCalendarWarning({ id: "published@2026", holidays: [] })).toBeNull();
+  });
+
+  it("publishes no list for the ruleset's pinned calendar, on purpose", () => {
+    // The one assertion about production's own calendar, and a deliberate tripwire: publishing
+    // `us-ny-business-days@2026.1` fails here and nowhere else, because every other test now
+    // states its calendar outright. The doc comment on PUBLISHED_HOLIDAY_CALENDARS records why
+    // the list was researched and then not published — one calendar id spans a city agency and a
+    // state agency whose closures differ, and no source defines "business day" for a filing lead.
+    // If you are here because this failed, read that comment before deleting this test.
+    expect(pinnedCalendar(ruleset.calendarId).holidays).toBeNull();
   });
 
   it("derives today in the jurisdiction's own calendar, not UTC", () => {
@@ -364,7 +386,9 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
       venue_license_covers_event_area: "no",
     });
 
-    const degraded = await request(appWith(pinnedCalendar)).post(`/api/events/${eventId}/plan`);
+    const degraded = await request(appWith(unpublishedCalendar)).post(
+      `/api/events/${eventId}/plan`,
+    );
     expect(degraded.status).toBe(201);
     const withoutList = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
       finding.ruleIds.includes("SLA-ONEDAY-001"),
