@@ -426,50 +426,14 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       });
     });
 
-    it("keeps a retained row's provenance with the dates it is actually showing", async () => {
-      // The regression guard for #110 review round 3, which read the retained case as a
-      // misattribution and proposed reading provenance off the persisted plan item instead.
-      //
-      // A retained row deliberately shows the LATEST plan's recalculated dates before the
-      // organizer re-materializes (PRD principle 6; asserted on its own below). Labelling those
-      // dates with the version and snapshot of the plan they did not come from is a pinned version
-      // beside data it never carried, which is precisely what F-206 AC 4 forbids and what #93
-      // fixed for the plan banner. So the three facts are asserted together: the row keeps its
-      // persisted link, shows the new plan's date, and reports the new plan's provenance.
-      // Moving `sourcePlan` alone to the persisted item fails here, as it should.
-      const eventId = await createEvent(scenario("A"));
-      const api = appWith(fakeStorage());
-      await insertPlan(
-        eventId,
-        [{ ruleIds: ["SAPO-STREET-LARGE-001"], kind: "permit", latestApplyDate: "2026-07-12" }],
-        "2026-07-22T10:00:00Z",
-        1,
-        { rulesetVersion: "test.v1", snapshotDate: "2026-07-20" },
-      );
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
-      expect(created.status).toBe(201);
-      const before = (created.body.items as ChecklistItemView[])[0];
-
-      // Regenerated with the same requirement and a moved filing date, and NOT re-materialized.
-      await insertPlan(
-        eventId,
-        [{ ruleIds: ["SAPO-STREET-LARGE-001"], kind: "permit", latestApplyDate: "2026-08-30" }],
-        "2026-07-22T11:00:00Z",
-        1,
-        { rulesetVersion: "test.v2", snapshotDate: "2026-07-21" },
-      );
-      const read = await request(api).get(`/api/events/${eventId}/checklist`);
-      const after = (read.body.items as ChecklistItemView[])[0];
-
-      // Still the row the organizer has been working: same checklist item, same persisted link.
-      expect(after?.id).toBe(before?.id);
-      expect(after?.planItemId).toBe(before?.planItemId);
-      expect(after?.inLatestPlan).toBe(true);
-      // Showing the new plan's date...
-      expect(after?.latestApplyDate).toBe("2026-08-30");
-      // ...so it must say the new plan is where that date came from.
-      expect(after?.sourcePlan).toEqual({ rulesetVersion: "test.v2", snapshotDate: "2026-07-21" });
-    });
+    // A test pinning a still-required row's `sourcePlan` to the latest plan was removed here, and
+    // is deliberately not replaced. It asserted one side of SPEC-CONFLICT #115: F-202 AC 8 and
+    // F-206:28 say a retained row is attributed through its plan-item relationship and never to
+    // the checklist's current plan, while F-206 AC 4 forbids pairing a version with data it never
+    // carried — and the row renders the latest plan's recalculated dates, so no attribution
+    // satisfies all three. Whichever way #115 resolves, a test asserting the current behaviour is
+    // correct would be asserting the losing side. The dropped-row case is not in dispute and stays
+    // asserted above.
 
     it("carries the apply_after date of a dependency-gated item (AC 5, Scenario C)", async () => {
       const { body } = await checklistFor("C");
