@@ -9,10 +9,10 @@ import {
   loadChecklist,
   updateChecklistItem,
   uploadDocument,
-  type ChecklistItem,
   type ChecklistResponse,
   type ChecklistResult,
   type SourcePlan,
+  type StatusRollup,
 } from "./checklist-api";
 import { ChecklistItemCard, ContextLine } from "./checklist-item";
 
@@ -42,26 +42,17 @@ const stateFrom = (result: ChecklistResult): ChecklistState =>
       : { status: "unavailable", message: result.message };
 
 /**
- * AC 2's rollup, counted over the rows on screen rather than taken from the response.
+ * AC 2's rollup, as the api counted it. The statuses that have rows, in the engine's own order.
  *
- * The api sends the same count, and it is right when it is sent. But a status change updates one
- * row and not the response that carried it, so a stored rollup starts disagreeing with the rows
- * beneath it at the first click — and a rollup that disagrees with visible rows is the exact
- * failure the criterion's second sentence names. Counted here, the two cannot come apart.
- *
- * Current-plan rows only, which is the criterion's first sentence; retained rows are counted and
- * labelled separately by the caller so nothing visible goes unaccounted for.
+ * The counting rule lives in `apps/api/src/checklist.ts` and only there. Counting it again here
+ * would put two implementations of one criterion in two languages, which is the drift this repo
+ * spent a day removing from the answer key. What keeps it from going stale is that every mutation
+ * re-reads the checklist, so the counts and the rows on screen always come from one response.
  */
-function rollupOf(items: readonly ChecklistItem[]): readonly [ChecklistStatus, number][] {
-  const current = items.filter((item) => item.inLatestPlan);
-  return CHECKLIST_STATUSES.map(
-    (status) =>
-      [status, current.filter((item) => item.status === status).length] as [
-        ChecklistStatus,
-        number,
-      ],
-  ).filter(([, count]) => count > 0);
-}
+const rollupOf = (rollup: StatusRollup): readonly [ChecklistStatus, number][] =>
+  CHECKLIST_STATUSES.map((status) => [status, rollup[status]] as [ChecklistStatus, number]).filter(
+    ([, count]) => count > 0,
+  );
 
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
@@ -78,6 +69,14 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const showing = `${apiBaseUrl}|${eventId}`;
   const active = useRef(showing);
 
+  /**
+   * Which re-read a reload belongs to, and which one is on screen. Two writes can be in flight at
+   * once — a status change on one row while another row's note saves — and their reloads can come
+   * back in either order. Without this, the older answer wins whenever it happens to land second.
+   */
+  const writeEpoch = useRef(0);
+  const appliedEpoch = useRef(0);
+
   useEffect(() => {
     active.current = showing;
     let abandoned = false;
@@ -87,6 +86,9 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     setState({ status: "loading" });
     setCreationFailure(null);
     setCreating(false);
+    // Reload epochs belong to the checklist that was on screen, not to the one arriving.
+    writeEpoch.current = 0;
+    appliedEpoch.current = 0;
 
     void loadChecklist(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
@@ -121,53 +123,84 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     setCreating(false);
   };
 
-  /** Replace one row, leaving everything else on the page as it was. */
-  const applyToItem = (itemId: string, change: (item: ChecklistItem) => ChecklistItem) => {
-    setState((previous) =>
-      previous.status !== "ready"
-        ? previous
-        : {
-            status: "ready",
-            checklist: {
-              ...previous.checklist,
-              items: previous.checklist.items.map((item) =>
-                item.id === itemId ? change(item) : item,
-              ),
-            },
-          },
-    );
+  /**
+   * Re-read the whole checklist after a write, and report what stopped that from working.
+   *
+   * The write already succeeded when this runs, so nothing here can be reported as the write
+   * failing. What it can report is that the page is no longer showing the current state, which an
+   * organizer has to know before they read a status or a count off it.
+   *
+   * Applying the write's own response locally instead would be one request cheaper and wrong in a
+   * specific way: the rollup is counted by the api over the rows it holds, so patching one row on
+   * screen leaves the counts describing the checklist as it was before the click. Re-reading is
+   * what keeps the counting rule in one place (AC 2), and it is what the guest list does after a
+   * cancel for the same reason.
+   */
+  const reload = async (requested: string): Promise<string | null> => {
+    const epoch = ++writeEpoch.current;
+    const result = await loadChecklist(apiBaseUrl, eventId);
+    if (active.current !== requested) return null;
+    // An older reload landing after a newer one must not put the older answer back on screen.
+    if (epoch < appliedEpoch.current) return null;
+    appliedEpoch.current = epoch;
+    if (!result.ok) {
+      return `The change was saved, but the checklist could not be reloaded: ${result.message}`;
+    }
+    setState({ status: "ready", checklist: result.checklist });
+    return null;
   };
 
   const setStatus = async (itemId: string, status: ChecklistStatus): Promise<string | null> => {
+    const requested = showing;
     const result = await updateChecklistItem(apiBaseUrl, itemId, { status });
     if (!result.ok) return result.message;
-    // The api answers with the stored row, so what goes on screen is what was written.
-    applyToItem(itemId, (item) => ({ ...item, status: result.item.status }));
-    return null;
+    return reload(requested);
   };
 
   const saveNotes = async (itemId: string, notes: string): Promise<string | null> => {
+    const requested = showing;
     const result = await updateChecklistItem(apiBaseUrl, itemId, { notes });
     if (!result.ok) return result.message;
-    applyToItem(itemId, (item) => ({ ...item, notes: result.item.notes }));
-    return null;
+    return reload(requested);
   };
 
   const upload = async (itemId: string, file: File) => {
+    const requested = showing;
     const result = await uploadDocument(apiBaseUrl, itemId, file);
     // A failed upload leaves the item exactly as it was and writes no metadata row, so there is
     // nothing to undo here and the row simply reports what happened.
     if (!result.ok) return { message: result.message, retryable: result.retryable };
-    applyToItem(itemId, (item) => ({ ...item, documents: [...item.documents, result.document] }));
-    return null;
+    const failure = await reload(requested);
+    // The document is stored either way; a reload that failed is not a retryable upload, and
+    // sending the file again would store a second copy of it.
+    return failure === null ? null : { message: failure, retryable: false };
   };
 
+  /**
+   * Follow a document's short-lived signed URL.
+   *
+   * The tab is opened synchronously, on the click itself, and navigated once the URL comes back.
+   * Opening it after the await is what the first version did, and it silently did nothing twice
+   * over: `window.open` with `noopener` returns null by specification, so the handle was always
+   * null and the null was ignored, and a browser that has since expired the click's transient
+   * activation refuses the popup anyway. Both paths reported success while nothing happened.
+   *
+   * `opener` is cleared by hand because that is what `noopener` would have done, and it is the
+   * part worth keeping: the storage origin must not get a reference back into this page.
+   */
   const download = async (documentId: string): Promise<string | null> => {
+    const target = window.open("", "_blank");
+    if (target !== null) target.opener = null;
+
     const result = await documentUrl(apiBaseUrl, documentId);
-    if (!result.ok) return result.message;
-    // The URL is short-lived and signed, so it is followed immediately rather than rendered as a
-    // link an organizer might come back to after it has expired.
-    window.open(result.url, "_blank", "noopener,noreferrer");
+    if (!result.ok) {
+      target?.close();
+      return result.message;
+    }
+    if (target === null || target.closed) {
+      return "The download was blocked by the browser. Allow pop-ups for this site and try again.";
+    }
+    target.location.href = result.url;
     return null;
   };
 
@@ -202,7 +235,7 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     rulesetVersion: checklist.rulesetVersion,
     snapshotDate: checklist.snapshotDate,
   };
-  const rollup = rollupOf(checklist.items);
+  const rollup = rollupOf(checklist.statusRollup);
   const retained = checklist.items.filter((item) => !item.inLatestPlan).length;
 
   return (

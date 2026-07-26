@@ -9,6 +9,7 @@
 // reason it is worth the weight here is the same one it was worth there — every field below is
 // regulatory content or organizer state, and a silently-undefined one renders as an answer.
 
+import { CHECKLIST_STATUSES } from "@pop-engine/engine";
 import type {
   ChecklistStatus,
   Deadline,
@@ -22,6 +23,7 @@ import {
   arrayOf,
   asRecord,
   type FieldChecks,
+  isNumber,
   isString,
   isToken,
   nullOr,
@@ -102,6 +104,12 @@ export type ChecklistItem = PlanContext & {
   readonly documents: readonly ChecklistDocument[];
 };
 
+/**
+ * AC 2's rollup as the api counted it: current-plan rows only, one count per status. The counting
+ * rule lives there and only there, so this feature reads the answer rather than recomputing it.
+ */
+export type StatusRollup = Readonly<Record<ChecklistStatus, number>>;
+
 export type ChecklistResponse = {
   /** The current plan's pinned pair, for the checklist's own banner (F-206 AC 1). */
   readonly rulesetVersion: string;
@@ -112,11 +120,7 @@ export type ChecklistResponse = {
   readonly planChanged: boolean;
   /** The event has been edited since even the latest plan was generated; creation is refused. */
   readonly planStale: boolean;
-  /**
-   * The api also sends a `statusRollup`. It is deliberately not read: a status change updates one
-   * row and not the response that carried it, so a stored rollup starts disagreeing with the rows
-   * beneath it at the first click. The view counts the rows it is showing instead.
-   */
+  readonly statusRollup: StatusRollup;
   readonly items: readonly ChecklistItem[];
   /** Advisories and notes: read-only context, never trackable tasks. */
   readonly contextItems: readonly PlanContext[];
@@ -250,12 +254,21 @@ const ITEM_CHECKS: FieldChecks<ChecklistItem> = {
   documents: arrayOf(shapedLike(DOCUMENT_CHECKS)),
 };
 
+/**
+ * One count per status, keyed off the engine's own list, so a status added upstream stops this
+ * compiling rather than going uncounted on screen.
+ */
+const ROLLUP_CHECKS = Object.fromEntries(
+  CHECKLIST_STATUSES.map((status) => [status, isNumber]),
+) as FieldChecks<StatusRollup>;
+
 const CHECKLIST_CHECKS: FieldChecks<ChecklistResponse> = {
   rulesetVersion: isString,
   snapshotDate: nullOr(isString),
   created: isBoolean,
   planChanged: isBoolean,
   planStale: isBoolean,
+  statusRollup: shapedLike(ROLLUP_CHECKS),
   items: arrayOf(shapedLike(ITEM_CHECKS)),
   contextItems: arrayOf(shapedLike(PLAN_CONTEXT_CHECKS)),
 };

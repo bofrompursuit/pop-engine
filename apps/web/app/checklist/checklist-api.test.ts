@@ -9,7 +9,7 @@ import {
   updateChecklistItem,
   uploadDocument,
 } from "./checklist-api";
-import { checklistBody, planContext, trackedItem } from "./checklist-fixtures";
+import { checklistBody, planContext, STREET_MEDIUM, trackedItem } from "./checklist-fixtures";
 
 // `fetch` is stubbed; the api's own behavior is covered by apps/api. What is pinned here is the
 // request this page makes and how each answer is reported.
@@ -147,7 +147,10 @@ describe("loadChecklist", () => {
 
   it("refuses a context line that is not shaped like plan context", async () => {
     stubFetch(async () =>
-      jsonResponse(200, checklistBody({ contextItems: [omit(planContext(), "disposition")] })),
+      jsonResponse(
+        200,
+        checklistBody({ contextItems: [omit(planContext(STREET_MEDIUM), "disposition")] }),
+      ),
     );
 
     await expect(loadChecklist("https://api.example.com", "event-1")).resolves.toMatchObject({
@@ -184,7 +187,10 @@ describe("createChecklist", () => {
   // Edge case: created twice is idempotent. The api answers 200 with the checklist that already
   // exists rather than 201 with a second one, and the client treats both as the current checklist.
   it("takes a 200 as the existing checklist, not as a second one", async () => {
-    const existing = checklistBody({ created: true, items: [trackedItem({ id: "item-1" })] });
+    const existing = checklistBody({
+      created: true,
+      items: [trackedItem(STREET_MEDIUM, { id: "item-1" })],
+    });
     stubFetch(async () => jsonResponse(200, existing));
 
     const result = await createChecklist("https://api.example.com", "event-1");

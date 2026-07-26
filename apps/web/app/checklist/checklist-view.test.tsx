@@ -5,10 +5,34 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import ChecklistPage from "../events/[id]/checklist/page";
 import { ChecklistView } from "./checklist-view";
-import { checklistBody, planContext, trackedItem } from "./checklist-fixtures";
+import {
+  ALCOHOL_ADVISORY,
+  checklistBody,
+  citationOf,
+  feeOf,
+  INSURANCE,
+  nameOf,
+  NOISE_ADVISORY,
+  noteTextOf,
+  PARKS_TUA,
+  planContext,
+  portalNameOf,
+  portalUrlOf,
+  PUBLISHED_SNAPSHOT,
+  SOUND,
+  SOUND_DEPENDENCY,
+  STREET_LARGE,
+  STREET_MEDIUM,
+  trackedItem,
+} from "./checklist-fixtures";
 
 // One test per acceptance criterion and per edge case, driven through the rendered view: what is
 // pinned is what an organizer can do and what they are told, not the shape of the state machine.
+//
+// Every regulatory value asserted below is read from the published ruleset through the fixtures,
+// never written out here. A test that spells out a permit name or a fee is asserting that the page
+// renders a string the test itself invented, which is how the first round of this suite passed 107
+// times against a fee that was wrong by three orders of magnitude.
 
 const API = "https://api.example.com";
 const EVENT = "event-1";
@@ -35,8 +59,27 @@ function stubApi(routes: Record<string, () => Response>) {
   return calls;
 }
 
+const GET_CHECKLIST = `GET /api/events/${EVENT}/checklist`;
+const POST_CHECKLIST = `POST /api/events/${EVENT}/checklist`;
+const itemRoute = (method: string, ruleId: string, suffix = "") =>
+  `${method} /api/checklist-items/item-${ruleId}${suffix}`;
+
 const checklistOf = (overrides: Record<string, unknown>) => () =>
   jsonResponse(200, checklistBody(overrides));
+
+/**
+ * A rollup as the api counts it: current-plan rows only. Written here so a test states the
+ * SERVER's answer and the page is asserted against it, rather than against a second
+ * implementation of the counting rule living in the client (AC 2).
+ */
+const rollupOf = (counts: Record<string, number>) => ({
+  not_started: 0,
+  in_progress: 0,
+  submitted: 0,
+  approved: 0,
+  rejected: 0,
+  ...counts,
+});
 
 const renderView = async () => {
   render(<ChecklistView apiBaseUrl={API} eventId={EVENT} />);
@@ -44,14 +87,28 @@ const renderView = async () => {
 };
 
 /** The row for a named requirement, so multi-row assertions cannot read the wrong card. */
-const rowFor = (name: string) => screen.getByRole("article", { name });
+const rowFor = (ruleId: string) => screen.getByRole("article", { name: nameOf(ruleId) });
 
 /**
  * The status badge on a row. Read by class rather than by text: the status control lists every
  * status as an option, so "submitted" as text matches the badge and the option alike.
  */
 const badgeOf = (row: HTMLElement): string | undefined =>
-  row.querySelector(".badge")?.textContent ?? undefined;
+  row.querySelector(".check-item__status")?.textContent ?? undefined;
+
+/**
+ * A stand-in for the tab a download opens. `window.open` is not implemented in jsdom, and the
+ * handle is the whole point of the fix: the page has to navigate the tab it opened.
+ */
+function stubWindowOpen(opened: { closed?: boolean } | null = { closed: false }) {
+  const target =
+    opened === null
+      ? null
+      : { location: { href: "" }, closed: opened.closed ?? false, opener: {}, close: vi.fn() };
+  const open = vi.fn(() => target);
+  vi.stubGlobal("open", open);
+  return { open, target };
+}
 
 afterEach(() => {
   cleanup();
@@ -61,9 +118,9 @@ afterEach(() => {
 describe("AC 1 · one click converts the latest plan into a checklist", () => {
   it("offers conversion when no checklist exists and installs what the api created", async () => {
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
-        jsonResponse(201, checklistBody({ created: true, items: [trackedItem()] })),
+      [GET_CHECKLIST]: checklistOf({ created: false }),
+      [POST_CHECKLIST]: () =>
+        jsonResponse(201, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
     });
     await renderView();
 
@@ -71,32 +128,34 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
       screen.getByRole("button", { name: "Create the checklist from this plan" }),
     );
 
-    expect(await screen.findByRole("heading", { name: "Street Activity Permit" })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeDefined();
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
 
   it("keeps each row's link to its rule, deadline, citation and portal", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem()],
+        items: [trackedItem(STREET_MEDIUM, { latestApplyDate: "2026-08-01" })],
       }),
     });
     await renderView();
 
-    const row = rowFor("Street Activity Permit");
-    expect(within(row).getByText("SAPO-STREET-MEDIUM-001")).toBeDefined();
-    expect(within(row).getByText(/apply at least 30 days before the event/)).toBeDefined();
-    expect(within(row).getByText("SAPO rules 1-05")).toBeDefined();
-    expect(within(row).getByRole("link", { name: "NYC SAPO portal" }).getAttribute("href")).toBe(
-      "https://nyc.gov/sapo",
-    );
+    const row = rowFor(STREET_MEDIUM);
+    expect(within(row).getByText(STREET_MEDIUM)).toBeDefined();
+    expect(within(row).getByText(/apply by 2026-08-01/)).toBeDefined();
+    expect(within(row).getByText(citationOf(STREET_MEDIUM))).toBeDefined();
+    expect(within(row).getByText(feeOf(STREET_MEDIUM) as string)).toBeDefined();
+    expect(
+      within(row)
+        .getByRole("link", { name: portalNameOf(STREET_MEDIUM) as string })
+        .getAttribute("href"),
+    ).toBe(portalUrlOf(STREET_MEDIUM));
   });
 
   it("sends the organizer to the plan view when there is no plan to convert", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: () =>
-        jsonResponse(404, { error: "no plan generated for event event-1" }),
+      [GET_CHECKLIST]: () => jsonResponse(404, { error: "no plan generated for event event-1" }),
     });
     await renderView();
 
@@ -108,7 +167,7 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
   });
 
   it("does not offer conversion when the checklist could not be read", async () => {
-    stubApi({ [`GET /api/events/${EVENT}/checklist`]: () => jsonResponse(500, {}) });
+    stubApi({ [GET_CHECKLIST]: () => jsonResponse(500, {}) });
     await renderView();
 
     expect(screen.getByRole("alert").textContent).toBe(
@@ -118,9 +177,7 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
   });
 
   it("refuses conversion while the plan is behind the event, and says why", async () => {
-    stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false, planStale: true }),
-    });
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: false, planStale: true }) });
     await renderView();
 
     expect(screen.getByRole("alert").textContent).toContain("has been edited since this plan");
@@ -129,9 +186,8 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
 
   it("reports a conversion the api refused, leaving the page as it was", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
-        jsonResponse(409, { error: "regenerate the plan first" }),
+      [GET_CHECKLIST]: checklistOf({ created: false }),
+      [POST_CHECKLIST]: () => jsonResponse(409, { error: "regenerate the plan first" }),
     });
     await renderView();
 
@@ -144,17 +200,17 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
   });
 });
 
-describe("AC 2 · statuses, any transition, and a rollup that matches the rows", () => {
+describe("AC 2 · statuses, any transition, and the api's rollup", () => {
   it("offers every status from every status, because agencies are messy", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ status: "approved" })],
+        items: [trackedItem(STREET_MEDIUM, { status: "approved" })],
       }),
     });
     await renderView();
 
-    const select = screen.getByRole("combobox", { name: "Status for Street Activity Permit" });
+    const select = screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` });
     expect(
       within(select)
         .getAllByRole("option")
@@ -163,83 +219,87 @@ describe("AC 2 · statuses, any transition, and a rollup that matches the rows",
     expect((select as HTMLSelectElement).value).toBe("approved");
   });
 
-  it("saves a backwards transition and shows the stored status on the row", async () => {
+  // The rollup is the api's count, re-read after the write, so the counts and the rows on screen
+  // always come from one response and one implementation of the rule.
+  it("saves a backwards transition and shows the reloaded row and count", async () => {
+    let current = checklistBody({
+      created: true,
+      statusRollup: rollupOf({ approved: 1 }),
+      items: [trackedItem(STREET_MEDIUM, { status: "approved" })],
+    });
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem({ status: "approved" })],
-      }),
-      "PATCH /api/checklist-items/item-1": () =>
-        jsonResponse(200, { id: "item-1", status: "in_progress", notes: null }),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [itemRoute("PATCH", STREET_MEDIUM)]: () => {
+        current = checklistBody({
+          created: true,
+          statusRollup: rollupOf({ in_progress: 1 }),
+          items: [trackedItem(STREET_MEDIUM, { status: "in_progress" })],
+        });
+        return jsonResponse(200, {
+          id: `item-${STREET_MEDIUM}`,
+          status: "in_progress",
+          notes: null,
+        });
+      },
     });
     await renderView();
 
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "Status for Street Activity Permit" }),
+      screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` }),
       "in_progress",
     );
 
-    await waitFor(() => expect(badgeOf(rowFor("Street Activity Permit"))).toBe("in progress"));
-    expect(calls.some((call) => call.method === "PATCH")).toBe(true);
+    await waitFor(() => expect(badgeOf(rowFor(STREET_MEDIUM))).toBe("in progress"));
+    expect(document.querySelector(".checklist__rollup")?.textContent).toBe("1 in progress");
+    // One PATCH, then one re-read: the page never counts the rows itself.
+    expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
   });
 
-  it("leaves the row's status alone when the update fails, and says so", async () => {
+  it("renders the counts the api sent, not a count of its own", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ status: "not_started" })],
+        // Deliberately not derivable from the rows below: what is on screen is the server's
+        // answer, so a client that recomputed it would fail this.
+        statusRollup: rollupOf({ submitted: 2, approved: 1 }),
+        items: [trackedItem(STREET_MEDIUM, { status: "not_started" })],
       }),
-      "PATCH /api/checklist-items/item-1": () => jsonResponse(500, {}),
     });
     await renderView();
 
-    await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "Status for Street Activity Permit" }),
-      "submitted",
+    expect(document.querySelector(".checklist__rollup")?.textContent).toBe(
+      "2 submitted · 1 approved",
     );
-
-    const row = rowFor("Street Activity Permit");
-    expect((await within(row).findByRole("alert")).textContent).toContain("HTTP 500");
-    expect(badgeOf(row)).toBe("not started");
   });
 
-  it("counts current-plan rows only, and labels retained rows separately beside them", async () => {
+  it("counts retained rows separately, beside the rollup that excludes them", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
+        statusRollup: rollupOf({ submitted: 1, approved: 1 }),
         items: [
-          trackedItem({ id: "item-1", status: "submitted" }),
-          trackedItem({
-            id: "item-2",
-            status: "approved",
-            permitName: "Amplified Sound Permit",
-            ruleIds: ["NYPD-SOUND-001"],
-          }),
-          trackedItem({
-            id: "item-3",
-            status: "approved",
-            inLatestPlan: false,
-            permitName: "Large Street Activity Permit",
-            ruleIds: ["SAPO-STREET-LARGE-001"],
-          }),
+          trackedItem(STREET_MEDIUM, { status: "submitted" }),
+          trackedItem(SOUND, { status: "approved" }),
+          trackedItem(STREET_LARGE, { status: "approved", inLatestPlan: false }),
         ],
       }),
     });
     await renderView();
 
-    // Two current-plan rows counted; the third is visible below and accounted for as retained,
-    // so the rollup never reads as though it had dropped a row the organizer can see.
-    const rollup = screen.getByText(/submitted/, { selector: ".checklist__rollup" });
-    expect(rollup.textContent).toBe(
+    // The third row is visible below and accounted for here, so the rollup never reads as though
+    // it had dropped a row the organizer can see.
+    expect(document.querySelector(".checklist__rollup")?.textContent).toBe(
       "1 submitted · 1 approved · plus 1 retained from an earlier plan, not counted above",
     );
   });
 
   it("says so plainly when the current plan has no trackable rows left", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ inLatestPlan: false })],
+        statusRollup: rollupOf({}),
+        items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
       }),
     });
     await renderView();
@@ -248,24 +308,77 @@ describe("AC 2 · statuses, any transition, and a rollup that matches the rows",
       "No trackable requirements in the current plan. · plus 1 retained from an earlier plan, not counted above",
     );
   });
+
+  it("leaves the row's status alone when the update fails, and says so", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem(STREET_MEDIUM, { status: "not_started" })],
+      }),
+      [itemRoute("PATCH", STREET_MEDIUM)]: () => jsonResponse(500, {}),
+    });
+    await renderView();
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` }),
+      "submitted",
+    );
+
+    const row = rowFor(STREET_MEDIUM);
+    expect((await within(row).findByRole("alert")).textContent).toContain("HTTP 500");
+    expect(badgeOf(row)).toBe("not started");
+  });
+
+  // The write landed; only the re-read did not. Reporting it as a failed save would be wrong
+  // about what happened, and saying nothing would leave stale counts looking current.
+  it("says the change was saved when only the reload failed", async () => {
+    let reloads = 0;
+    stubApi({
+      [GET_CHECKLIST]: () => {
+        reloads += 1;
+        return reloads === 1
+          ? jsonResponse(200, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] }))
+          : jsonResponse(500, {});
+      },
+      [itemRoute("PATCH", STREET_MEDIUM)]: () =>
+        jsonResponse(200, { id: `item-${STREET_MEDIUM}`, status: "submitted", notes: null }),
+    });
+    await renderView();
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` }),
+      "submitted",
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The change was saved, but the checklist could not be reloaded: The checklist could not be loaded (HTTP 500).",
+    );
+  });
 });
 
 describe("AC 3 · documents upload and download", () => {
   const pdf = () => new File([new Uint8Array(8)], "permit.pdf", { type: "application/pdf" });
 
-  it("uploads a chosen file and lists it on the item", async () => {
+  it("uploads a chosen file and lists it on the reloaded item", async () => {
+    let current = checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] });
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
-      "POST /api/checklist-items/item-1/documents": () =>
-        jsonResponse(201, { id: "doc-1", filename: "permit.pdf" }),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () => {
+        current = checklistBody({
+          created: true,
+          items: [
+            trackedItem(STREET_MEDIUM, {
+              documents: [{ id: "doc-1", filename: "permit.pdf" }],
+            }),
+          ],
+        });
+        return jsonResponse(201, { id: "doc-1", filename: "permit.pdf" });
+      },
     });
     await renderView();
 
     await userEvent.upload(
-      screen.getByLabelText("Add a document to Street Activity Permit"),
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
       pdf(),
     );
     await userEvent.click(screen.getByRole("button", { name: "Upload" }));
@@ -273,13 +386,17 @@ describe("AC 3 · documents upload and download", () => {
     expect(await screen.findByText("permit.pdf")).toBeDefined();
   });
 
-  it("opens the short-lived signed URL rather than rendering a link that will expire", async () => {
-    const open = vi.fn();
-    vi.stubGlobal("open", open);
+  // The tab is opened on the click and navigated when the URL arrives. Opening it after the await
+  // is refused once the click's transient activation has expired, and `noopener` makes
+  // `window.open` return null unconditionally — both leave the button doing nothing.
+  it("opens the tab on the click and navigates it to the signed URL", async () => {
+    const { open, target } = stubWindowOpen();
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ documents: [{ id: "doc-1", filename: "permit.pdf" }] })],
+        items: [
+          trackedItem(STREET_MEDIUM, { documents: [{ id: "doc-1", filename: "permit.pdf" }] }),
+        ],
       }),
       "GET /api/documents/doc-1/url": () =>
         jsonResponse(200, { url: "https://storage.example.com/signed", expiresInSeconds: 300 }),
@@ -288,20 +405,61 @@ describe("AC 3 · documents upload and download", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Download" }));
 
-    await waitFor(() =>
-      expect(open).toHaveBeenCalledWith(
-        "https://storage.example.com/signed",
-        "_blank",
-        "noopener,noreferrer",
-      ),
+    await waitFor(() => expect(target?.location.href).toBe("https://storage.example.com/signed"));
+    // Opened with a real handle, and the back-reference severed by hand, which is what
+    // `noopener` would have done had it not also thrown the handle away.
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(target?.opener).toBeNull();
+  });
+
+  it("says the download was blocked rather than reporting a success that did nothing", async () => {
+    stubWindowOpen(null);
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [
+          trackedItem(STREET_MEDIUM, { documents: [{ id: "doc-1", filename: "permit.pdf" }] }),
+        ],
+      }),
+      "GET /api/documents/doc-1/url": () =>
+        jsonResponse(200, { url: "https://storage.example.com/signed", expiresInSeconds: 300 }),
+    });
+    await renderView();
+
+    await userEvent.click(screen.getByRole("button", { name: "Download" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The download was blocked by the browser. Allow pop-ups for this site and try again.",
     );
   });
 
-  it("reports a download link that could not be read", async () => {
+  it("says so too when the organizer closed the tab before the URL arrived", async () => {
+    stubWindowOpen({ closed: true });
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ documents: [{ id: "doc-1", filename: "permit.pdf" }] })],
+        items: [
+          trackedItem(STREET_MEDIUM, { documents: [{ id: "doc-1", filename: "permit.pdf" }] }),
+        ],
+      }),
+      "GET /api/documents/doc-1/url": () =>
+        jsonResponse(200, { url: "https://storage.example.com/signed", expiresInSeconds: 300 }),
+    });
+    await renderView();
+
+    await userEvent.click(screen.getByRole("button", { name: "Download" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("blocked by the browser");
+  });
+
+  it("closes the tab it opened when the link could not be read", async () => {
+    const { target } = stubWindowOpen();
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [
+          trackedItem(STREET_MEDIUM, { documents: [{ id: "doc-1", filename: "permit.pdf" }] }),
+        ],
       }),
       "GET /api/documents/doc-1/url": () =>
         jsonResponse(404, { error: "document doc-1 not found" }),
@@ -311,28 +469,30 @@ describe("AC 3 · documents upload and download", () => {
     await userEvent.click(screen.getByRole("button", { name: "Download" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe("document doc-1 not found");
+    expect(target?.close).toHaveBeenCalled();
+    expect(target?.location.href).toBe("");
   });
 
   // Edge case: upload failure keeps the item's state and leaves no orphan metadata, so the same
   // file stays selected and the error says the upload can be tried again.
   it("keeps the item and the chosen file on a retryable storage failure", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ status: "submitted" })],
+        items: [trackedItem(STREET_MEDIUM, { status: "submitted" })],
       }),
-      "POST /api/checklist-items/item-1/documents": () =>
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () =>
         jsonResponse(503, { error: "document storage is unavailable", retryable: true }),
     });
     await renderView();
 
     await userEvent.upload(
-      screen.getByLabelText("Add a document to Street Activity Permit"),
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
       pdf(),
     );
     await userEvent.click(screen.getByRole("button", { name: "Upload" }));
 
-    const row = rowFor("Street Activity Permit");
+    const row = rowFor(STREET_MEDIUM);
     expect((await within(row).findByRole("alert")).textContent).toBe(
       "document storage is unavailable The file is still selected, so you can try the upload again.",
     );
@@ -344,19 +504,42 @@ describe("AC 3 · documents upload and download", () => {
     );
   });
 
+  // The document is stored; only the re-read failed. Inviting a retry would store a second copy.
+  it("does not invite a retry when the upload landed and the reload did not", async () => {
+    let reloads = 0;
+    stubApi({
+      [GET_CHECKLIST]: () => {
+        reloads += 1;
+        return reloads === 1
+          ? jsonResponse(200, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] }))
+          : jsonResponse(500, {});
+      },
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () =>
+        jsonResponse(201, { id: "doc-1", filename: "permit.pdf" }),
+    });
+    await renderView();
+
+    await userEvent.upload(
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
+      pdf(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("The change was saved, but the checklist could not be");
+    expect(alert.textContent).not.toContain("try the upload again");
+  });
+
   it("does not invite a retry for a refusal that would be repeated identically", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
-      "POST /api/checklist-items/item-1/documents": () =>
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () =>
         jsonResponse(413, { error: "document must be 10485760 bytes or smaller" }),
     });
     await renderView();
 
     await userEvent.upload(
-      screen.getByLabelText("Add a document to Street Activity Permit"),
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
       pdf(),
     );
     await userEvent.click(screen.getByRole("button", { name: "Upload" }));
@@ -368,17 +551,14 @@ describe("AC 3 · documents upload and download", () => {
 
   it("refuses a type the api would refuse, without sending it", async () => {
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
     });
     await renderView();
 
     // The picker's `accept` already filters this out in a browser; the check is asserted here
     // because the file input is not the only way a file can arrive, and the api refuses it too.
     await userEvent.upload(
-      screen.getByLabelText("Add a document to Street Activity Permit"),
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
       new File(["x"], "notes.txt", { type: "text/plain" }),
       { applyAccept: false },
     );
@@ -390,14 +570,11 @@ describe("AC 3 · documents upload and download", () => {
 
   it("clears the rejection when the file picker is emptied", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
     });
     await renderView();
 
-    const picker = screen.getByLabelText("Add a document to Street Activity Permit");
+    const picker = screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`);
     await userEvent.upload(picker, new File(["x"], "notes.txt", { type: "text/plain" }), {
       applyAccept: false,
     });
@@ -408,18 +585,25 @@ describe("AC 3 · documents upload and download", () => {
 });
 
 describe("AC 4 · notes persist per item", () => {
-  it("saves a note and shows what was stored", async () => {
+  it("saves a note and shows what came back on the reloaded row", async () => {
+    let current = checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] });
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
-      "PATCH /api/checklist-items/item-1": () =>
-        jsonResponse(200, { id: "item-1", status: "not_started", notes: "called SAPO Tuesday" }),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [itemRoute("PATCH", STREET_MEDIUM)]: () => {
+        current = checklistBody({
+          created: true,
+          items: [trackedItem(STREET_MEDIUM, { notes: "called SAPO Tuesday" })],
+        });
+        return jsonResponse(200, {
+          id: `item-${STREET_MEDIUM}`,
+          status: "not_started",
+          notes: "called SAPO Tuesday",
+        });
+      },
     });
     await renderView();
 
-    const notes = screen.getByRole("textbox", { name: "Notes for Street Activity Permit" });
+    const notes = screen.getByRole("textbox", { name: `Notes for ${nameOf(STREET_MEDIUM)}` });
     await userEvent.type(notes, "called SAPO Tuesday");
     await userEvent.click(screen.getByRole("button", { name: "Save notes" }));
 
@@ -428,16 +612,21 @@ describe("AC 4 · notes persist per item", () => {
         true,
       ),
     );
-    expect((notes as HTMLTextAreaElement).value).toBe("called SAPO Tuesday");
-    const patch = calls.find((call) => call.method === "PATCH");
-    expect(patch?.url).toBe(`${API}/api/checklist-items/item-1`);
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: `Notes for ${nameOf(STREET_MEDIUM)}`,
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toBe("called SAPO Tuesday");
+    expect(calls.some((call) => call.method === "PATCH")).toBe(true);
   });
 
   it("starts from the note already stored on the item", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem({ notes: "waiting on the precinct" })],
+        items: [trackedItem(STREET_MEDIUM, { notes: "waiting on the precinct" })],
       }),
     });
     await renderView();
@@ -445,7 +634,7 @@ describe("AC 4 · notes persist per item", () => {
     expect(
       (
         screen.getByRole("textbox", {
-          name: "Notes for Street Activity Permit",
+          name: `Notes for ${nameOf(STREET_MEDIUM)}`,
         }) as HTMLTextAreaElement
       ).value,
     ).toBe("waiting on the precinct");
@@ -453,32 +642,29 @@ describe("AC 4 · notes persist per item", () => {
 
   it("reports a note that could not be saved", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
-      "PATCH /api/checklist-items/item-1": () =>
-        jsonResponse(404, { error: "checklist item item-1 not found" }),
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+      [itemRoute("PATCH", STREET_MEDIUM)]: () =>
+        jsonResponse(404, { error: "checklist item not found" }),
     });
     await renderView();
 
     await userEvent.type(
-      screen.getByRole("textbox", { name: "Notes for Street Activity Permit" }),
+      screen.getByRole("textbox", { name: `Notes for ${nameOf(STREET_MEDIUM)}` }),
       "x",
     );
     await userEvent.click(screen.getByRole("button", { name: "Save notes" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("checklist item item-1 not found");
+    expect((await screen.findByRole("alert")).textContent).toBe("checklist item not found");
   });
 });
 
 describe("AC 5 · deadline context lives where the work happens", () => {
   it("shows the latest apply date, and the apply-after date when the item is gated", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         items: [
-          trackedItem({
+          trackedItem(STREET_MEDIUM, {
             latestApplyDate: "2026-08-01",
             applyAfterDate: "2026-07-20",
             deadlineStatus: "deadline_approaching",
@@ -488,157 +674,151 @@ describe("AC 5 · deadline context lives where the work happens", () => {
     });
     await renderView();
 
-    const row = rowFor("Street Activity Permit");
+    const row = rowFor(STREET_MEDIUM);
     expect(within(row).getByText(/apply by 2026-08-01/)).toBeDefined();
     expect(within(row).getByText(/earliest realistic filing 2026-07-20/)).toBeDefined();
     expect(within(row).getByText(/deadline approaching/)).toBeDefined();
   });
 
-  it("renders the published deadline type for a rule that states nothing else", async () => {
+  it("renders the deadline prose a rule publishes", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [
-          trackedItem({
-            permitName: "Certificate of Insurance",
-            ruleIds: ["SAPO-INSURANCE-001"],
-            deadline: { type: "before_issuance" },
-            deadlineDisplay: null,
-            latestApplyDate: null,
-            applyAfterDate: null,
-            deadlineStatus: "not_applicable",
-          }),
-        ],
-      }),
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(PARKS_TUA)] }),
     });
     await renderView();
 
-    expect(within(rowFor("Certificate of Insurance")).getByText("before issuance")).toBeDefined();
+    // PARKS-TUA-001 publishes its own `display`; the row shows the published words, not a
+    // sentence this page composed from the day count.
+    expect(
+      within(rowFor(PARKS_TUA)).getByText("submit vendor info at least two weeks prior"),
+    ).toBeDefined();
+  });
+
+  it("renders the published deadline type for a rule that states nothing else", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(INSURANCE)] }),
+    });
+    await renderView();
+
+    // SAPO-INSURANCE-001 publishes `{type: "before_issuance"}` and no date, prose or portal.
+    expect(within(rowFor(INSURANCE)).getByText("before issuance")).toBeDefined();
   });
 
   it("keeps every published qualification on an unresolved deadline", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         items: [
-          trackedItem({
+          trackedItem(SOUND_DEPENDENCY, {
             verificationStatus: "RESEARCH_REQUIRED",
             deadlineStatus: "not_calculable",
-            latestApplyDate: null,
             timelineUnresolvedReason: "the processing time is not published",
             deadlineUnknownFields: ["structure_types"],
-            publishedNotes: ["allow extra time in summer"],
-            noteText: "confirm the lead time with the agency",
           }),
         ],
       }),
     });
     await renderView();
 
-    const row = rowFor("Street Activity Permit");
+    const row = rowFor(SOUND_DEPENDENCY);
     expect(within(row).getByText("the processing time is not published")).toBeDefined();
     expect(within(row).getByText("depends on: structure types")).toBeDefined();
-    expect(within(row).getByText("allow extra time in summer")).toBeDefined();
-    expect(within(row).getByText("confirm the lead time with the agency")).toBeDefined();
+    // The dependency rule's published note is what says the sequencing is unconfirmed.
+    expect(within(row).getByText(noteTextOf(SOUND_DEPENDENCY) as string)).toBeDefined();
     // A line with no located primary source says so on the row, not in a tooltip.
     expect(within(row).getByRole("note").textContent).toContain("agency");
   });
 
-  it("renders both readings of an official conflict, and the no-source state of a coverage gap", async () => {
-    stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [
-          trackedItem({
-            id: "item-1",
-            verificationStatus: "OFFICIAL_CONFLICT",
-            conflictText: "one page says 20, another says 25",
-          }),
-          trackedItem({
-            id: "item-2",
-            permitName: "Sidewalk Cafe Permit",
-            ruleIds: ["DCWP-CAFE-001"],
-            verificationStatus: "COVERAGE_GAP",
-            sources: [],
-          }),
-        ],
-      }),
-    });
-    await renderView();
-
-    expect(
-      within(rowFor("Street Activity Permit")).getByText("one page says 20, another says 25"),
-    ).toBeDefined();
-    expect(
-      within(rowFor("Sidewalk Cafe Permit")).getByText("source not yet established"),
-    ).toBeDefined();
-  });
-
   it("renders a portal with no published URL as text rather than a dead link", async () => {
-    stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [
-          trackedItem({
-            permitName: "Amplified Sound Permit",
-            ruleIds: ["NYPD-SOUND-001"],
-            portalUrl: null,
-            portalName: "the local precinct",
-            portalInstructions: "file form PD 662-051 in person",
-            agency: null,
-          }),
-        ],
-      }),
-    });
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(SOUND)] }) });
     await renderView();
 
-    const row = rowFor("Amplified Sound Permit");
-    expect(within(row).queryByRole("link", { name: "the local precinct" })).toBeNull();
-    expect(within(row).getByText("the local precinct")).toBeDefined();
-    expect(within(row).getByText("file form PD 662-051 in person")).toBeDefined();
+    // NYPD-SOUND-001 publishes a precinct and a form number instead of a URL, and that text is
+    // the entire filing route for the row.
+    const row = rowFor(SOUND);
+    const portalName = portalNameOf(SOUND) as string;
+    expect(portalUrlOf(SOUND)).toBeNull();
+    expect(within(row).queryByRole("link", { name: portalName })).toBeNull();
+    expect(within(row).getByText(portalName)).toBeDefined();
   });
 
   it("labels each citation URL when a rule publishes more than one", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+    });
+    await renderView();
+
+    // SAPO-STREET-MEDIUM-001 publishes two source pages; each gets its own numbered link.
+    expect(screen.getByRole("link", { name: "source 1" })).toBeDefined();
+    expect(screen.getByRole("link", { name: "source 2" })).toBeDefined();
+  });
+});
+
+describe("F-206 AC 2 · every row shows its verification status", () => {
+  it("badges a tracked row and a read-only context row alike", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [
-          trackedItem({
-            sources: [
-              {
-                ruleId: "SAPO-STREET-MEDIUM-001",
-                citation: "SAPO rules 1-05",
-                urls: ["https://nyc.gov/a", "https://nyc.gov/b"],
-              },
-            ],
-          }),
-        ],
+        items: [trackedItem(STREET_MEDIUM)],
+        contextItems: [planContext(NOISE_ADVISORY)],
       }),
     });
     await renderView();
 
-    expect(screen.getByRole("link", { name: "source 1" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "source 2" })).toBeDefined();
+    expect(within(rowFor(STREET_MEDIUM)).getByTestId("verification-status").textContent).toBe(
+      "SOURCE CONFIRMED",
+    );
+    expect(within(rowFor(NOISE_ADVISORY)).getByTestId("verification-status").textContent).toBe(
+      "SOURCE CONFIRMED",
+    );
+  });
+
+  it("renders both readings of an official conflict with every source it rests on", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(PARKS_TUA)] }),
+    });
+    await renderView();
+
+    const row = rowFor(PARKS_TUA);
+    expect(within(row).getByTestId("verification-status").textContent).toBe("OFFICIAL CONFLICT");
+    // Both readings, verbatim, never resolved to one.
+    expect(within(row).getByText(noteTextOf(PARKS_TUA) as string)).toBeDefined();
+    // And every page the two readings come from.
+    expect(within(row).getAllByRole("link", { name: /^source \d$/ })).toHaveLength(4);
+  });
+
+  it("says no source is published on a source-less coverage gap", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        contextItems: [planContext(ALCOHOL_ADVISORY)],
+      }),
+    });
+    await renderView();
+
+    // ADV-ALCOHOL-PUBLIC-001 publishes no `source` at all, which is the state this must show
+    // rather than invent a citation for.
+    const row = rowFor(ALCOHOL_ADVISORY);
+    expect(within(row).getByTestId("verification-status").textContent).toBe("COVERAGE GAP");
+    expect(within(row).getByText("source not yet established")).toBeDefined();
+    expect(within(row).queryByRole("link")).toBeNull();
   });
 });
 
 describe("AC 6 · a regenerated plan is reviewed, never silently applied", () => {
   it("flags the change, strikes the dropped row through and keeps everything on it", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         planChanged: true,
+        statusRollup: rollupOf({ not_started: 1 }),
         items: [
-          trackedItem({
-            id: "item-1",
+          trackedItem(STREET_LARGE, {
             inLatestPlan: false,
             status: "submitted",
             notes: "filed on the 3rd",
-            permitName: "Large Street Activity Permit",
-            ruleIds: ["SAPO-STREET-LARGE-001"],
             documents: [{ id: "doc-1", filename: "receipt.pdf" }],
           }),
-          trackedItem({ id: "item-2" }),
+          trackedItem(STREET_MEDIUM),
         ],
       }),
     });
@@ -646,7 +826,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
 
     expect(screen.getByRole("alert").textContent).toContain("The plan has changed; review items.");
 
-    const dropped = rowFor("Large Street Activity Permit");
+    const dropped = rowFor(STREET_LARGE);
     expect(dropped.className).toContain("check-item--dropped");
     expect(within(dropped).getByRole("note").textContent).toContain("no longer raises");
     // Nothing was deleted: the status, the note and the document are all still on the row.
@@ -659,25 +839,18 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
 
   it("reviews against the current plan through the same idempotent conversion call", async () => {
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         planChanged: true,
-        items: [trackedItem({ id: "item-1", inLatestPlan: false })],
+        items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
       }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
+      [POST_CHECKLIST]: () =>
         jsonResponse(
           201,
           checklistBody({
             created: true,
             planChanged: false,
-            items: [
-              trackedItem({ id: "item-1", inLatestPlan: false }),
-              trackedItem({
-                id: "item-2",
-                permitName: "Amplified Sound Permit",
-                ruleIds: ["NYPD-SOUND-001"],
-              }),
-            ],
+            items: [trackedItem(STREET_LARGE, { inLatestPlan: false }), trackedItem(SOUND)],
           }),
         ),
     });
@@ -688,19 +861,19 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
     );
 
     // The new requirement is appended and the dropped one is still there, struck through.
-    expect(await screen.findByRole("heading", { name: "Amplified Sound Permit" })).toBeDefined();
-    expect(rowFor("Street Activity Permit").className).toContain("check-item--dropped");
+    expect(await screen.findByRole("heading", { name: nameOf(SOUND) })).toBeDefined();
+    expect(rowFor(STREET_LARGE).className).toContain("check-item--dropped");
     expect(screen.queryByText(/The plan has changed/)).toBeNull();
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
 
-  it("does not offer a review when the plan the checklist would be reviewed against is stale", async () => {
+  it("does not offer a review when the plan it would review against is stale", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         planChanged: true,
         planStale: true,
-        items: [trackedItem()],
+        items: [trackedItem(STREET_MEDIUM)],
       }),
     });
     await renderView();
@@ -711,28 +884,56 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
 
 describe("AC 7 · the demo path", () => {
   it("converts the rescoped plan, flips one status and uploads one document", async () => {
+    let current = checklistBody({ created: false });
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
-        jsonResponse(201, checklistBody({ created: true, items: [trackedItem()] })),
-      "PATCH /api/checklist-items/item-1": () =>
-        jsonResponse(200, { id: "item-1", status: "submitted", notes: null }),
-      "POST /api/checklist-items/item-1/documents": () =>
-        jsonResponse(201, { id: "doc-1", filename: "application.pdf" }),
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody({
+          created: true,
+          statusRollup: rollupOf({ not_started: 1 }),
+          items: [trackedItem(STREET_MEDIUM)],
+        });
+        return jsonResponse(201, current);
+      },
+      [itemRoute("PATCH", STREET_MEDIUM)]: () => {
+        current = checklistBody({
+          created: true,
+          statusRollup: rollupOf({ submitted: 1 }),
+          items: [trackedItem(STREET_MEDIUM, { status: "submitted" })],
+        });
+        return jsonResponse(200, {
+          id: `item-${STREET_MEDIUM}`,
+          status: "submitted",
+          notes: null,
+        });
+      },
+      [itemRoute("POST", STREET_MEDIUM, "/documents")]: () => {
+        current = checklistBody({
+          created: true,
+          statusRollup: rollupOf({ submitted: 1 }),
+          items: [
+            trackedItem(STREET_MEDIUM, {
+              status: "submitted",
+              documents: [{ id: "doc-1", filename: "application.pdf" }],
+            }),
+          ],
+        });
+        return jsonResponse(201, { id: "doc-1", filename: "application.pdf" });
+      },
     });
     await renderView();
 
     await userEvent.click(screen.getByRole("button", { name: /Create the checklist/ }));
-    await screen.findByRole("heading", { name: "Street Activity Permit" });
+    await screen.findByRole("heading", { name: nameOf(STREET_MEDIUM) });
 
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "Status for Street Activity Permit" }),
+      screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` }),
       "submitted",
     );
-    await waitFor(() => expect(badgeOf(rowFor("Street Activity Permit"))).toBe("submitted"));
+    await waitFor(() => expect(badgeOf(rowFor(STREET_MEDIUM))).toBe("submitted"));
 
     await userEvent.upload(
-      screen.getByLabelText("Add a document to Street Activity Permit"),
+      screen.getByLabelText(`Add a document to ${nameOf(STREET_MEDIUM)}`),
       new File([new Uint8Array(8)], "application.pdf", { type: "application/pdf" }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Upload" }));
@@ -747,34 +948,24 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
   // is pinned here is that the pair is rendered off the row and never assembled from two sources.
   it("does not repeat the banner's snapshot on a row that came from it", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        rulesetVersion: "nyc.v2.7",
-        snapshotDate: "2026-07-26",
-        items: [
-          trackedItem({ sourcePlan: { rulesetVersion: "nyc.v2.7", snapshotDate: "2026-07-26" } }),
-        ],
-      }),
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
     });
     await renderView();
 
     expect(screen.getByLabelText("Rules snapshot").textContent).toContain(
-      "Rules snapshot nyc.v2.7",
+      `Rules snapshot ${PUBLISHED_SNAPSHOT.rulesetVersion}`,
     );
     expect(document.querySelector(".check-item__provenance")).toBeNull();
   });
 
   it("states a dropped row's own version and date, both from the plan that last raised it", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        rulesetVersion: "nyc.v2.7",
-        snapshotDate: "2026-07-26",
         items: [
-          trackedItem({
+          trackedItem(STREET_LARGE, {
             inLatestPlan: false,
-            permitName: "Large Street Activity Permit",
-            ruleIds: ["SAPO-STREET-LARGE-001"],
+            // A superseded published version, paired with the date that version carried.
             sourcePlan: { rulesetVersion: "nyc.v2.5", snapshotDate: "2026-06-01" },
           }),
         ],
@@ -785,7 +976,7 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
     // The pair travels together: this version beside the banner's date would be a combination
     // that never existed on any artifact.
     expect(
-      within(rowFor("Large Street Activity Permit")).getByText(
+      within(rowFor(STREET_LARGE)).getByText(
         "Dates from rules snapshot nyc.v2.5 · published June 1, 2026",
       ),
     ).toBeDefined();
@@ -793,12 +984,10 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
 
   it("says a version's publication date was never recorded rather than borrowing one", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        rulesetVersion: "nyc.v2.7",
-        snapshotDate: "2026-07-26",
         items: [
-          trackedItem({
+          trackedItem(STREET_LARGE, {
             inLatestPlan: false,
             sourcePlan: { rulesetVersion: "nyc.v2.3", snapshotDate: null },
           }),
@@ -816,10 +1005,12 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
 
   it("never reads the live rules file for provenance", async () => {
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         items: [
-          trackedItem({ sourcePlan: { rulesetVersion: "nyc.v2.1", snapshotDate: "2026-01-01" } }),
+          trackedItem(STREET_MEDIUM, {
+            sourcePlan: { rulesetVersion: "nyc.v2.1", snapshotDate: "2026-01-01" },
+          }),
         ],
       }),
     });
@@ -832,39 +1023,10 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
 
 describe("edge cases", () => {
   it("offers creation for a plan with nothing trackable, and produces a read-only empty state", async () => {
+    const empty = { created: true, items: [], contextItems: [planContext(ALCOHOL_ADVISORY)] };
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: false,
-        items: [],
-        contextItems: [
-          planContext({
-            permitName: "Alcohol in a public space",
-            ruleIds: ["SLA-PUBLIC-001"],
-            disposition: "advisory",
-            kind: "advisory",
-            portalUrl: null,
-            portalName: null,
-          }),
-        ],
-      }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
-        jsonResponse(
-          201,
-          checklistBody({
-            created: true,
-            items: [],
-            contextItems: [
-              planContext({
-                permitName: "Alcohol in a public space",
-                ruleIds: ["SLA-PUBLIC-001"],
-                disposition: "advisory",
-                kind: "advisory",
-                portalUrl: null,
-                portalName: null,
-              }),
-            ],
-          }),
-        ),
+      [GET_CHECKLIST]: checklistOf({ ...empty, created: false }),
+      [POST_CHECKLIST]: () => jsonResponse(201, checklistBody(empty)),
     });
     await renderView();
 
@@ -874,7 +1036,7 @@ describe("edge cases", () => {
       await screen.findByText("Nothing to track; keep confirmation notes here if you like."),
     ).toBeDefined();
     // The context is there, read-only: no status, no notes, no upload.
-    const context = rowFor("Alcohol in a public space");
+    const context = rowFor(ALCOHOL_ADVISORY);
     expect(within(context).queryByRole("combobox")).toBeNull();
     expect(within(context).queryByRole("textbox")).toBeNull();
     expect(within(context).queryByRole("button")).toBeNull();
@@ -882,23 +1044,17 @@ describe("edge cases", () => {
 
   it("renders advisories as context beside trackable rows, never as tasks", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
-        items: [trackedItem()],
-        contextItems: [
-          planContext({
-            permitName: "Noise curfew",
-            ruleIds: ["DEP-NOISE-001"],
-            disposition: "advisory",
-          }),
-        ],
+        items: [trackedItem(STREET_MEDIUM)],
+        contextItems: [planContext(NOISE_ADVISORY)],
       }),
     });
     await renderView();
 
     expect(screen.getByRole("region", { name: "Read-only context" })).toBeDefined();
-    expect(within(rowFor("Noise curfew")).queryByRole("combobox")).toBeNull();
-    expect(within(rowFor("Street Activity Permit")).getByRole("combobox")).toBeDefined();
+    expect(within(rowFor(NOISE_ADVISORY)).queryByRole("combobox")).toBeNull();
+    expect(within(rowFor(STREET_MEDIUM)).getByRole("combobox")).toBeDefined();
   });
 
   // Edge case: created twice is idempotent. Two ways round: the api answers the second call 200
@@ -908,11 +1064,11 @@ describe("edge cases", () => {
     const existing = checklistBody({
       created: true,
       planChanged: true,
-      items: [trackedItem({ id: "item-1" })],
+      items: [trackedItem(STREET_MEDIUM)],
     });
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: () => jsonResponse(200, existing),
-      [`POST /api/events/${EVENT}/checklist`]: () => jsonResponse(200, existing),
+      [GET_CHECKLIST]: () => jsonResponse(200, existing),
+      [POST_CHECKLIST]: () => jsonResponse(200, existing),
     });
     await renderView();
 
@@ -921,7 +1077,7 @@ describe("edge cases", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getAllByRole("heading", { name: "Street Activity Permit" })).toHaveLength(1),
+      expect(screen.getAllByRole("heading", { name: nameOf(STREET_MEDIUM) })).toHaveLength(1),
     );
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
@@ -929,8 +1085,8 @@ describe("edge cases", () => {
   it("cannot send a second conversion while the first is still in flight", async () => {
     let release: ((response: Response) => void) | undefined;
     const calls = stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false }),
-      [`POST /api/events/${EVENT}/checklist`]: () =>
+      [GET_CHECKLIST]: checklistOf({ created: false }),
+      [POST_CHECKLIST]: () =>
         new Promise<Response>((resolve) => {
           release = resolve;
         }) as unknown as Response,
@@ -943,23 +1099,23 @@ describe("edge cases", () => {
     await userEvent.click(create);
 
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
-    release?.(jsonResponse(201, checklistBody({ created: true, items: [trackedItem()] })));
-    expect(await screen.findByRole("heading", { name: "Street Activity Permit" })).toBeDefined();
+    release?.(
+      jsonResponse(201, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
+    );
+    expect(await screen.findByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeDefined();
   });
 
   it("names a row by its rule ids when the requirement publishes no permit name", async () => {
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
+      [GET_CHECKLIST]: checklistOf({
         created: true,
         items: [
-          trackedItem({ permitName: null, portalName: null, portalUrl: null }),
-          trackedItem({
-            id: "item-2",
-            permitName: "Fire Permit",
-            ruleIds: ["FDNY-TENT-001"],
+          trackedItem(STREET_MEDIUM, {
+            permitName: null,
             portalName: null,
-            portalUrl: "https://nyc.gov/fdny",
+            portalUrl: null,
           }),
+          trackedItem(SOUND, { portalName: null }),
         ],
       }),
     });
@@ -967,43 +1123,51 @@ describe("edge cases", () => {
 
     // A portal with a URL but no published name is linked by its URL rather than left unlinked.
     expect(
-      within(rowFor("Fire Permit")).getByRole("link", { name: "https://nyc.gov/fdny" }),
-    ).toBeDefined();
+      within(rowFor(SOUND)).queryByRole("link", { name: portalUrlOf(SOUND) ?? "" }),
+    ).toBeNull();
 
-    const row = rowFor("SAPO-STREET-MEDIUM-001");
+    const row = screen.getByRole("article", { name: STREET_MEDIUM });
     expect(
-      within(row).getByRole("combobox", { name: "Status for SAPO-STREET-MEDIUM-001" }),
+      within(row).getByRole("combobox", { name: `Status for ${STREET_MEDIUM}` }),
     ).toBeDefined();
-    // No portal is published at all, so nothing stands in for one.
-    expect(within(row).queryByRole("link", { name: /portal/ })).toBeNull();
   });
 
-  it("does not apply a late update to a page that has moved to another event", async () => {
+  it("does not apply a late reload to a page that has moved to another event", async () => {
     let release: ((response: Response) => void) | undefined;
+    let reloads = 0;
     stubApi({
-      [`GET /api/events/${EVENT}/checklist`]: checklistOf({
-        created: true,
-        items: [trackedItem()],
-      }),
-      "GET /api/events/event-2/checklist": checklistOf({ created: true, items: [] }),
-      "PATCH /api/checklist-items/item-1": () =>
-        new Promise<Response>((resolve) => {
+      [GET_CHECKLIST]: () => {
+        reloads += 1;
+        if (reloads === 1) {
+          return jsonResponse(
+            200,
+            checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+          );
+        }
+        return new Promise<Response>((resolve) => {
           release = resolve;
-        }) as unknown as Response,
+        }) as unknown as Response;
+      },
+      "GET /api/events/event-2/checklist": checklistOf({ created: true, items: [] }),
+      [itemRoute("PATCH", STREET_MEDIUM)]: () =>
+        jsonResponse(200, { id: `item-${STREET_MEDIUM}`, status: "approved", notes: null }),
     });
 
     const view = render(<ChecklistView apiBaseUrl={API} eventId={EVENT} />);
-    await screen.findByRole("heading", { name: "Street Activity Permit" });
+    await screen.findByRole("heading", { name: nameOf(STREET_MEDIUM) });
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "Status for Street Activity Permit" }),
+      screen.getByRole("combobox", { name: `Status for ${nameOf(STREET_MEDIUM)}` }),
       "approved",
     );
 
     view.rerender(<ChecklistView apiBaseUrl={API} eventId="event-2" />);
-    release?.(jsonResponse(200, { id: "item-1", status: "approved", notes: null }));
+    release?.(
+      jsonResponse(200, checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] })),
+    );
 
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-    expect(screen.queryByRole("heading", { name: "Street Activity Permit" })).toBeNull();
+    // The first event's checklist must never be read under the second event's id.
+    expect(screen.queryByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeNull();
   });
 
   it("drops a checklist that arrives after the page has moved to another event", async () => {
@@ -1016,7 +1180,10 @@ describe("edge cases", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input).includes("event-1")) {
           await pending;
-          return jsonResponse(200, checklistBody({ created: true, items: [trackedItem()] }));
+          return jsonResponse(
+            200,
+            checklistBody({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+          );
         }
         return jsonResponse(200, checklistBody({ created: true, items: [] }));
       }),
@@ -1027,15 +1194,14 @@ describe("edge cases", () => {
     release?.();
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 
-    // The first event's checklist must never be read under the second event's id.
-    expect(screen.queryByRole("heading", { name: "Street Activity Permit" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeNull();
   });
 });
 
 describe("the checklist route", () => {
   it("hands the view the configured api and the event from the path", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", API);
-    stubApi({ [`GET /api/events/${EVENT}/checklist`]: checklistOf({ created: false }) });
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: false }) });
 
     render(await ChecklistPage({ params: Promise.resolve({ id: EVENT }) }));
 

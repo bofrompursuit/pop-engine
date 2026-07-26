@@ -76,6 +76,17 @@ export function PlanContextBody({
   return (
     <>
       <p className="check-item__meta">
+        {/* F-206 AC 2: every line shows its verification status, on the line itself. Rendered here
+            rather than in either head, so a trackable row and a read-only context row carry it
+            the same way and neither can be given one without the other. The status is the plan
+            item's stored `verification_status`; the deprecated nullable `verified_status` column
+            is never read. */}
+        <span
+          className={`badge badge--${context.verificationStatus.toLowerCase()}`}
+          data-testid="verification-status"
+        >
+          {humanize(context.verificationStatus)}
+        </span>
         {/* advisory and note lines legitimately publish no agency, so the label is omitted
             rather than rendered empty. */}
         {context.agency !== null && <span>{context.agency}</span>}
@@ -285,7 +296,9 @@ export function ChecklistItemCard({
         <h3 className="check-item__name" id={`check-${item.id}`}>
           {name}
         </h3>
-        <span className={`badge badge--${item.status}`}>{humanize(item.status)}</span>
+        <span className={`badge check-item__status badge--${item.status}`}>
+          {humanize(item.status)}
+        </span>
       </div>
 
       {/* AC 6: a requirement the current plan no longer raises is struck through and kept, with

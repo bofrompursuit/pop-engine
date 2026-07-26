@@ -116,6 +116,16 @@
   border: 1px solid var(--badge-neutral-line);
 }
 
+/* F-206 AC 2's verification badges, treated exactly as the plan lines treat them: the two states
+   that qualify what a line says carry amber, every other state is neutral metadata. Matching
+   rather than improving on it, so one status does not mean two things across two views. */
+.badge--official_conflict,
+.badge--research_required {
+  background: var(--badge-amber-bg);
+  color: var(--badge-amber-text);
+  border-color: var(--badge-amber-line);
+}
+
 .badge--in_progress {
   background: var(--ink);
   color: #fff;
