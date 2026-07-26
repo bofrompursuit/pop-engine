@@ -130,6 +130,25 @@ const BLOCKER_BY_DOCUMENTED_NAME: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The slack statements each scenario makes, split by which engine field they are about.
+ *
+ * `findings` counts the parenthesised counts on finding lines, each of which is that finding's
+ * `slackDays`. `verdictLine` is whether the verdict line states the plan's `minSlackDays`. Pinned
+ * separately rather than as one total, because a reader can lose one half and keep the other and a
+ * single number would hide that.
+ */
+const DOCUMENTED_SLACK_PER_SCENARIO: Readonly<
+  Record<string, { readonly findings: number; readonly verdictLine: boolean }>
+> = {
+  A: { findings: 1, verdictLine: false },
+  B: { findings: 0, verdictLine: false },
+  C: { findings: 0, verdictLine: false },
+  D: { findings: 1, verdictLine: true },
+  E: { findings: 1, verdictLine: true },
+  F: { findings: 0, verdictLine: false },
+};
+
+/**
  * How many lines state that two rule ids share one finding, per scenario. Pinned so the sentence
  * cannot be deleted or reworded into silence: E's DOB line is the only one, and it is the grouping
  * #89 item 6 was about.
@@ -1149,9 +1168,11 @@ describe("the fixture suite and the published ruleset agree", () => {
       // the key uses when it means slack.
       const plan = planFor(scenario);
       const disagreements: string[] = [];
+      let findingSlackRead = 0;
       for (const documented of documentedFindings(scenario)) {
         const stated = /\((~?)(\d+) days?(?: slack)?\)/.exec(documented.line);
         if (stated === null) continue;
+        findingSlackRead += 1;
         const finding = plan.findings.find((candidate) =>
           candidate.ruleIds.includes(documented.ruleId),
         );
@@ -1171,6 +1192,16 @@ describe("the fixture suite and the published ruleset agree", () => {
         );
       }
       expect(disagreements, `Scenario ${scenario} documented slack`).toEqual([]);
+      // Pinned, because both readers above skip silently when their pattern misses: delete Scenario
+      // A's "(5 days)" or reword it to "(five days)" and `disagreements` stays empty, so the key can
+      // stop stating an output this check claims to protect while the suite goes green having
+      // compared nothing. The verdict half fails the same way when its own pattern misses, so the
+      // two are pinned separately: they are different engine fields and a reader can lose one and
+      // keep the other. The grouping check above already does this; this block did not.
+      expect(
+        { findings: findingSlackRead, verdictLine: statedMin !== null },
+        `Scenario ${scenario} slack statements read out of the key`,
+      ).toEqual(DOCUMENTED_SLACK_PER_SCENARIO[scenario] ?? { findings: 0, verdictLine: false });
     },
   );
 
