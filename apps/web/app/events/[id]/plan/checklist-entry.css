@@ -1,0 +1,11 @@
+/* The plan route's link on to the checklist (F-202 AC 1). Route-local, following the pattern the
+   guests, promote and check-in routes already use, so no shared stylesheet is touched. It matches
+   the plan view's own measure and sits directly under it. */
+
+.plan-next {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.9375rem;
+}

@@ -440,6 +440,36 @@ describe("uploadDocument", () => {
     });
   });
 
+  // The api can answer AND still not know. When the metadata insert's result is lost and the
+  // lookup that would settle it also fails, it keeps the object and says so on the wire; reading
+  // that 500 as a safe retry is what duplicates a committed row.
+  it("carries the api's own unknown outcome rather than flattening it into a safe retry", async () => {
+    stubFetch(async () =>
+      jsonResponse(500, {
+        error: "the document may have been stored; the checklist will show whether it was",
+        storedOutcome: "unknown",
+      }),
+    );
+
+    await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toEqual({
+      ok: false,
+      outcome: "unknown",
+      message: "the document may have been stored; the checklist will show whether it was",
+    });
+  });
+
+  it("still treats an unmarked failure as having stored nothing", async () => {
+    // The api marks only the case it cannot settle; everything else it either refused before
+    // storage or compensated by deleting the object.
+    stubFetch(async () => jsonResponse(500, { error: "checklist request failed" }));
+
+    await expect(uploadDocument("https://api.example.com", "item-1", pdf())).resolves.toMatchObject(
+      {
+        outcome: "not_stored",
+      },
+    );
+  });
+
   it("reports a 2xx with an unreadable body as stored, because it is", async () => {
     stubFetch(async () => jsonResponse(201, { id: 7 }));
 

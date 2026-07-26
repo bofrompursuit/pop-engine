@@ -30,7 +30,7 @@ import {
 import { createApp } from "./app";
 import { createPlanService } from "./plan";
 import { loadRuleset, rulesFilePath } from "./ruleset";
-import { DocumentStorageError, type DocumentStorage } from "./storage";
+import { attachmentDisposition, DocumentStorageError, type DocumentStorage } from "./storage";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 
@@ -65,8 +65,9 @@ const fakeStorage = (): FakeStorage => {
       const receivedStream = typeof (body as { pipe?: unknown }).pipe === "function";
       objects.set(key, { body: await collect(body), contentType, sizeBytes, receivedStream });
     },
-    signedDownloadUrl: async (key, expiresInSeconds) =>
-      `https://storage.test/${key}?X-Amz-Expires=${expiresInSeconds}`,
+    signedDownloadUrl: async (key, expiresInSeconds, filename) =>
+      `https://storage.test/${key}?X-Amz-Expires=${expiresInSeconds}` +
+      `&response-content-disposition=${encodeURIComponent(attachmentDisposition(filename))}`,
     remove: async (key) => {
       objects.delete(key);
     },
@@ -914,6 +915,35 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // Whatever the name, it never reaches the storage key.
       const [storedKey] = [...storage.objects.keys()];
       expect(storedKey).toBe(`checklist-items/${itemId}/${storedKey?.split("/")[2]}`);
+    });
+
+    // Every accepted type is one a browser renders inline, so a plain signed GET previews the
+    // document under a control labelled Download. The disposition is signed with the URL, so it
+    // cannot be stripped by whoever holds the link.
+    it("signs the download so it saves rather than previewing, under the stored name", async () => {
+      const storage = fakeStorage();
+      const { body } = await checklistFor("A", storage);
+      const itemId = body.items[0]?.id as string;
+
+      const upload = await request(appWith(storage))
+        .post(`/api/checklist-items/${itemId}/documents`)
+        .set("Content-Type", "application/pdf")
+        .set("X-Filename", "%E7%94%B3%E8%AF%B7%E4%B9%A6.pdf")
+        .send(PDF);
+      const link = await request(appWith(storage)).get(
+        `/api/documents/${upload.body.id as string}/url`,
+      );
+
+      expect(link.status).toBe(200);
+      const disposition = new URL(link.body.url as string).searchParams.get(
+        "response-content-disposition",
+      );
+      expect(disposition).toContain("attachment;");
+      // Both forms: an ASCII fallback that cannot break out of the header, and the real name.
+      expect(disposition).toContain(`filename="___.pdf"`);
+      expect(disposition).toContain(
+        `filename*=UTF-8''${encodeURIComponent("\u7533\u8bf7\u4e66.pdf")}`,
+      );
     });
 
     it("keeps the item's state and writes no metadata row when storage is unreachable", async () => {
@@ -1778,6 +1808,9 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(response.status).toBe(500);
       expect(storage.objects.size).toBe(0);
       expect(JSON.stringify(response.body)).not.toContain("foreign key");
+      // Established as not stored, so it carries no unknown marker: resending here is safe and
+      // the client must not be sent to reconcile a document that provably does not exist.
+      expect(response.body.storedOutcome).toBeUndefined();
     });
 
     it("deletes the object when the connection failed and the row is confirmed absent", async () => {
@@ -1857,6 +1890,9 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(response.status).toBe(500);
       // Unknown is not the same as failed, so the bytes stay and the key is logged for cleanup.
       expect(storage.objects.size).toBe(1);
+      // And the client is told it is unknown. Every other failure here stored nothing, so a bare
+      // 500 reads as "safe to resend" — which in this one case duplicates a committed row.
+      expect(response.body.storedOutcome).toBe("unknown");
     });
 
     it("still reports the write failure when the compensating delete also fails", async () => {

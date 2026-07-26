@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CHECKLIST_STATUSES, type ChecklistStatus } from "@pop-engine/engine";
-import { SnapshotBanner } from "../plan/snapshot-banner";
+import { loadRulesMeta, type RulesMetaResponse } from "../plan/plan-api";
+import { compareToPinned, SnapshotBanner } from "../plan/snapshot-banner";
 import {
   createChecklist,
   documentUrl,
@@ -60,6 +61,17 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const [state, setState] = useState<ChecklistState>({ status: "loading" });
   const [creating, setCreating] = useState(false);
   const [creationFailure, setCreationFailure] = useState<string | null>(null);
+  /**
+   * What the api's own rules file says about itself, or null when it could not be read.
+   *
+   * Used for ONE thing, which F-206 AC 4 is explicit about: how the live ruleset stands relative
+   * to the one this checklist's plan pinned. The version and date the banner DISPLAYS still come
+   * off the plan and only off the plan — pairing a pinned version with the live file's date would
+   * render a combination that never existed, and AC 4 forbids it in as many words. `/api/rules/meta`
+   * is "for surfaces with no plan in context"; a checklist has one, so it is read for the
+   * comparison and never for the pair.
+   */
+  const [meta, setMeta] = useState<RulesMetaResponse | null>(null);
 
   /**
    * Which event this page is showing. The create handler runs outside the effect, so it cannot
@@ -90,9 +102,18 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     writeEpoch.current = 0;
     appliedEpoch.current = 0;
 
+    setMeta(null);
+
     void loadChecklist(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
       setState(stateFrom(result));
+    });
+
+    // The checklist never waits for this: the banner states its plan's own pinned pair without it,
+    // and the live version only decides whether a newer ruleset exists.
+    void loadRulesMeta(apiBaseUrl).then((result) => {
+      if (abandoned) return;
+      if (result.ok) setMeta(result.meta);
     });
 
     return () => {
@@ -253,6 +274,11 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     snapshotDate: checklist.snapshotDate,
   };
   const rollup = rollupOf(checklist.statusRollup);
+  // Only "newer" is actionable. A service running an older or unorderable ruleset is the plan
+  // view's refusal case, and telling an organizer to regenerate onto it would downgrade the
+  // regulatory basis of a plan that is currently sound.
+  const supersededRuleset =
+    meta !== null && compareToPinned(meta.ruleset_version, checklist.rulesetVersion) === "newer";
   const retained = checklist.items.filter((item) => !item.inLatestPlan).length;
 
   return (
@@ -261,13 +287,25 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
 
       {/* The snapshot the rows below are read against, both values off the checklist's own current
           plan. Rows from a different snapshot state their own beneath them; rows from this one do
-          not repeat it. (The live-ruleset comparison is F-206's to wire in; this view states the
-          pair that produced what it is showing, which is what its own AC 8 requires.) */}
+          not repeat it. `meta` supplies the live-versus-pinned comparison only — it is not where
+          either displayed value comes from (F-206 AC 4). */}
       <SnapshotBanner
         rulesetVersion={checklist.rulesetVersion}
         snapshotDate={checklist.snapshotDate}
-        meta={null}
+        meta={meta}
       />
+
+      {/* The banner names an action, so the page says where it lives. Regenerating is the plan
+          view's, not the checklist's: this view converts a plan, it does not produce one. Saying a
+          newer ruleset exists and leaving an organizer to find the button is the failure the plan
+          view already recorded about its own banner. */}
+      {supersededRuleset && (
+        <p className="checklist__lede">
+          A newer ruleset is published than the one this plan pinned.{" "}
+          <a href={`/events/${eventId}/plan`}>Regenerate the plan</a> to rebuild the checklist
+          against it.
+        </p>
+      )}
 
       {/* AD-13: a plan pins the revision it evaluated. If the event has moved on, these
           requirements answer an intake the organizer has already replaced, and the api refuses to

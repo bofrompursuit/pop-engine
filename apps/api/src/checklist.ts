@@ -981,11 +981,23 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         } else {
           // Nobody can say whether the row landed. Deleting on that would leave a document the
           // organizer can click and get nothing from, so the bytes stay and the key is logged.
+          //
+          // And the client is TOLD it is unknown rather than left to infer it from a bare 500.
+          // Every other failure here stored nothing — a refusal never reached storage, and the
+          // not_written path above deletes the object — so a client that reads a 500 as "safe to
+          // resend" is right in every case except this one, which is exactly the case where
+          // resending duplicates a committed row. `storedOutcome` is the api's own three-state
+          // answer (`metadataOutcome`) carried onto the wire instead of being flattened by it.
           console.error(
             `document ${documentId} may have been written for object ${storageKey}; the object ` +
               `is kept and needs reconciling by hand (metadata outcome: ${outcome.state})`,
             error,
           );
+          res.status(500).json({
+            error: "the document may have been stored; the checklist will show whether it was",
+            storedOutcome: "unknown",
+          });
+          return;
         }
         throw error;
       }
@@ -1007,7 +1019,11 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
         return;
       }
       res.json({
-        url: await storage.signedDownloadUrl(document.storage_key, DOWNLOAD_URL_TTL_SECONDS),
+        url: await storage.signedDownloadUrl(
+          document.storage_key,
+          DOWNLOAD_URL_TTL_SECONDS,
+          document.filename,
+        ),
         filename: document.filename,
         expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
       });

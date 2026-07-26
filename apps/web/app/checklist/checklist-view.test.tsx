@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ChecklistPage from "../events/[id]/checklist/page";
+import PlanPage from "../events/[id]/plan/page";
 import { ChecklistView } from "./checklist-view";
 import {
   ALCOHOL_ADVISORY,
@@ -52,6 +53,15 @@ function stubApi(routes: Record<string, () => Response>) {
     const route = Object.entries(routes).find(
       ([key]) => key === `${method} ${url.slice(API.length)}`,
     );
+    // Every render reads the live ruleset for the banner's live-versus-pinned comparison. Tests
+    // that do not care about it get the checklist's own version back, which compares as "same"
+    // and renders nothing extra.
+    if (route === undefined && `${method} ${url.slice(API.length)}` === GET_META) {
+      return jsonResponse(200, {
+        ruleset_version: PUBLISHED_SNAPSHOT.rulesetVersion,
+        snapshot_date: PUBLISHED_SNAPSHOT.snapshotDate,
+      });
+    }
     if (route === undefined) throw new Error(`unstubbed request: ${method} ${url}`);
     return route[1]();
   });
@@ -60,9 +70,14 @@ function stubApi(routes: Record<string, () => Response>) {
 }
 
 const GET_CHECKLIST = `GET /api/events/${EVENT}/checklist`;
+const GET_META = "GET /api/rules/meta";
 const POST_CHECKLIST = `POST /api/events/${EVENT}/checklist`;
 const itemRoute = (method: string, ruleId: string, suffix = "") =>
   `${method} /api/checklist-items/item-${ruleId}${suffix}`;
+
+/** Checklist reads only: the banner's `/api/rules/meta` lookup is not a re-read of the list. */
+const checklistReads = (calls: Route[]): Route[] =>
+  calls.filter((call) => call.method === "GET" && call.url.endsWith("/checklist"));
 
 const checklistOf = (overrides: Record<string, unknown>) => () =>
   jsonResponse(200, checklistBody(overrides));
@@ -256,7 +271,7 @@ describe("AC 2 · statuses, any transition, and the api's rollup", () => {
     expect(document.querySelector(".checklist__rollup")?.textContent).toBe("1 in progress");
     // One PATCH, then one re-read: the page never counts the rows itself.
     expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
-    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+    expect(checklistReads(calls)).toHaveLength(2);
   });
 
   it("renders the counts the api sent, not a count of its own", async () => {
@@ -533,7 +548,7 @@ describe("AC 3 · documents upload and download", () => {
         "The checklist has been refreshed, so check whether it is listed before uploading it again.",
     );
     // Reconciled rather than guessed: the list itself is the answer, and it is re-read.
-    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+    expect(checklistReads(calls)).toHaveLength(2);
     // No one-click resend of something that may already be stored. Upload is inert until a file
     // is chosen again, which survives a page reload in a way a disabled button does not.
     expect(within(row).getByRole("button", { name: "Upload" }).hasAttribute("disabled")).toBe(true);
@@ -995,7 +1010,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
     await waitFor(() => expect(badgeOf(rowFor(STREET_MEDIUM))).toBe("submitted"));
     expect(document.querySelector(".checklist__rollup")?.textContent).toBe("1 submitted");
     // And the mechanism: the conversion re-read rather than installing its own body.
-    expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+    expect(checklistReads(calls)).toHaveLength(2);
   });
 
   it("reports a conversion that landed while the re-read did not", async () => {
@@ -1166,21 +1181,59 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
     ).toBeDefined();
   });
 
-  it("never reads the live rules file for provenance", async () => {
+  // The live rules file is read, for one thing only: how the live ruleset stands against the one
+  // this checklist's plan pinned (F-206 AC 4 — `/api/rules/meta` "is not the plan banner's
+  // source"). None of the displayed provenance values may come from it.
+  it("never lets the live rules file supply a displayed version or date", async () => {
     const calls = stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
+        rulesetVersion: "nyc.v2.5",
+        snapshotDate: "2026-06-01",
         items: [
           trackedItem(STREET_MEDIUM, {
+            inLatestPlan: false,
             sourcePlan: { rulesetVersion: "nyc.v2.1", snapshotDate: "2026-01-01" },
           }),
         ],
       }),
+      [GET_META]: () =>
+        jsonResponse(200, { ruleset_version: "nyc.v9.9", snapshot_date: "2026-12-31" }),
     });
     await renderView();
 
+    const banner = await screen.findByLabelText("Rules snapshot");
+    // The pair is the plan's, paired with each other and with nothing else.
+    expect(banner.textContent).toContain("Rules snapshot nyc.v2.5");
+    expect(banner.textContent).toContain("published June 1, 2026");
+    expect(banner.textContent).not.toContain("December 31, 2026");
+    // The row's own provenance is the row's, not the live file's.
     expect(screen.getByText(/Dates from rules snapshot nyc\.v2\.1/)).toBeDefined();
-    expect(calls.some((call) => call.url.includes("/api/rules/meta"))).toBe(false);
+    // The live version appears only where it belongs: naming the newer ruleset that exists.
+    await waitFor(() => expect(banner.textContent).toContain("a newer ruleset (nyc.v9.9) exists"));
+    expect(calls.some((call) => call.url.includes("/api/rules/meta"))).toBe(true);
+  });
+
+  it("points at the plan view for the regeneration its banner names", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, rulesetVersion: "nyc.v2.5" }),
+      [GET_META]: () =>
+        jsonResponse(200, { ruleset_version: "nyc.v9.9", snapshot_date: "2026-12-31" }),
+    });
+    await renderView();
+
+    // The banner says "regenerate to update" and regenerating is the plan view's action, so the
+    // page says where it lives rather than leaving an organizer to find it.
+    expect(
+      (await screen.findByRole("link", { name: "Regenerate the plan" })).getAttribute("href"),
+    ).toBe(`/events/${EVENT}/plan`);
+  });
+
+  it("says nothing about regenerating when the service is on the plan's own ruleset", async () => {
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: true }) });
+    await renderView();
+
+    expect(screen.queryByRole("link", { name: "Regenerate the plan" })).toBeNull();
   });
 });
 
@@ -1345,6 +1398,12 @@ describe("edge cases", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/api/rules/meta")) {
+          return jsonResponse(200, {
+            ruleset_version: PUBLISHED_SNAPSHOT.rulesetVersion,
+            snapshot_date: PUBLISHED_SNAPSHOT.snapshotDate,
+          });
+        }
         if (String(input).includes("event-1")) {
           await pending;
           return jsonResponse(
@@ -1365,6 +1424,28 @@ describe("edge cases", () => {
   });
 });
 
+describe("reaching the checklist at all", () => {
+  // AC 1's "one click" needs somewhere to click from, and after generating a plan the organizer
+  // is on the plan route. Before this, nothing in `apps/web/app` linked to the checklist, so the
+  // conversion step and the Scenario A demo path were reachable only by typing the URL.
+  it("links to the checklist from the plan route", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", API);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Promise(() => {})),
+    );
+
+    render(await PlanPage({ params: Promise.resolve({ id: EVENT }) }));
+
+    expect(
+      screen
+        .getByRole("link", { name: "Track this plan on your compliance checklist" })
+        .getAttribute("href"),
+    ).toBe(`/events/${EVENT}/checklist`);
+    vi.unstubAllEnvs();
+  });
+});
+
 describe("the checklist route", () => {
   it("hands the view the configured api and the event from the path", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", API);
@@ -1380,8 +1461,13 @@ describe("the checklist route", () => {
 
   it("falls back to the local api in development", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", undefined);
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
-      jsonResponse(200, checklistBody({})),
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/rules/meta")
+        ? jsonResponse(200, {
+            ruleset_version: PUBLISHED_SNAPSHOT.rulesetVersion,
+            snapshot_date: PUBLISHED_SNAPSHOT.snapshotDate,
+          })
+        : jsonResponse(200, checklistBody({})),
     );
     vi.stubGlobal("fetch", fetchMock);
 

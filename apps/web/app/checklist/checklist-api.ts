@@ -460,12 +460,15 @@ export async function uploadDocument(
 
   const body = await readJson(response);
   if (!response.ok) {
-    // A response means the api decided. It stored nothing either way: a storage failure keeps the
-    // item's state and writes no metadata row (it flags itself `retryable`), and a refusal — a
-    // wrong type, an over-size body — never reached storage at all.
+    // A response usually means the api decided, and decided that nothing was stored: a refusal
+    // never reached storage, and the api deletes the object whenever it establishes that the
+    // metadata row is absent. The exception is the one case it cannot establish — the insert's
+    // result was lost AND the lookup that would settle it also failed — and there the api says so
+    // on the wire rather than leaving a bare 500 to be read as safe. Believing that read is what
+    // duplicates a committed row.
     return {
       ok: false,
-      outcome: "not_stored",
+      outcome: asRecord(body)?.storedOutcome === "unknown" ? "unknown" : "not_stored",
       message: failureMessage(
         body,
         `The document could not be uploaded (HTTP ${response.status}).`,
