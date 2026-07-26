@@ -1,6 +1,6 @@
 # PopEngine — Delivery Design (Canonical)
 
-**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`). Companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
+**Status:** APPROVED (2026-07-22; F-109's concept renamed from "coverage states"/"coverage envelope" to "scope support states" 2026-07-26, product-owner approved, resolving a three-way overload of "coverage"; see `docs/BASELINE.md`). Companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
 
 ## Decisions of 2026-07-22 (baseline correction)
 
@@ -15,7 +15,7 @@
 
 1. **The iron-clad MVP is permit planning:** F-101, F-201, F-102, F-206, F-202, F-203, F-204. Complete, real (no mocks), demoable. Everything else is a nice-to-have.
 2. **The demo is a permit-planning deep dive**, not a four-stage traversal. Stretch features appear only if actually built. This replaces the earlier degradation order ("F-301/302 degrade before F-401 gets cut"); check-in is now stretch, not guaranteed.
-3. **Lean-plus rigor** adopted into the core: intake contradiction checks (F-101), "I don't know" propagating to CONDITIONAL (F-101 + F-102), ruleset version stored with every plan (F-201/F-206), distinct deadline types in the rules schema (rules JSON + F-203). Location/authority resolution and coverage states are post-MVP (F-108, F-109).
+3. **Lean-plus rigor** adopted into the core: intake contradiction checks (F-101), "I don't know" propagating to CONDITIONAL (F-101 + F-102), ruleset version stored with every plan (F-201/F-206), distinct deadline types in the rules schema (rules JSON + F-203). Location/authority resolution and scope support states are post-MVP (F-108, F-109). F-109's concept was called "coverage states" until 2026-07-26; renamed because "coverage" also names the per-rule `COVERAGE_GAP` verification status and `ARCHITECTURE-FUTURE.md` §7.1's per-result completeness.
 4. **The roadmap covers the full product vision.** Phases 2+ exist for delegation and direction, not capstone deadlines.
 
 ## Feature ID Policy
@@ -85,7 +85,7 @@ Track B staffing is the team's kickoff call (default suggestion: Dev 3 → F-301
 - F-701 → F-702 → F-703 → F-704/F-213; F-701/F-702/F-703 jointly gate authenticated user-owned product data and external beta
 - Twilio plumbing: built once for F-203, reused by F-305, F-413
 - QR infra: built once for F-401, reused by F-303
-- F-601 (open-ended intake) → F-109 becomes necessary (coverage envelope)
+- F-601 (open-ended intake) → F-109 becomes necessary (scope support states: can we handle the scope the organizer described?)
 
 ## Demo Plan (permit-planning deep dive)
 

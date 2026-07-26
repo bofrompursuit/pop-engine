@@ -1,6 +1,6 @@
 # PopEngine — Architecture Target (Phase 2+)
 
-**Status:** APPROVED (2026-07-25; see `BASELINE.md`) — the destination architecture for Phases 2–4 and a planning target only. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Approval does not activate workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway. Each requires its scheduled F-id, approved spec, and any named contract or ADR first.
+**Status:** APPROVED (2026-07-25; §7.1 renamed from "coverage status" to "result completeness" and its `CONDITIONAL` value replaced by `OPEN_FACTS_MAY_CHANGE_OUTCOME` 2026-07-26, product-owner approved, resolving a three-way overload of "coverage" and a one-token-two-meanings collision with the shipped `Verdict`; see `BASELINE.md`) — the destination architecture for Phases 2–4 and a planning target only. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Approval does not activate workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway. Each requires its scheduled F-id, approved spec, and any named contract or ADR first.
 **Origin:** delivered by an external documentation audit (2026-07-22, `docs/proposals/documentation-audit-2026-07-22.md`); section references to "the supplied rules file"/"v2 scenario suite" predate the corrected baseline and should be read as "the then-current draft."
 **Companion authority:** Product scope lives in `PRD.md`; phase assignment in `ROADMAP.md`; approved feature behavior in `/specs`; regulatory facts in approved primary sources and published rulesets.
 
@@ -26,7 +26,7 @@ PopEngine must:
 | AD-04 | Treat published rulesets as immutable artifacts. | Git is the publication workflow through Phase 3. The rules admin system in Phase 4 publishes the same immutable artifact format; it does not create a second runtime truth. |
 | AD-05 | Separate stable Event identity from immutable Event Revisions. | Editing intake answers creates a new revision. A plan always references one exact revision; staleness is computed server-side. |
 | AD-06 | Treat plans as immutable evaluations and findings as immutable snapshots. | Regeneration creates a new plan, preserves the old plan, and produces a diff. Active workflow data is never silently rewritten. |
-| AD-07 | Use a layered status model. | After its consuming migration, coverage, finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
+| AD-07 | Use a layered status model. | After its consuming migration, result completeness (§7.1), finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
 | AD-08 | Represent conditions and calculations with validated typed data. | No `eval`, dynamic code, natural-language formulas, or jurisdiction-specific executable extensions. Rules use approved condition and calculation AST primitives; a missing primitive requires a separate reviewed schema/engine change. |
 | AD-09 | Use PostgreSQL as the system of record and S3-compatible object storage for file bytes. | File metadata and authorization stay in PostgreSQL; downloads use short-lived signed URLs. |
 | AD-10 | Use a durable PostgreSQL-backed jobs/outbox model. | Phase 1 alerts may share the API deployment, but job claiming and delivery are durable. Phase 2 runs the same code as a separate worker. Redis is not required. |
@@ -148,14 +148,22 @@ Derived classification values are stored in the evaluation trace, not trusted fr
 
 Do not compress all meaning into one verdict.
 
-### 7.1 Coverage status
+### 7.1 Result completeness
+
+Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule, no primary source is published — shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the *result* sense; F-109 keeps the *scope* sense under its own name, **scope support states**. `COVERAGE_GAP` keeps its name, being the most literal use and already in production.
 
 | Value | Meaning |
 |---|---|
 | `COMPLETE_WITHIN_VALIDATED_COVERAGE` | Every material declared element is supported and sufficiently known for the published ruleset. |
-| `CONDITIONAL` | One or more identified facts can change the requirement or deadline outcome. |
+| `OPEN_FACTS_MAY_CHANGE_OUTCOME` | One or more identified facts can change the requirement or deadline outcome. |
 | `CANNOT_DETERMINE` | Authority/classification or another prerequisite cannot be resolved. |
 | `OUTSIDE_VALIDATED_COVERAGE` | A material event element is unsupported. Supported findings may be shown, but the plan is labeled incomplete. |
+
+`OPEN_FACTS_MAY_CHANGE_OUTCOME` was `CONDITIONAL` until 2026-07-26. That token is `Verdict`'s (`packages/engine/src/types.ts:128`, shipped), where it means something else, and the two appear side by side by design — §7 exists so that meaning is not compressed into one verdict, so a reader sees result completeness next to the verdict and has to tell them apart. Spelling them differently is not enough when the failure being fixed is a reader conflating two axes, so the replacement differs in meaning and not only in token. No code changes: these four values are not implemented anywhere, and every `CONDITIONAL` in `packages/` and `apps/` is `Verdict`.
+
+`VALIDATED_COVERAGE` survives inside two value names on purpose. "Validated coverage" is a compound naming the *ruleset's validated scope*, a different sense from `COVERAGE_GAP`'s per-rule *source* gap; forcing them apart by spelling would lose meaning rather than add clarity.
+
+**Left open deliberately, so a future reader knows it was seen and not missed.** `OUTSIDE_VALIDATED_COVERAGE`'s own gloss above is written in F-109's vocabulary — "a material event element is **unsupported**. **Supported** findings may be shown". If that is not a coincidence, then these values and F-109's `unsupported` are one axis measured at two points in the pipeline, before and after evaluation, rather than two axes. This pass disambiguated the **names**; it did not decide whether the two vocabularies describe one thing or two. Anyone proposing to merge them should start here.
 
 ### 7.2 Finding disposition
 
@@ -208,7 +216,7 @@ evaluateEvent({
 - normalized/derived values with provenance;
 - findings with every triggering rule and answer;
 - per-facet source and epistemic status;
-- coverage status and coverage reasons;
+- result completeness (§7.1) and its reasons;
 - deadline summary and each finding's deadline calculation trace;
 - conflicts, missing material facts, and supported branch outcomes;
 - deterministic rescope candidates, each produced by a full re-evaluation;
@@ -260,13 +268,13 @@ Each finding snapshots:
 - reviewer and publication status;
 - separate status for scope, deadline, fee, required documents, and portal.
 
-A ruleset snapshot date means “published on,” not “all facts verified on.” The plan banner reads: **Rules snapshot [version], published [date]**. Qualification, conflict, research-required, and coverage states appear per finding.
+A ruleset snapshot date means “published on,” not “all facts verified on.” The plan banner reads: **Rules snapshot [version], published [date]**. Qualification, conflict, research-required, and `COVERAGE_GAP` states appear per finding — these are `VerificationStatus` values, the per-rule sense of "coverage", not §7.1's per-result completeness.
 
 ### 8.7 Failure behavior
 
 - Rules/artifact validation failure aborts boot and CI.
 - An unexpected evaluation error produces no plan and no “no permit” conclusion.
-- A supported partial result may be returned only with `OUTSIDE_VALIDATED_COVERAGE` or another incomplete coverage state visibly attached.
+- A supported partial result may be returned only with `OUTSIDE_VALIDATED_COVERAGE` or another incomplete result-completeness value visibly attached.
 - Same event revision + ruleset + engine + `today` + calendar produces byte-stable normalized output after canonical serialization.
 
 ## 9. Persistence model
