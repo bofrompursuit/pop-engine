@@ -113,6 +113,72 @@ export class MissingHolidayCalendarError extends Error {
  *     than an employee leave calendar does, and it reaches state offices and county offices — not
  *     DOB, which is a city agency, so it cannot answer the question for all three rules on its own.
  *
+ * WHAT DOB PUBLISHES ELSEWHERE, AND WHAT IT DOES NOT PUBLISH FOR TUP. This is not a third lead. The
+ * two leads above are candidate authorities that might answer the question; this is not one of them,
+ * it does not bear on what the TUP filing counter does, and nothing below should be read as a rule
+ * that reaches TUP. It is recorded because it bounds what the TUP materials' silence can be taken
+ * for. DOB publishes an explicit weekend-and-holiday rule for a backward-counted construction
+ * notice in three places in Building Code Chapter 33 — verbatim, from DOB's own
+ * published Chapter 33 (nyc.gov/assets/buildings/codes-pdf/cons_codes_2022/
+ * 2022BC_Chapter33_Con_DemoSafetyWBwm.pdf, retrieved 2026-07-26; the amlegal mirror at
+ * codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-185903 carries the same section
+ * but refuses automated retrieval):
+ *   - §3306.3.1, demolition, notice to the department 24-48 hours before commencement: "If the
+ *     notification date falls on a weekend or official holiday, the permit holder shall notify the
+ *     department on the last business day before the commencement date."
+ *   - §3304.3.1, soil and foundation work, the same 24-48 hour notice: "Should the notification date
+ *     fall on a weekend or official holiday, the permit holder ... shall notify the department on
+ *     the last business day before the commencement date." Its cancellation notice carries the
+ *     mirror-image rule, rolling FORWARD to "the next business day after the intended commencement
+ *     date" — so where DOB publishes such a rule it publishes the direction of the roll too.
+ *   - §3314.4.1.5, adjustable suspended scaffold installation and removal, again 24-48 hours:
+ *     "Should the notification date fall on a weekend or official holiday, the notification shall be
+ *     made on the last business day before the commencement date of the installation or removal."
+ * Against that, the TUP materials publish the lead and stop. Checked 2026-07-26, and stated per
+ * source because they do not all say the same thing: the TUP page
+ * (nyc.gov/site/buildings/industry/tup.page) and the TUP service notice
+ * (nyc.gov/assets/buildings/pdf/tup-sn.pdf) each state the lead as "no later than 15 business days
+ * prior"; the TUP intake form and checklist (nyc.gov/assets/buildings/pdf/tup-formchecklist.pdf)
+ * states no lead time at all, being a document checklist plus fees and submission mechanics. None of
+ * the three defines "business day", states a weekend or holiday rule, or cross-references §3306.3.1
+ * or either of the others. Those are the observables, and they are where this stops. The per-source
+ * split matters enough to keep: an earlier draft of this paragraph attributed the lead to all three
+ * at once, which is false of the checklist, and docs/VERIFICATION-SOURCES.md Round 5 carries the
+ * same breakdown in a table.
+ *
+ * WHAT THE OMISSION MEANS IS NOT ESTABLISHED, and no located source reaches it. Nothing in the TUP
+ * materials, in Chapter 33, or anywhere else consulted says the omission was considered, and no
+ * source speaks to DOB's intent at all. An innocent explanation sits inside the evidence above and
+ * is complete on its own: all three analogues are counted in CLOCK HOURS, where no business-day unit
+ * is in play, so their weekend rule supplies what an hour count lacks. If DOB has never published a
+ * weekend-and-holiday rule for anything counted in BUSINESS DAYS — and nothing here shows that it
+ * has — then the TUP omission needs no intent to explain it, because the question may simply never
+ * have been addressed. Chapter 33 points the same way: it uses "business day" in all three rules and
+ * never defines it, so even where DOB does publish a holiday rule it leaves undefined the same unit
+ * THE DEEPER GAP above is about. So what this evidence does is narrow what the silence can be taken
+ * for: it rules out the reading that DOB has no way of publishing such a rule, or no practice of it.
+ * It does not show that the TUP omission was deliberate, and it does not establish what the TUP
+ * counter does — §3306.3.1 governs a different notification and the TUP materials do not incorporate
+ * it. An earlier draft of this paragraph said the absence "reads as a deliberate silence rather than
+ * an oversight" and moved the record "from absence of evidence toward evidence of absence". That
+ * inferred an agency's intent from the absence of text, which no source supports; it is withdrawn to
+ * the observables above. The framing was specified in the brief this finding was recorded under and
+ * was caught in review of PR #133, not by the brief — recorded here because this file has been
+ * corrected twice for the same class of error (a consequence asserted past its sources) and a third
+ * would be a pattern rather than a slip. The record is more complete than it was; the argument it
+ * supports is weaker than that draft claimed, and the decision below is unchanged either way.
+ *
+ * TWO PASSES, NOT ONE, and both are on file. A second research pass on 2026-07-26 asked the question
+ * this comment records as open — does an agency's published closure stop its filing counter — and
+ * reached NOT PUBLISHED for both DOB and SLA, working from the DOB TUP page, the DOB closure
+ * calendar, ABC Law §97 and §98, and 9 NYCRR Part 29. Both passes are recorded in
+ * docs/VERIFICATION-SOURCES.md, Round 5, which is where the evidence lives and where the limits of
+ * each pass are stated: the second pass's four sources were reported rather than re-fetched, with no
+ * quoted text or retrieval metadata carried over, so they are an uncorroborated concurring result
+ * and not fetched evidence on file. Read as such, the conclusion rests on two independent passes
+ * rather than one. That pass treated POL §62 as a general lead; the narrower statement above stands
+ * — §62 reaches state and county offices, not DOB.
+ *
  * What would unblock this is not a better list of dates. It is a source establishing, per agency,
  * that the agency's published closure stops that agency's filing counter.
  *
