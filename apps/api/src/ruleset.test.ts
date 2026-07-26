@@ -7,7 +7,7 @@ import { loadRuleset, syncPermitRules, validateRuleset, type PublishedRuleset } 
 
 type JsonObject = Record<string, unknown>;
 
-const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url));
+const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.7.json", import.meta.url));
 const packageFile = fileURLToPath(new URL("../../../package.json", import.meta.url));
 const originalRulesFile = process.env.RULES_FILE;
 
@@ -59,7 +59,7 @@ describe("ruleset validation", () => {
     const ruleset = await loadRuleset();
 
     expect(ruleset.schema).toBe("popengine-rules/v2");
-    expect(ruleset.rulesetVersion).toBe("nyc.v2.6");
+    expect(ruleset.rulesetVersion).toBe("nyc.v2.7");
     expect(ruleset.snapshotDate).toBe("2026-07-25");
     expect(ruleset.intakeFields).toHaveLength(33);
     expect(ruleset.rules).toHaveLength(33);
@@ -96,7 +96,7 @@ describe("ruleset validation", () => {
   it("honors RULES_FILE", async () => {
     process.env.RULES_FILE = rulesFile;
     await expect(loadRuleset()).resolves.toMatchObject({
-      rulesetVersion: "nyc.v2.6",
+      rulesetVersion: "nyc.v2.7",
     });
   });
 

@@ -11,9 +11,15 @@
 // Scope is deliberately narrow: it only enforces APPROVED rows. PROPOSED/ARCHIVED
 // rows and glob rows (e.g. specs/F-*.md) are not checked here.
 //
+// It also recomputes any `sha256 \`<digest>\`` a row publishes beside its artifact path
+// (ARCHITECTURE-FUTURE §14 step 5: an artifact is published with a checksum before this
+// manifest is updated). A digest nobody recomputes is a claim rather than a check, so an
+// artifact edited without republishing, or a row left on a stale digest, fails here.
+//
 // Run: node scripts/check-baseline-drift.mjs   (wired into CI as `pnpm check:baseline`)
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -101,13 +107,26 @@ if (conflictMarkers.length > 0) {
 const approvedFiles = new Set();
 const unsupportedGlobs = [];
 const emptyGlobs = [];
+/** Rows publishing a digest: `{ file, expected, row }`. */
+const checksumClaims = [];
 for (const row of baseline.split(/\r?\n/)) {
   if (!row.startsWith("|")) continue;
   const cells = row.split("|").map((c) => c.trim());
   // cells[0] is empty (leading pipe); status is the 3rd content column.
   const statusCell = cells[3] ?? "";
   if (!/APPROVED/i.test(statusCell)) continue;
-  for (const p of filePathsInRow(row)) approvedFiles.add(p);
+  const paths = filePathsInRow(row);
+  for (const p of paths) approvedFiles.add(p);
+
+  // A digest belongs to the artifact named in the same row, so the pairing is positional
+  // rather than guessed: one path and one digest, or the row is ambiguous and says so.
+  const digests = [...row.matchAll(/sha256\s+`([0-9a-f]{64})`/gi)].map((m) => m[1].toLowerCase());
+  if (digests.length === 0) continue;
+  if (digests.length !== 1 || paths.length !== 1) {
+    checksumClaims.push({ file: null, expected: null, row: cells[1] ?? row.slice(0, 60) });
+    continue;
+  }
+  checksumClaims.push({ file: paths[0], expected: digests[0], row: cells[1] ?? "" });
 }
 
 const bannedLeadWords = /^(PROPOSED|DRAFT|Canonical|Current|Single)\b/i;
@@ -135,6 +154,41 @@ for (const rel of [...approvedFiles].sort()) {
         (bannedLeadWords.test(status) ? "  (governance §3: not a valid status)" : ""),
     );
   }
+}
+
+const checksumFailures = [];
+for (const claim of checksumClaims) {
+  if (claim.file === null) {
+    checksumFailures.push(
+      `${claim.row}: row publishes a sha256 but does not name exactly one artifact, so the digest ` +
+        `cannot be attributed to a file`,
+    );
+    continue;
+  }
+  const abs = join(repoRoot, claim.file);
+  if (!existsSync(abs)) {
+    checksumFailures.push(`${claim.file}: row publishes a sha256 for a file that is not there`);
+    continue;
+  }
+  // Over the exact bytes on disk. Nothing is parsed, normalised or reserialised: the digest has to
+  // describe the artifact a deployment loads, not a reformatting of it.
+  const actual = createHash("sha256").update(readFileSync(abs)).digest("hex");
+  if (actual !== claim.expected) {
+    checksumFailures.push(
+      `${claim.file}: manifest says sha256 ${claim.expected}, file is ${actual}` +
+        "  (edited without republishing, or the row is stale)",
+    );
+  }
+}
+
+if (checksumFailures.length > 0) {
+  console.error("Baseline manifest publishes a checksum that does not match its artifact:\n");
+  for (const failure of checksumFailures) console.error("  ✗ " + failure);
+  console.error(
+    "\nA published artifact is immutable (ARCHITECTURE-FUTURE §14): a changed ruleset is a new " +
+      "version with a new row, never an edit in place. Recompute with `sha256sum <path>`.",
+  );
+  process.exit(1);
 }
 
 if (emptyGlobs.length > 0) {

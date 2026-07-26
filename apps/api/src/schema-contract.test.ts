@@ -162,7 +162,7 @@ describe.runIf(databaseUrl.length > 0)("shared enum contracts do not drift", () 
 
   it("keeps the published status_legend equal to the verification-status enum", () => {
     const ruleset: { status_legend: Record<string, string> } = JSON.parse(
-      readFileSync(repoFile("rules/nyc-rules.v2.6.json"), "utf8"),
+      readFileSync(repoFile("rules/nyc-rules.v2.7.json"), "utf8"),
     );
     expect(
       sorted(Object.keys(ruleset.status_legend)),
