@@ -39,31 +39,49 @@ export class MissingHolidayCalendarError extends Error {
  * `us-ny-business-days@2026.1` was researched for publication and then deliberately NOT published.
  * If you are here to add it, read this first: the blocker is not that nobody looked up the dates.
  *
- * ONE CALENDAR ID SERVES RULES FROM TWO GOVERNMENTS. DOB-TENT-001 is a New York CITY agency;
- * SLA-ONEDAY-001 and SLA-CATERING-001 are a New York STATE agency. Their closure calendars
- * provably differ, so any single list is wrong for one of them:
- *   - Fri 2026-07-03 — the city observes it ("07/03 - Independence Day (Observed)",
- *     nyc.gov/site/opa/my-payroll/list-of-holidays.page) and so does the federal government
- *     (opm.gov 2026 schedule, "Friday, July 03"). The STATE does not: its 2026 calendar records
- *     Saturday 2026-07-04 as a "pass day holiday" (cs.ny.gov), so state offices work the Friday.
- *   - Thu 2026-02-12 — a state legal holiday under General Construction Law §24; in the city only
- *     a floating holiday, for employees hired before 2004-07-01, not a citywide closure.
+ * ONE CALENDAR ID SERVES RULES FROM TWO GOVERNMENTS, AND THEIR PUBLISHED STAFF HOLIDAY SCHEDULES
+ * DIFFER. DOB-TENT-001 is a New York CITY agency; SLA-ONEDAY-001 and SLA-CATERING-001 are a New
+ * York STATE agency. What was established is a divergence between three EMPLOYEE holiday schedules
+ * — which days staff are off — and one statute enumerating legal holidays. Not one of the four is
+ * a DOB or SLA FILING-OFFICE calendar, and no such calendar was located. Each source is labelled
+ * below for what it actually is, because the labels are the whole point:
+ *   - Fri 2026-07-03 — on the city's PAYROLL holiday list ("07/03 - Independence Day (Observed)",
+ *     nyc.gov/site/opa/my-payroll/list-of-holidays.page, Office of Payroll Administration) and on
+ *     the federal EMPLOYEE schedule (opm.gov 2026, "Friday, July 03"). Not on the state's CIVIL
+ *     SERVICE calendar, which records Saturday 2026-07-04 as a "pass day holiday" (cs.ny.gov) —
+ *     an employee-attendance treatment.
+ *   - Thu 2026-02-12 — a state legal holiday under General Construction LAW §24, which is a
+ *     statute and not a staff schedule; in the city a floating holiday for EMPLOYEES hired before
+ *     2004-07-01, which is a staff-leave entitlement rather than a citywide closure.
  *   - Tue 2026-11-03 — a state and city holiday; not federal.
- * The observance RULES differ too, so this is structural rather than three exceptions: §24 rolls a
- * holiday forward only when it falls on a Sunday ("if any of such days except Flag day is Sunday,
- * the next day thereafter") and states no Saturday rule at all, while DCAS Personnel Services
- * Bulletin 440-2 and OPM both roll a Saturday holiday back to the preceding Friday.
+ * The observance rules differ too, and that comparison has the same shape: §24 rolls a holiday
+ * forward only when it falls on a Sunday ("if any of such days except Flag day is Sunday, the next
+ * day thereafter") and states no Saturday rule at all, while DCAS PERSONNEL SERVICES Bulletin
+ * 440-2 and the federal EMPLOYEE schedule both roll a Saturday holiday back to the preceding
+ * Friday. That is one statute set beside two staff schedules, not two filing calendars compared.
  *
- * THE DEEPER GAP, and the actual reason this stays empty: no source consulted here defines
- * "business day" for a filing lead. GCL §24 (nysenate.gov/legislation/laws/GCN/24) enumerates
- * public holidays; it does not say an agency's filing counter stops on them. The DOB Temporary Use
- * Permit page publishes "no later than 15 business days prior" without defining the unit, and the
- * ruleset defines it no further. Two statutes bear on the question and NEITHER was run down; they
- * are listed as unresolved leads below rather than dismissed here. Every candidate list is
- * therefore an inference about what a published closure means for a filing, not a published fact —
- * and a comment can document an inference without authorizing it.
+ * WHAT FOLLOWS FROM THOSE DATES IS CONDITIONAL, and the condition is unestablished. IF an agency's
+ * staff closure stops that agency's filing counter, THEN no single list is right for both
+ * governments and this one calendar id cannot serve all three rules. Whether it does is precisely
+ * the question the leads below are leads for, and nothing consulted here answers it. An earlier
+ * draft of this comment said the closure calendars "provably differ" and that "any single list is
+ * wrong for one of them": the dates are real evidence and they stand, but the regulatory
+ * consequence drawn from them was asserted rather than established, so it is withdrawn to the
+ * conditional above rather than left for the next reader to inherit.
  *
- * A UNION of the city and state closures was considered and rejected. It never counts a closed day
+ * THE DEEPER GAP, which is the INDEPENDENT and sufficient reason this stays empty: no source
+ * consulted here defines "business day" for a filing lead. It rests on nothing above — the dates
+ * and their downgrade to a conditional leave it exactly as it was, and the conditional's
+ * unestablished premise is this same gap seen from the other side. GCL §24
+ * (nysenate.gov/legislation/laws/GCN/24) enumerates public holidays; it does not say an agency's
+ * filing counter stops on them. The DOB Temporary Use Permit page publishes "no later than 15
+ * business days prior" without defining the unit, and the ruleset defines it no further. Two
+ * statutes bear on the question and NEITHER was run down; they are listed as unresolved leads
+ * below rather than dismissed here. Every candidate list is therefore an inference about what a
+ * published closure means for a filing, not a published fact — and a comment can document an
+ * inference without authorizing it. The decision not to publish stands on this paragraph.
+ *
+ * A UNION of the city and state staff schedules was considered and rejected. It never counts a closed day
  * as open, so it can only move a deadline earlier, which reads as the safe direction and is not:
  * an over-early date can raise `published_deadline_missed`, which the verdict turns into
  * INFEASIBLE. On any day between the union-derived date and the real one the engine would tell an

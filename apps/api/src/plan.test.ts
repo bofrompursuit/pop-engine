@@ -91,10 +91,11 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     `neither is satisfiable in production while no list exists. This assertion is a notification,`,
     `so that publishing lands in one visible place instead of silently moving three plan dates.`,
     `Before deleting it, read the doc comment on PUBLISHED_HOLIDAY_CALENDARS in`,
-    `apps/api/src/calendar.ts: it records what blocked publication — one calendar id spanning a`,
-    `city agency and a state agency whose closures and observance rules differ, and no source`,
-    `establishing that a published closure stops a filing counter — and #130 records the`,
-    `resolutions and their costs. If those are answered, delete this test and close #130.`,
+    `apps/api/src/calendar.ts: it records what blocked publication — no source consulted defines`,
+    `"business day" for a filing lead, which is the independent reason, and one calendar id spans`,
+    `a city agency and a state agency whose published STAFF holiday schedules differ, which matters`,
+    `only if a staff closure stops a filing counter and nothing establishes that it does — and #130`,
+    `records the resolutions and their costs. If those are answered, delete this test and close #130.`,
   ].join(" ");
 
   // The app serves the intake routes alongside the plan routes, so it takes their
