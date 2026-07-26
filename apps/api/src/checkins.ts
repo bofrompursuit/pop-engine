@@ -14,6 +14,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type CheckinsDependencies = {
   database: Pool;
+  today: () => string;
 };
 
 export type CheckinRow = {
@@ -28,6 +29,7 @@ export type CheckinRow = {
 type CheckinEvent = {
   id: string;
   name: string;
+  event_date: string;
 };
 
 type Queryable = {
@@ -54,8 +56,11 @@ export function normalizeContact(raw: string): NormalizedContact {
     }
     return { ok: true, contact: email, kind: "email" };
   }
+  if (!/^[0-9+ ()-]+$/.test(trimmed)) {
+    return { ok: false, message: "contact must be a valid email or phone number" };
+  }
   const digits = trimmed.replace(/\D/g, "");
-  if (digits.length < 10) {
+  if (digits.length < 10 || digits.length > 15) {
     return { ok: false, message: "contact must be a valid email or phone number" };
   }
   return { ok: true, contact: digits, kind: "phone" };
@@ -83,19 +88,22 @@ async function readCheckinEvent(
   database: Queryable,
   eventId: string,
 ): Promise<CheckinEvent | null> {
-  const { rows } = await database.query<CheckinEvent>("SELECT id, name FROM events WHERE id = $1", [
-    eventId,
-  ]);
+  const { rows } = await database.query<CheckinEvent>(
+    "SELECT id, name, event_date::text AS event_date FROM events WHERE id = $1",
+    [eventId],
+  );
   return rows[0] ?? null;
 }
 
 type GetCheckinEventResult =
-  { status: 200; body: { event: CheckinEvent } } | { status: 400 | 404; body: { error: string } };
+  | { status: 200; body: { event: Pick<CheckinEvent, "id" | "name"> } }
+  | { status: 400 | 404 | 410; body: { error: string } };
 
 /** Public name-only projection used to render the app-less check-in form. */
 async function getCheckinEvent(
   database: Queryable,
   eventId: string,
+  today: string,
 ): Promise<GetCheckinEventResult> {
   if (!UUID.test(eventId)) {
     return { status: 400, body: { error: "That check-in link is not valid." } };
@@ -103,6 +111,9 @@ async function getCheckinEvent(
   const event = await readCheckinEvent(database, eventId);
   if (event === null) {
     return { status: 404, body: { error: "That event was not found." } };
+  }
+  if (event.event_date < today) {
+    return { status: 410, body: { error: "That event has ended." } };
   }
   return { status: 200, body: { event: { id: event.id, name: event.name } } };
 }
@@ -138,7 +149,7 @@ async function findMatchingRsvp(
 
 export type RecordCheckinResult =
   | { status: 200 | 201; body: { checkin: CheckinRow } }
-  | { status: 400 | 404; body: { error: string } };
+  | { status: 400 | 404 | 410; body: { error: string } };
 
 /**
  * Record a check-in. Over-capacity never blocks (door policy is the organizer's;
@@ -149,6 +160,7 @@ export async function recordCheckin(
   database: Queryable,
   eventId: string,
   body: unknown,
+  today: string,
 ): Promise<RecordCheckinResult> {
   if (!UUID.test(eventId)) {
     return { status: 400, body: { error: "That check-in link is not valid." } };
@@ -164,8 +176,12 @@ export async function recordCheckin(
     return { status: 400, body: { error: normalized.message } };
   }
 
-  if ((await readCheckinEvent(database, eventId)) === null) {
+  const event = await readCheckinEvent(database, eventId);
+  if (event === null) {
     return { status: 404, body: { error: "That event was not found." } };
+  }
+  if (event.event_date < today) {
+    return { status: 410, body: { error: "That event has ended." } };
   }
 
   const rsvpId = await findMatchingRsvp(database, eventId, normalized.contact);
@@ -201,13 +217,13 @@ const handle =
   };
 
 export function createCheckinsRouter(dependencies: CheckinsDependencies): Router {
-  const { database } = dependencies;
+  const { database, today } = dependencies;
   const router = Router();
 
   router.get(
     "/events/:id/checkins",
     handle(async (req, res) => {
-      const result = await getCheckinEvent(database, req.params.id ?? "");
+      const result = await getCheckinEvent(database, req.params.id ?? "", today());
       res.status(result.status).json(result.body);
     }),
   );
@@ -215,7 +231,7 @@ export function createCheckinsRouter(dependencies: CheckinsDependencies): Router
   router.post(
     "/events/:id/checkins",
     handle(async (req, res) => {
-      const result = await recordCheckin(database, req.params.id ?? "", req.body);
+      const result = await recordCheckin(database, req.params.id ?? "", req.body, today());
       res.status(result.status).json(result.body);
     }),
   );

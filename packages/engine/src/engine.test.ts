@@ -62,12 +62,15 @@ function syntheticRuleset(rules: unknown[]): ReturnType<typeof parseEngineRulese
   });
 }
 
-const dedupeRule = (id: string, citation: string) => ({
+const dedupeRule = (id: string, citation: string, lastVerifiedDate?: string) => ({
   id,
   kind: "permit",
   trigger: { all: [{ field: "headcount", op: "gte", value: 10 }] },
   output: { permit_name: `${id} permit`, agency: "DOB", dedupe_key: "dob-structure" },
-  verification: { status: "SOURCE_CONFIRMED" },
+  verification: {
+    status: "SOURCE_CONFIRMED",
+    ...(lastVerifiedDate === undefined ? {} : { last_verified_date: lastVerifiedDate }),
+  },
   source: { citation, urls: [`https://example.test/${id}`] },
 });
 
@@ -129,6 +132,30 @@ describe("provenance (AC 1)", () => {
       "citation A",
       "citation B",
     ]);
+  });
+
+  it("keeps the earliest verification date only when every merged rule publishes one", () => {
+    const dated = evaluate(
+      { event_date: "2026-12-04", headcount: 50 },
+      syntheticRuleset([
+        dedupeRule("RULE-A", "citation A", "2026-07-20"),
+        dedupeRule("RULE-B", "citation B", "2026-07-18"),
+      ]),
+      TODAY,
+      { id: "test-calendar@2026", holidays: [] },
+    );
+    expect(dated.findings[0]?.lastVerifiedDate).toBe("2026-07-18");
+
+    const incomplete = evaluate(
+      { event_date: "2026-12-04", headcount: 50 },
+      syntheticRuleset([
+        dedupeRule("RULE-A", "citation A", "2026-07-20"),
+        dedupeRule("RULE-B", "citation B"),
+      ]),
+      TODAY,
+      { id: "test-calendar@2026", holidays: [] },
+    );
+    expect(incomplete.findings[0]?.lastVerifiedDate).toBeNull();
   });
 });
 

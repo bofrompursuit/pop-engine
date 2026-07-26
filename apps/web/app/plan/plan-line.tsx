@@ -6,13 +6,6 @@ import type { ConsumedFinding } from "./plan-api";
 // visible. Nothing here composes regulatory prose — every string an organizer reads is either
 // published in the rules artifact and carried through the plan, or one of the schema's own
 // status/kind tokens.
-//
-// `last_verified_date` is deliberately absent. F-206 line 12 and ARCHITECTURE:125 name it and
-// migration 001 has the column, but no rule publishes a per-fact verification date, so plan.ts
-// writes null; nyc.v2.5 added the optional schema field without carrying it through `Finding` or
-// `insertPlan`. Rendering the ruleset's snapshot date, or the plan's generation date, in its place
-// would state that a fact was checked on a day nothing checked it. Absence is the honest surface
-// until a rule actually publishes one.
 
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
@@ -112,6 +105,9 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         {finding.agency !== null && <span className="line__agency">{finding.agency}</span>}
         <span className="line__disposition">{humanize(finding.disposition)}</span>
         <span className="line__rule-ids">{ruleIds}</span>
+        {finding.lastVerifiedDate !== null && (
+          <span className="line__verified-date">last verified {finding.lastVerifiedDate}</span>
+        )}
       </p>
 
       {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
@@ -198,14 +194,9 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         </p>
       ))}
 
-      {/* SPEC CONFLICT, parked on issue #89 — behaviour deliberately left as it is.
-          F-206 AC 2 requires every plan line to show a citation, and its edge-case note assumes a
-          missing source is impossible "given rules-file validation". The rules validator (#84)
-          deliberately permits a null source when `verification.status` is COVERAGE_GAP, and both
-          ADV-ALCOHOL-PUBLIC-001 and ADV-SAPO-OTHER-CLASS-001 trigger with none. Two approved
-          contracts therefore disagree, so a source-less line renders its advisory text and its
-          COVERAGE_GAP status with no citation area. Inventing a citation is not an option and
-          neither is asserting one exists; the resolution is the product owner's. */}
+      {finding.verificationStatus === "COVERAGE_GAP" && finding.sources.length === 0 && (
+        <p className="line__source-missing">source not yet established</p>
+      )}
       {finding.sources.length > 0 && (
         <ul className="line__citations">
           {finding.sources.map((source) => (

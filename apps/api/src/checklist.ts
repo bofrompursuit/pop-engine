@@ -125,11 +125,14 @@ type PlanItemRow = {
   portal_url: string | null;
   sources: Finding["sources"];
   source_url: string | null;
+  last_verified_date: Date | string | null;
+  source_ruleset_version: string;
+  source_snapshot_date: Date | string | null;
 };
 
 const PLAN_ITEM_COLUMNS = `id, plan_id, rule_ids, permit_name, agency, kind, disposition, deadline,
    latest_apply_date, apply_after_date, deadline_status, verification_status, fee_display,
-   portal_name, portal_url, sources, source_url`;
+   portal_name, portal_url, sources, source_url, last_verified_date`;
 
 /**
  * Plan items carry uuid primary keys, so the table has no stable order of its own (F-201 hit
@@ -201,6 +204,7 @@ const planContext = (item: PlanItemRow, rendering: FindingRendering) => ({
   deadlineUnknownFields: rendering.deadline_unknown_fields,
   timelineUnresolvedReason: rendering.timeline_unresolved_reason,
   verificationStatus: item.verification_status,
+  lastVerifiedDate: isoDate(item.last_verified_date),
   // `publishedNotes`, not `notes`: a checklist item already has `notes`, and those are the
   // organizer's. Published regulatory text and a user's scratchpad must never share a field.
   publishedNotes: rendering.notes,
@@ -213,10 +217,16 @@ const planContext = (item: PlanItemRow, rendering: FindingRendering) => ({
   portalInstructions: rendering.portal_instructions,
   sources: item.sources,
   sourceUrl: item.source_url,
+  sourcePlan: {
+    rulesetVersion: item.source_ruleset_version,
+    snapshotDate: isoDate(item.source_snapshot_date),
+  },
 });
 
 type LatestPlan = {
   id: string;
+  rulesetVersion: string;
+  snapshotDate: string | null;
   /** The `events.revision_counter` this plan evaluated (AD-13). */
   eventRevision: number;
   /** The event's revision now. Higher than `eventRevision` means the plan is stale. */
@@ -226,10 +236,13 @@ type LatestPlan = {
 async function latestPlan(database: Queryable, eventId: string): Promise<LatestPlan | null> {
   const { rows } = await database.query<{
     id: string;
+    ruleset_version: string;
+    snapshot_date: Date | string | null;
     event_revision: number;
     revision_counter: number;
   }>(
-    `SELECT plan.id, plan.event_revision, event.revision_counter
+    `SELECT plan.id, plan.ruleset_version, plan.snapshot_date, plan.event_revision,
+            event.revision_counter
        FROM permit_plans AS plan
        JOIN events AS event ON event.id = plan.event_id
       WHERE plan.event_id = $1
@@ -240,6 +253,8 @@ async function latestPlan(database: Queryable, eventId: string): Promise<LatestP
   if (row === undefined) return null;
   return {
     id: row.id,
+    rulesetVersion: row.ruleset_version,
+    snapshotDate: isoDate(row.snapshot_date),
     eventRevision: row.event_revision,
     currentRevision: row.revision_counter,
   };
@@ -292,7 +307,14 @@ function renderingOrFail(
 
 async function planItems(database: Queryable, planId: string): Promise<PlanItemRow[]> {
   const { rows } = await database.query<PlanItemRow>(
-    `SELECT ${PLAN_ITEM_COLUMNS} FROM permit_plan_items WHERE plan_id = $1
+    `SELECT ${PLAN_ITEM_COLUMNS.split(",")
+      .map((column) => `item.${column.trim()}`)
+      .join(", ")},
+            plan.ruleset_version AS source_ruleset_version,
+            plan.snapshot_date AS source_snapshot_date
+       FROM permit_plan_items AS item
+       JOIN permit_plans AS plan ON plan.id = item.plan_id
+      WHERE item.plan_id = $1
       ORDER BY ${PLAN_ITEM_ORDER}`,
     [planId],
   );
@@ -351,7 +373,9 @@ async function checklistRows(database: Queryable, eventId: string): Promise<Chec
             checklist.notes, checklist.updated_at,
             ${PLAN_ITEM_COLUMNS.split(",")
               .map((column) => `item.${column.trim()}`)
-              .join(", ")}
+              .join(", ")},
+            plan.ruleset_version AS source_ruleset_version,
+            plan.snapshot_date AS source_snapshot_date
        FROM checklist_items AS checklist
        JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
        JOIN permit_plans AS plan ON plan.id = item.plan_id
@@ -475,6 +499,8 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
   return {
     eventId,
     planId: plan.id,
+    rulesetVersion: plan.rulesetVersion,
+    snapshotDate: plan.snapshotDate,
     // Whether a checklist exists at all, which the rows cannot say: a plan whose every requirement
     // is an advisory materialises to zero items (Scenario B), and so does never having pressed
     // create. Those render differently — "nothing to track" against "turn this plan into a

@@ -274,6 +274,12 @@ export type Finding = {
   readonly conflictText: string | null;
   readonly sources: readonly FindingSource[];
   readonly verificationStatus: VerificationStatus;
+  /**
+   * Earliest contributing rule verification date when every contributing rule publishes one;
+   * null otherwise. Absent on replayed artifacts that predate this field so their serialized
+   * finding shape remains reproducible. This is fact provenance, never the ruleset publication.
+   */
+  readonly lastVerifiedDate?: string | null;
   readonly triggeredBy: readonly TriggeredBy[];
 };
 

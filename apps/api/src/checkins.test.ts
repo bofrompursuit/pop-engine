@@ -72,23 +72,36 @@ describe("normalizeContact", () => {
       contact: "15551234567",
       kind: "phone",
     });
+    expect(normalizeContact("+123456789012345")).toEqual({
+      ok: true,
+      contact: "123456789012345",
+      kind: "phone",
+    });
   });
 
-  it("rejects blank, malformed email, and too-short phone values", () => {
+  it("rejects blank, malformed email, disallowed phone characters, and invalid digit counts", () => {
     expect(normalizeContact("").ok).toBe(false);
     expect(normalizeContact("not-an-email").ok).toBe(false);
     expect(normalizeContact("no-dot@domain").ok).toBe(false);
     expect(normalizeContact("555-123").ok).toBe(false);
+    expect(normalizeContact("call-212-555-1212").ok).toBe(false);
+    expect(normalizeContact("1234567890123456").ok).toBe(false);
   });
 });
 
 describe("recordCheckin (scripted)", () => {
   const eventId = "11111111-1111-4111-8111-111111111111";
   const rsvpId = "22222222-2222-4222-8222-222222222222";
+  const openEvent = { id: eventId, name: "Event", event_date: FIXTURE_TODAY };
+  const record = (database: ReturnType<typeof scriptedDatabase>, id: string, body: unknown) =>
+    recordCheckin(database, id, body, FIXTURE_TODAY);
 
   it("links a walk-in when no RSVP contact matches", async () => {
     const database = scriptedDatabase([
-      { when: (sql) => sql.includes("FROM events"), rows: [{ id: eventId }] },
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [openEvent],
+      },
       { when: (sql) => sql.includes("FROM rsvps"), rows: [] },
       {
         when: (sql) => sql.includes("INSERT INTO checkins"),
@@ -106,7 +119,7 @@ describe("recordCheckin (scripted)", () => {
       },
     ]);
 
-    const result = await recordCheckin(database, eventId, {
+    const result = await record(database, eventId, {
       name: "Walk In",
       contact: "walkin@example.com",
     });
@@ -118,7 +131,10 @@ describe("recordCheckin (scripted)", () => {
 
   it("links an RSVP when the normalized contact matches", async () => {
     const database = scriptedDatabase([
-      { when: (sql) => sql.includes("FROM events"), rows: [{ id: eventId }] },
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [openEvent],
+      },
       { when: (sql) => sql.includes("FROM rsvps"), rows: [{ id: rsvpId }] },
       {
         when: (sql) => sql.includes("INSERT INTO checkins"),
@@ -136,7 +152,7 @@ describe("recordCheckin (scripted)", () => {
       },
     ]);
 
-    const result = await recordCheckin(database, eventId, {
+    const result = await record(database, eventId, {
       name: "Guest",
       contact: "Guest@Example.com",
     });
@@ -147,7 +163,10 @@ describe("recordCheckin (scripted)", () => {
 
   it("updates rather than double-counting the same contact", async () => {
     const database = scriptedDatabase([
-      { when: (sql) => sql.includes("FROM events"), rows: [{ id: eventId }] },
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [openEvent],
+      },
       { when: (sql) => sql.includes("FROM rsvps"), rows: [] },
       {
         when: (sql) => sql.includes("INSERT INTO checkins"),
@@ -165,7 +184,7 @@ describe("recordCheckin (scripted)", () => {
       },
     ]);
 
-    const result = await recordCheckin(database, eventId, {
+    const result = await record(database, eventId, {
       name: "Updated Name",
       contact: "dup@example.com",
     });
@@ -176,7 +195,7 @@ describe("recordCheckin (scripted)", () => {
 
   it("rejects a malformed event id without querying the database", async () => {
     const database = scriptedDatabase([]);
-    const result = await recordCheckin(database, "not-a-uuid", {
+    const result = await record(database, "not-a-uuid", {
       name: "A",
       contact: "a@example.com",
     });
@@ -188,7 +207,7 @@ describe("recordCheckin (scripted)", () => {
 
   it("returns a friendly 404 when the event is unknown", async () => {
     const database = scriptedDatabase([{ when: (sql) => sql.includes("FROM events"), rows: [] }]);
-    const result = await recordCheckin(database, eventId, {
+    const result = await record(database, eventId, {
       name: "A",
       contact: "a@example.com",
     });
@@ -200,7 +219,7 @@ describe("recordCheckin (scripted)", () => {
 
   it("rejects a missing name", async () => {
     const database = scriptedDatabase([]);
-    const result = await recordCheckin(database, eventId, { contact: "a@example.com" });
+    const result = await record(database, eventId, { contact: "a@example.com" });
     expect(result.status).toBe(400);
     if (result.status !== 400) return;
     expect(result.body.error).toMatch(/name/i);
@@ -208,11 +227,11 @@ describe("recordCheckin (scripted)", () => {
 
   it("rejects a non-object body and a non-string contact", async () => {
     const database = scriptedDatabase([]);
-    expect(await recordCheckin(database, eventId, null)).toEqual({
+    expect(await record(database, eventId, null)).toEqual({
       status: 400,
       body: { error: "body must be a JSON object" },
     });
-    expect(await recordCheckin(database, eventId, { name: "A", contact: 12 })).toEqual({
+    expect(await record(database, eventId, { name: "A", contact: 12 })).toEqual({
       status: 400,
       body: { error: "contact is required" },
     });
@@ -220,7 +239,7 @@ describe("recordCheckin (scripted)", () => {
 
   it("rejects a malformed contact after the body parses", async () => {
     const database = scriptedDatabase([]);
-    const result = await recordCheckin(database, eventId, {
+    const result = await record(database, eventId, {
       name: "A",
       contact: "not-valid",
     });
@@ -231,12 +250,15 @@ describe("recordCheckin (scripted)", () => {
 
   it("fails softly when INSERT returns no row", async () => {
     const database = scriptedDatabase([
-      { when: (sql) => sql.includes("FROM events"), rows: [{ id: eventId }] },
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [openEvent],
+      },
       { when: (sql) => sql.includes("FROM rsvps"), rows: [] },
       { when: (sql) => sql.includes("INSERT INTO checkins"), rows: [] },
     ]);
     await expect(
-      recordCheckin(database, eventId, { name: "A", contact: "a@example.com" }),
+      record(database, eventId, { name: "A", contact: "a@example.com" }),
     ).resolves.toEqual({
       status: 400,
       body: { error: "Check-in could not be recorded." },
@@ -249,8 +271,15 @@ describe("F-401 route wiring", () => {
     const eventId = "11111111-1111-4111-8111-111111111111";
     const database = scriptedDatabase([
       {
-        when: (sql) => sql.includes("SELECT id, name FROM events"),
-        rows: [{ id: eventId, name: "Bushwick Night", private_answer: "not returned" }],
+        when: (sql) => sql.includes("SELECT id, name, event_date::text"),
+        rows: [
+          {
+            id: eventId,
+            name: "Bushwick Night",
+            event_date: FIXTURE_TODAY,
+            private_answer: "not returned",
+          },
+        ],
       },
     ]);
     const app = createApp({
@@ -266,7 +295,10 @@ describe("F-401 route wiring", () => {
   it("answers through the mounted router", async () => {
     const eventId = "11111111-1111-4111-8111-111111111111";
     const database = scriptedDatabase([
-      { when: (sql) => sql.includes("FROM events"), rows: [{ id: eventId }] },
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [{ id: eventId, name: "Event", event_date: FIXTURE_TODAY }],
+      },
       { when: (sql) => sql.includes("FROM rsvps"), rows: [] },
       {
         when: (sql) => sql.includes("INSERT INTO checkins"),
@@ -300,8 +332,34 @@ describe("F-401 route wiring", () => {
   it("exposes the router factory for dedicated mounting", () => {
     const router = createCheckinsRouter({
       database: scriptedDatabase([]) as unknown as Pool,
+      today: () => FIXTURE_TODAY,
     });
     expect(router).toBeDefined();
+  });
+
+  it("rejects an expired event on both the public lookup and direct submission", async () => {
+    const eventId = "11111111-1111-4111-8111-111111111111";
+    const database = scriptedDatabase([
+      {
+        when: (sql) => sql.includes("FROM events"),
+        rows: [{ id: eventId, name: "Ended event", event_date: "2026-07-21" }],
+      },
+    ]);
+    const app = createApp({
+      database: database as unknown as Pool,
+      intakeContract: parseIntakeContract((await loadRuleset()).document),
+      today: () => FIXTURE_TODAY,
+    });
+
+    const lookup = await request(app).get(`/api/events/${eventId}/checkins`);
+    const submission = await request(app)
+      .post(`/api/events/${eventId}/checkins`)
+      .send({ name: "Late Guest", contact: "late@example.com" });
+
+    expect(lookup.status).toBe(410);
+    expect(submission.status).toBe(410);
+    expect(lookup.body.error).toMatch(/ended/i);
+    expect(submission.body.error).toMatch(/ended/i);
   });
 });
 

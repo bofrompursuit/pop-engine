@@ -59,6 +59,7 @@ const storedFinding = {
   conflictText: null,
   sources: [{ ruleId: "PARKS-EVENT-001", citation: "Parks FAQ", urls: ["https://example.gov"] }],
   verificationStatus: "SOURCE_CONFIRMED",
+  lastVerifiedDate: null,
 };
 
 const omit = (plan: Record<string, unknown>, field: string): Record<string, unknown> => {
