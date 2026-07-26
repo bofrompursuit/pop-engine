@@ -101,11 +101,25 @@ function buildFinding(
     conflictText: rule.verificationStatus === "OFFICIAL_CONFLICT" ? rule.noteText : null,
     sources: ruleSources(rule),
     verificationStatus: rule.verificationStatus,
+    ...(rule.verificationLastVerifiedDate === null
+      ? {}
+      : { lastVerifiedDate: rule.verificationLastVerifiedDate }),
     triggeredBy,
   };
 }
 
 function mergeFindings(first: Finding, second: Finding): Finding {
+  const carriesVerificationDate =
+    first.lastVerifiedDate !== undefined || second.lastVerifiedDate !== undefined;
+  const lastVerifiedDate =
+    first.lastVerifiedDate === undefined ||
+    first.lastVerifiedDate === null ||
+    second.lastVerifiedDate === undefined ||
+    second.lastVerifiedDate === null
+      ? null
+      : first.lastVerifiedDate < second.lastVerifiedDate
+        ? first.lastVerifiedDate
+        : second.lastVerifiedDate;
   return {
     ...first,
     ruleIds: [...first.ruleIds, ...second.ruleIds],
@@ -116,6 +130,7 @@ function mergeFindings(first: Finding, second: Finding): Finding {
     timelineUnresolvedReason: first.timelineUnresolvedReason ?? second.timelineUnresolvedReason,
     noteText: first.noteText ?? second.noteText,
     conflictText: first.conflictText ?? second.conflictText,
+    ...(carriesVerificationDate ? { lastVerifiedDate } : {}),
   };
 }
 

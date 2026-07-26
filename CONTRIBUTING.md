@@ -31,7 +31,7 @@ In order:
 
 ## Code Style
 
-**Language:** TypeScript everywhere (ARCHITECTURE AD-8). The engine package (`packages/engine`) exports the shared types; import them, never redefine them.
+**Language:** TypeScript everywhere (ARCHITECTURE AD-8). In Phase 0–1.5, the engine package (`packages/engine`) exports the shared types; import them, never redefine them. The approved Phase 2 code-generation handoff moves schema-derived contract types to `packages/contracts` and updates all imports plus this guide and `AGENTS.md` in one PR; until then, the engine remains authoritative and no duplicate definitions are allowed.
 
 **Semantic names.** Names must say what a thing is or does, in full words. The reviewer should understand a line without scrolling.
 

@@ -110,6 +110,7 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(blocking.agency).toBe("SAPO (Mayor's Office CECM)");
     expect(blocking.latestApplyDate).toBe("2026-07-12");
     expect(blocking.verificationStatus).toBe("SOURCE_CONFIRMED");
+    expect(blocking.lastVerifiedDate).toBeNull();
     expect(blocking.sources[0].urls.length).toBeGreaterThan(0);
     expect(blocking.triggeredBy).toEqual([
       { field: "sapo_event_type", value: "street_event" },
@@ -159,6 +160,58 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     expect(notification?.disposition).toBe("may_be_required");
     expect(notification?.deadline_status).toBe("deadline_approaching");
     expect(notification?.verification_status).toBe("SOURCE_CONFIRMED");
+  });
+
+  it("persists and serves a published per-rule verification date", async () => {
+    const datedRuleset = parseEngineRuleset({
+      ruleset_version: "test.v1",
+      jurisdiction: "US-NY-NYC",
+      snapshot_date: "2026-07-22",
+      config: {
+        slack_warning_days: { value: 14 },
+        business_day_math: { calendar: "test-calendar@2026" },
+      },
+      intake_fields: [
+        { field: "event_date", type: "date" },
+        { field: "headcount", type: "integer" },
+      ],
+      rules: [
+        {
+          id: "TEST-DATED-001",
+          kind: "permit",
+          trigger: { all: [{ field: "headcount", op: "gte", value: 1 }] },
+          output: { permit_name: "Synthetic dated requirement", agency: "Test agency" },
+          verification: {
+            status: "SOURCE_CONFIRMED",
+            last_verified_date: "2026-07-18",
+          },
+          source: { citation: "Synthetic source", urls: ["https://example.test/source"] },
+        },
+      ],
+      advisories: [],
+    });
+    const eventId = await insertEvent();
+    const app = createApp({
+      database: pool,
+      intakeContract,
+      today: () => TODAY,
+      planService: createPlanService(pool, datedRuleset, fixtureCalendar, () => TODAY),
+    });
+
+    const generated = await request(app).post(`/api/events/${eventId}/plan`);
+    expect(generated.body.findings[0]?.lastVerifiedDate).toBe("2026-07-18");
+
+    const { rows } = await pool.query<{ last_verified_date: string | null }>(
+      `SELECT to_char(item.last_verified_date, 'YYYY-MM-DD') AS last_verified_date
+         FROM permit_plan_items AS item
+         JOIN permit_plans AS plan ON plan.id = item.plan_id
+        WHERE plan.event_id = $1 AND item.rule_ids = ARRAY['TEST-DATED-001']::text[]`,
+      [eventId],
+    );
+    expect(rows[0]?.last_verified_date).toBe("2026-07-18");
+
+    const fetched = await request(app).get(`/api/events/${eventId}/plan`);
+    expect(fetched.body.findings[0]?.lastVerifiedDate).toBe("2026-07-18");
   });
 
   it("writes an immutable new plan per generation and serves the latest one", async () => {

@@ -104,6 +104,7 @@ type ChecklistItemView = {
   permitName: string | null;
   kind: string;
   verificationStatus: string;
+  lastVerifiedDate: string | null;
   deadlineStatus: string;
   portalUrl: string | null;
   publishedNotes: string[];
@@ -111,6 +112,7 @@ type ChecklistItemView = {
   conflictText: string | null;
   deadlineDisplay: string | null;
   sources: { ruleId: string; citation: string; urls: string[] }[];
+  sourcePlan: { rulesetVersion: string; snapshotDate: string | null };
   documents: { id: string; filename: string; contentType: string; sizeBytes: number }[];
 };
 
@@ -201,17 +203,21 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     items: readonly { ruleIds: string[]; kind: string; latestApplyDate?: string }[],
     generatedAt: string,
     eventRevision = 1,
+    sourcePlan = {
+      rulesetVersion: ruleset.rulesetVersion,
+      snapshotDate: ruleset.snapshotDate,
+    },
   ): Promise<string> => {
     const planId = randomUUID();
     await pool.query(
       `INSERT INTO permit_plans
-         (id, event_id, event_revision, ruleset_version, verdict, verdict_detail, intake_snapshot,
-          generated_at)
-       VALUES ($1, $2, $5, $3, 'conditional', $6::jsonb, '{}'::jsonb, $4)`,
+         (id, event_id, event_revision, ruleset_version, snapshot_date, verdict, verdict_detail,
+          intake_snapshot, generated_at)
+       VALUES ($1, $2, $5, $3, $7, 'conditional', $6::jsonb, '{}'::jsonb, $4)`,
       [
         planId,
         eventId,
-        ruleset.rulesetVersion,
+        sourcePlan.rulesetVersion,
         generatedAt,
         eventRevision,
         JSON.stringify({
@@ -227,6 +233,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
             portal_instructions: null,
           })),
         }),
+        sourcePlan.snapshotDate,
       ],
     );
     for (const item of items) {
@@ -366,6 +373,13 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // Spec AC 5: the deadline context lives where the work happens.
       expect(blocking?.latestApplyDate).toBe("2026-07-12");
       expect(blocking?.verificationStatus).toBe("SOURCE_CONFIRMED");
+      expect(blocking?.lastVerifiedDate).toBeNull();
+      expect(blocking?.sourcePlan).toEqual({
+        rulesetVersion: ruleset.rulesetVersion,
+        snapshotDate: ruleset.snapshotDate,
+      });
+      expect(body.rulesetVersion).toBe(ruleset.rulesetVersion);
+      expect(body.snapshotDate).toBe(ruleset.snapshotDate);
       expect(blocking?.portalUrl).not.toBeNull();
       expect(blocking?.status).toBe("not_started");
 
@@ -374,6 +388,42 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         [blocking?.id],
       );
       expect(rows[0]?.plan_item_id).toBe(blocking?.planItemId);
+    });
+
+    it("attributes current and retained rows to the plan snapshot that supplies their context", async () => {
+      const eventId = await createEvent(scenario("A"));
+      const api = appWith(fakeStorage());
+      await insertPlan(
+        eventId,
+        [
+          { ruleIds: ["SAPO-STREET-LARGE-001"], kind: "permit" },
+          { ruleIds: ["NYPD-SOUND-001"], kind: "permit" },
+        ],
+        "2026-07-22T10:00:00Z",
+        1,
+        { rulesetVersion: "test.v1", snapshotDate: "2026-07-20" },
+      );
+      await request(api).post(`/api/events/${eventId}/checklist`);
+
+      await insertPlan(
+        eventId,
+        [{ ruleIds: ["SAPO-STREET-LARGE-001"], kind: "permit" }],
+        "2026-07-22T11:00:00Z",
+        1,
+        { rulesetVersion: "test.v2", snapshotDate: "2026-07-21" },
+      );
+      const read = await request(api).get(`/api/events/${eventId}/checklist`);
+      const items = read.body.items as ChecklistItemView[];
+
+      expect(read.body.rulesetVersion).toBe("test.v2");
+      expect(read.body.snapshotDate).toBe("2026-07-21");
+      expect(items.find((item) => item.ruleIds[0] === "SAPO-STREET-LARGE-001")?.sourcePlan).toEqual(
+        { rulesetVersion: "test.v2", snapshotDate: "2026-07-21" },
+      );
+      expect(items.find((item) => item.ruleIds[0] === "NYPD-SOUND-001")?.sourcePlan).toEqual({
+        rulesetVersion: "test.v1",
+        snapshotDate: "2026-07-20",
+      });
     });
 
     it("carries the apply_after date of a dependency-gated item (AC 5, Scenario C)", async () => {

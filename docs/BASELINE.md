@@ -8,9 +8,9 @@
 | Product requirements | `docs/PRD.md` | APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change | — |
 | Feature registry + phasing | `docs/ROADMAP.md` | APPROVED (2026-07-22) | — |
 | Delivery lanes, gates, demo | `docs/DESIGN.md` | APPROVED (2026-07-22) | — |
-| Design system | `docs/DESIGN-SYSTEM.md` | APPROVED | — |
+| Design system | `docs/DESIGN-SYSTEM.md` | APPROVED (2026-07-25) | — |
 | Technical architecture (Phase 0–1.5) | `docs/ARCHITECTURE.md` | APPROVED (2026-07-22) | events-schema migration still needs all-4-devs sign-off (Phase 0 / OPEN-QUESTIONS B-3); the product owner authorized three columns on 2026-07-25 without it — F-301 promotion `description` and `public_page_published` in migration 005 (#100 / #104), and `battery_present` in migration 006 (#105) — and the gate is unchanged for anything beyond those three |
-| Architecture target (Phase 2+) | `docs/ARCHITECTURE-FUTURE.md` | PROPOSED | team read + approval; not an instruction to build |
+| Architecture target (Phase 2+) | `docs/ARCHITECTURE-FUTURE.md` | APPROVED (2026-07-25; approval recorded by the reconciliation PR merge) | planning target only; each consuming F-id still needs its own approved spec and any required contract or ADR |
 | Governance | `docs/DOCUMENTATION-GOVERNANCE.md` | APPROVED (adopted 2026-07-22; authority-by-concern + conflict protocol in force) | — |
 | Agent/contributor rules | `/AGENTS.md` + `/CONTRIBUTING.md` | APPROVED (2026-07-22) | — |
 | Deployment providers (Phase 0) | Provider baseline below + `DEPLOY.md` | APPROVED (2026-07-23, issue #1) | provisioning is a runbook; secrets set per environment |
@@ -18,7 +18,7 @@
 | **Scenario fixtures** | `docs/test-scenario-answer-key.md` (v4) | **APPROVED** — v3 team-ratified 2026-07-22 with the ruleset; v4 authorized by the product owner 2026-07-25 | now the green-gate acceptance suite; v4 states 11 scenario-field answers across 5 fields (`battery_present` ×4, `structure_types` ×2, `generator_present` ×2, `open_flame_or_cooking` ×2, `food_vendor_count` ×1) that the fixtures already evaluated on, and moves no expected output. The v3 pointers in `docs/PRD.md`, `docs/DESIGN.md`, `specs/F-101-event-intake.md` and `specs/F-201-permit-plan-generator.md` were retargeted to v4 in the same PR; their own approval status is unchanged |
 | Evidence record | `docs/VERIFICATION-SOURCES.md` | ACTIVE RECORD (Rounds 1–2, 2026-07-22) | grows with each verification pass |
 | Open questions | `docs/OPEN-QUESTIONS.md` | ACTIVE REGISTER | — |
-| Phase 1 specs | `specs/F-*.md` | APPROVED (2026-07-22; F-101/F-102/F-201 approved 2026-07-24, re-read before building) | specs carry no per-file status header, so this row is their only approval record (governance §7) |
+| Phase 1–1.5 specs | `specs/F-*.md` | APPROVED (current files re-read and given per-file approval metadata 2026-07-25) | covers only the spec files present in this approval commit; no Phase 2+ feature spec exists or is approved |
 | Superseded/draft material | `rules/proposals/*`, `docs/proposals/*` | ARCHIVED / PROPOSED drafts | never build from these |
 | Ruleset v2.4 lineage | git commit `98dc5f8` | SUPERSEDED (2026-07-25 by nyc.v2.5) | historical only; v2.5 gates `battery_system_kwh` behind a new `battery_present` question and accepts an optional `verification.last_verified_date`. Unlike v2.2–v2.4 it changes evaluated output: FDNY-GENERATOR-001 no longer reports MAY_BE_REQUIRED in the five scenarios with no generator. No expected finding in the answer key moves — the key never listed it there |
 | Ruleset v2.3 lineage | git commit `5f32040` | SUPERSEDED (2026-07-25 by nyc.v2.4) | historical only; v2.4 publishes two facts the engine previously held in code — the intake fields SAPO-PLAZA-001's by-level deadline keys on, and DOB-TENT-001's exactly-400-sq-ft conditionality — and changes no regulatory content |
@@ -26,7 +26,7 @@
 | Ruleset v2.1 lineage | git commit `b0214b4` | SUPERSEDED (2026-07-25 by nyc.v2.2) | historical only; v2.2 changes one rule's disposition (DOHMH-ORGANIZER-NOTIFY-001) and no regulatory content |
 | Ruleset v1 lineage | git commit `28e937d` | SUPERSEDED | historical only |
 
-**Status 2026-07-22:** all rows current; Phase 0 kickoff is unblocked. The remaining gate before lane coding is the events-schema migration sign-off by all four devs (Phase 0, ARCHITECTURE.md schema banner). `ARCHITECTURE-FUTURE.md` remains PROPOSED as a planning target only.
+**Status 2026-07-25:** the Phase 0–1.5 baseline and current per-feature specs are approved. The events-schema sign-off gate in `ARCHITECTURE.md` remains in force for changes beyond the three product-owner-authorized columns named above. `ARCHITECTURE-FUTURE.md` is approved as direction, not activated implementation scope; Phase 2+ work remains blocked until its F-id has an approved spec and any shared contracts or ADRs it consumes.
 
 **Provider baseline (Phase 0, resolved 2026-07-23, issue #1; closes OPEN-QUESTIONS T-2 and T-3):**
 

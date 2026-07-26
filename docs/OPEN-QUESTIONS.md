@@ -40,7 +40,7 @@
 - Digital entry pass stays P2 (F-401 extension), decided 2026-07-22 (v1 register P-1).
 - Public-space alcohol real rules: Phase 2 ruleset research (advisory + intake warning ship in MVP).
 - Full 59-rule coverage (`rules/proposals/nyc-rules.v2-full-draft.json`): post-capstone target; each adopted rule goes through the same evidence + sign-off path as v2.1.
-- `ARCHITECTURE-FUTURE.md` team read + approval: schedule after the demo.
+- **RESOLVED 2026-07-25 (PR #110):** `ARCHITECTURE-FUTURE.md` approved as the Phase 2–4 planning target. Approval does not activate implementation; each consuming F-id still needs its own approved spec and any required contract or ADR.
 
 ## 5. Process Note
 

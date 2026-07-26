@@ -1,6 +1,7 @@
 # F-205 · Insurance Requirement Detector (STRETCH)
 
-**Phase:** 1.5 (last in retention order) · **Lane:** Dev 1 (post green gate) · **Depends on:** F-201 (R10/R11 already ship in the day-one ruleset; this feature is the dedicated UI surfacing)
+**Status:** APPROVED (2026-07-25) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
+**Phase:** 1.5 (last in retention order) · **Lane:** Dev 1 (Track B, after the F-201 plan and F-202 checklist views merge; never a parallel core-path branch) · **Depends on:** F-201 (R10/R11 already ship in the day-one ruleset; this feature is the dedicated UI surfacing)
 
 ## User Story
 

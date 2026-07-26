@@ -59,6 +59,7 @@ const finding = (overrides: Partial<Finding> = {}): Finding => ({
     { ruleId: "PARKS-EVENT-001", citation: "Parks FAQ", urls: ["https://example.gov/faq"] },
   ],
   verificationStatus: "SOURCE_CONFIRMED",
+  lastVerifiedDate: null,
   triggeredBy: [],
   ...overrides,
 });
@@ -288,6 +289,15 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     expect(line.getByText("SOURCE CONFIRMED")).toBeDefined();
   });
 
+  it("shows a stored per-line verification date and omits it when absent", async () => {
+    const dated = await lineFor(finding({ lastVerifiedDate: "2026-07-18" }));
+    expect(dated.getByText("last verified 2026-07-18")).toBeDefined();
+    cleanup();
+
+    const undated = await lineFor(finding({ lastVerifiedDate: null }));
+    expect(undated.queryByText(/last verified/i)).toBeNull();
+  });
+
   it("reports an unreadable plan rather than crashing on a finding it cannot render", async () => {
     // The finding that merged unfixed on #93: a finding with valid ruleIds but a missing or renamed
     // `verificationStatus` reached `VerificationBadge`, which called `.toLowerCase()` on undefined
@@ -404,7 +414,7 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     }
   });
 
-  it("renders a finding that publishes no source at all without a citation block", async () => {
+  it("renders the explicit source-not-established state for a source-less coverage gap", async () => {
     // ADV-ALCOHOL-PUBLIC-001 is a COVERAGE_GAP advisory: it asserts nothing and cites nothing.
     const line = await lineFor(
       finding({
@@ -419,6 +429,7 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
 
     expect(line.queryAllByRole("link")).toEqual([]);
     expect(line.getByText("COVERAGE GAP")).toBeDefined();
+    expect(line.getByText("source not yet established")).toBeDefined();
   });
 
   it("omits the agency label on findings that publish no agency", async () => {

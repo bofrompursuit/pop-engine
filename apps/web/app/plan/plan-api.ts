@@ -103,10 +103,13 @@ export type ConsumedFinding = Omit<
     | "conflictText"
     | "sources"
     | "verificationStatus"
+    | "lastVerifiedDate"
   >,
-  "deadline"
+  "deadline" | "lastVerifiedDate"
 > & {
   readonly deadline: ConsumedDeadline | null;
+  /** Required on the stored-plan wire even though pre-field engine replays omit it internally. */
+  readonly lastVerifiedDate: string | null;
 };
 
 /**
@@ -253,6 +256,7 @@ const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
   conflictText: nullOr(isString),
   sources: arrayOf(shapedLike(SOURCE_CHECKS)),
   verificationStatus: isToken(VERIFICATION_STATUSES),
+  lastVerifiedDate: nullOr(isString),
 };
 
 const MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString };

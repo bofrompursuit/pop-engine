@@ -1,6 +1,6 @@
 # PopEngine — Deployment Runbook (Phase 0)
 
-Provider baseline (`docs/BASELINE.md`): **Railway** (host) · **Supabase** (Postgres + S3-compatible storage) · **Resend** (email) · **Twilio** (SMS) · **Cloudflare Access** (demo gate, AD-12). Synthetic data only until F-701.
+Provider baseline (`docs/BASELINE.md`): **Railway** (host) · **Supabase** (Postgres + S3-compatible storage) · **Resend** (email) · **Twilio** (SMS) · **Cloudflare Access** (demo gate, AD-12). Synthetic data only until the joint F-701/F-702/F-703 production gate ships.
 
 The scaffold builds and tests locally with no cloud accounts. This runbook provisions the gated demo environment. Every step needs your own account and secrets; nothing here is automated.
 
@@ -44,13 +44,17 @@ The gate is host-level; there is no in-app auth (AD-5).
 1. Put both Railway URLs behind Cloudflare (proxy the hostnames, or use a Cloudflare Tunnel to the Railway URLs).
 2. Zero Trust, Access, Applications: add a self-hosted app per hostname.
 3. Policy: allow the team's emails (email-OTP), or an IP allowlist. Everything else is denied.
-4. For the rehearsal and demo window only, open the public routes the demo needs (`/e/:eventId`, RSVP, check-in) with a bypass policy, then close them again.
-5. Because the api sits on a different hostname from the web app, browser JSON calls send CORS preflights, and Access returns 403 on `OPTIONS` by default. On the api's Access application enable the CORS settings (allow the web origin, allow credentials so the `CF_Authorization` cookie passes) or bypass `OPTIONS` to the origin. Without this the Express CORS handler never runs and cross-origin POST/PATCH/DELETE fail behind the gate even though they pass locally. See Cloudflare's authorization-cookie CORS guide.
+4. For the rehearsal and demo window only, create separate, more-specific self-hosted Access applications for the attendee paths: the web app's `/e/*` pages; the API host's `/e/*` public-page read; and the API paths `/api/events/*/rsvps` (POST only) and `/api/events/*/checkins` (name-only event GET plus check-in POST). Give only those path applications a Bypass/Everyone policy; their more-specific paths take precedence over the hostname applications. Never bypass organizer routes such as `/api/events/*/guests*`, public-page controls, plans, checklists, or documents. `public_page_published` controls content visibility inside the window; it does not replace Access.
+5. Record who opens the window and its closing time. Remove the attendee path applications or their bypass policies immediately after rehearsal/demo so the hostname applications protect those paths again. Outside that window an anonymous request must be challenged or denied by Access before it reaches either origin.
+6. Because the api sits on a different hostname from the web app, browser JSON calls send CORS preflights, and Access returns 403 on `OPTIONS` by default. On the api's Access application enable the CORS settings (allow the web origin, allow credentials so the `CF_Authorization` cookie passes) or bypass `OPTIONS` to the origin. Without this the Express CORS handler never runs and cross-origin POST/PATCH/DELETE fail behind the gate even though they pass locally. See Cloudflare's authorization-cookie CORS guide.
 
 ## 6. Verify
 
 - `GET https://<api-host>/health` returns `{"status":"ok",...}` behind the gate. This is a liveness probe: it reports that the process is up, not which ruleset that process loaded. Boot-time ruleset validation has been in place since the Phase 0 events schema (`apps/api/src/ruleset.ts`): the api refuses to start when the file is missing, fails its schema check, or is not the expected `ruleset_version` (`docs/ARCHITECTURE.md`, "Rules loading"). So a process that is answering has loaded a ruleset that passed those checks — but `/health` does not report which file it read, so confirming a deployment is serving the intended `RULES_FILE` still needs to be done another way (open on issue #89).
 - The web service loads behind the gate.
+- Before opening the attendee window, confirm external unauthenticated requests cannot reach the web or API `GET /e/<synthetic-event-id>` paths, `GET /api/events/<synthetic-event-id>/checkins`, `POST /api/events/<synthetic-event-id>/rsvps`, or `POST /api/events/<synthetic-event-id>/checkins`, and confirm no RSVP/check-in row was created.
+- During the window, confirm both public-page paths and the name-only check-in lookup load, then submit one synthetic RSVP and one synthetic check-in using organizer-provided aliases rather than attendee identities; organizer `/guests` remains behind Access.
+- After removing the bypass policies, repeat every listed external unauthenticated check and confirm both writes are blocked and create no rows.
 - A seeded deadline fires a real email (SMS labeled-simulation until A2P clears).
 
 ## Env reference

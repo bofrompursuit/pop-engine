@@ -13,6 +13,8 @@ import type {
   PermitPlan,
 } from "@pop-engine/engine";
 
+type StoredFinding = Finding & { readonly lastVerifiedDate: string | null };
+
 /**
  * A stored plan whose items no longer match what was written. F-201 AC 5: a partial plan is never
  * presented as complete, so a read that cannot rebuild every finding fails instead of returning
@@ -57,7 +59,7 @@ export type StoredPlan = {
   readonly today: string;
   readonly calendarId: string;
   readonly generatedAt: string;
-  readonly findings: readonly Finding[];
+  readonly findings: readonly StoredFinding[];
 };
 
 export type PlanService = {
@@ -188,8 +190,7 @@ async function insertPlan(
         finding.portalUrl,
         JSON.stringify(finding.sources),
         finding.sources[0]?.urls[0] ?? null,
-        // No rule publishes a per-fact verification date; every status is still pre-VERIFIED.
-        null,
+        finding.lastVerifiedDate ?? null,
         finding.kind,
         finding.disposition,
         finding.deadlineStatus,
@@ -250,6 +251,10 @@ export function createPlanService(
           generatedAt,
           snapshotDate: ruleset.snapshotDate,
           ...plan,
+          findings: plan.findings.map((finding) => ({
+            ...finding,
+            lastVerifiedDate: finding.lastVerifiedDate ?? null,
+          })),
         };
       } catch (error) {
         await client.query("ROLLBACK");
@@ -272,8 +277,8 @@ export function createPlanService(
 
       const { rows: itemRows } = await pool.query<PlanItemRow>(
         `SELECT rule_ids, triggered_by, permit_name, agency, deadline, latest_apply_date, apply_after_date,
-                fee_display, portal_name, portal_url, sources, kind, disposition, deadline_status,
-                verification_status
+                fee_display, portal_name, portal_url, sources, last_verified_date, kind,
+                disposition, deadline_status, verification_status
            FROM permit_plan_items WHERE plan_id = $1 ORDER BY id`,
         [planRow.id],
       );
@@ -351,6 +356,7 @@ type PlanItemRow = {
   portal_name: string | null;
   portal_url: string | null;
   sources: Finding["sources"];
+  last_verified_date: Date | string | null;
   kind: Finding["kind"];
   disposition: Finding["disposition"];
   deadline_status: Finding["deadlineStatus"];
@@ -368,7 +374,7 @@ const isoDate = (value: Date | string | null): string | null =>
   value === null ? null : calendarDateFrom(value);
 
 /** The persisted columns rebuild the finding a client reads; snake_case stays inside this file. */
-function findingFromRow(row: PlanItemRow, rendering: FindingRendering): Finding {
+function findingFromRow(row: PlanItemRow, rendering: FindingRendering): StoredFinding {
   return {
     ruleIds: row.rule_ids,
     kind: row.kind,
@@ -392,6 +398,7 @@ function findingFromRow(row: PlanItemRow, rendering: FindingRendering): Finding 
     conflictText: rendering.conflict_text,
     sources: row.sources,
     verificationStatus: row.verification_status,
+    lastVerifiedDate: isoDate(row.last_verified_date),
     triggeredBy: row.triggered_by,
   };
 }

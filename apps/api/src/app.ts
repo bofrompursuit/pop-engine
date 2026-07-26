@@ -61,7 +61,10 @@ export function createApp(dependencies: AppDependencies): Express {
   app.use("/api", createEventsRouter(dependencies));
   // F-401 / F-302: only need pool (+ today for RSVP date checks) already on AppDependencies —
   // no index.ts wiring beyond what events already use.
-  app.use("/api", createCheckinsRouter({ database: dependencies.database }));
+  app.use(
+    "/api",
+    createCheckinsRouter({ database: dependencies.database, today: dependencies.today }),
+  );
   app.use(
     "/api",
     createRsvpsRouter({ database: dependencies.database, today: dependencies.today }),

@@ -125,8 +125,8 @@ Intake columns mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v
 | fee_display | text | |
 | required_documents | jsonb | |
 | portal_name / portal_url | text | |
-| sources | jsonb | immutable citation + URL snapshots for every contributing rule; OFFICIAL_CONFLICT retains every source |
-| source_url / last_verified_date | text / date | primary click-through + last-verified date rendered per line (F-206) |
+| sources | jsonb | immutable citation + URL snapshots for every source-bearing contributing rule; OFFICIAL_CONFLICT retains every source. Empty only when every contributor is a source-less COVERAGE_GAP, which the UI labels explicitly rather than inventing a citation |
+| source_url / last_verified_date | text / date, nullable | primary click-through when a source exists; last-verified date only when every contributing published rule supplies one, using the earliest contributing date. A null date renders no date and never falls back to the ruleset snapshot date (F-206) |
 | kind | text CHECK IN (permit, insurance, notification, registration, eligibility, prohibition, dependency, advisory, note) | mirrors the **finding's** kind, which usually equals the rule's kind (DOHMH-ORGANIZER-NOTIFY-001 → `notification`). Exception: a `classification`-kind rule persists as `note` (see below). `classification` is a rule role, not a persisted finding kind, so it is absent here by design |
 | disposition | text CHECK IN (required, may_be_required, prohibited_or_ineligible, advisory, no_new_requirement) | AD-10; fixture comparisons match on (kind, disposition, finding) |
 | deadline_status | text CHECK IN (on_track, deadline_approaching, published_deadline_missed, not_calculable, not_applicable) | per-finding; the verdict summarizes these |
@@ -213,7 +213,7 @@ evaluate(intake, ruleset, today, calendar) → {
 
 ### Rules as data
 
-Each rule in `rules/nyc-rules.v2.5.json` carries: `id`, `kind`, `trigger` (condition tree over the declared intake fields), `output` (name/variants, agency, typed deadline, fee, portal, paths for branchable rules), `verification` (status + evidence reference into `VERIFICATION-SOURCES.md`), and `source`. The file also declares its own `intake_fields` registry, `config` (slack threshold, calendar, assembly thresholds), and `engine_conventions`. A second city is a new JSON file, not a core-engine rewrite (F-207) — the engine knows condition operators and deadline types, never NYC specifics (jurisdiction-specific classification helpers live with the ruleset, per `ARCHITECTURE-FUTURE.md` §8.3).
+Each rule in `rules/nyc-rules.v2.5.json` carries: `id`, `kind`, `trigger` (condition tree over the declared intake fields), `output` (name/variants, agency, typed deadline, fee, portal, paths for branchable rules), `verification` (status + evidence reference into `VERIFICATION-SOURCES.md`), and `source` except when a COVERAGE_GAP deliberately asserts nothing. The file also declares its own `intake_fields` registry, `config` (slack threshold, calendar, assembly thresholds), and `engine_conventions`. F-207 adds a second city as data, not jurisdiction-specific executable code. If its rules cannot be expressed by the approved generic operators and deadline types, F-207 stops until a separately approved engine/schema change adds the required generic primitive.
 
 ### Condition evaluation (tri-state)
 
@@ -270,6 +270,7 @@ Base: `apps/api`, JSON over REST. No auth in MVP (AD-5).
 | POST /api/events/:id/rsvps *(stretch)* | Create RSVP (capacity-aware; public; requires published page) | F-302 |
 | GET /api/events/:id/guests *(stretch)* | Organizer guest list (name/email/phone); not on the public RSVP path so Access bypass for POST cannot open the list | F-302 |
 | PATCH /api/events/:id/guests/:rsvpId *(stretch)* | Organizer cancel RSVP (`status: cancelled`) | F-302 |
+| GET /api/events/:id/checkins *(stretch)* | Name-only public event projection for the check-in form | F-401 |
 | POST /api/events/:id/checkins *(stretch)* | 2-field check-in | F-401 |
 | GET /api/events/:id/stats *(stretch)* | Check-in counts + capacity (polled ~5s; no websockets in MVP) | F-402 |
 
@@ -286,7 +287,7 @@ Error principle: rule-evaluation failures return an explicit error; the API neve
 - Two services (web + api) on any node host (Railway / Render / Fly), managed Postgres (Neon / Supabase / host-provided), S3-compatible bucket (S3 / R2 / Supabase storage).
 - Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v2.5.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
 - Demo environment is seeded via script (scenario events pre-loaded as drafts) and never redeployed on demo day after final rehearsal.
-- **Access gate + synthetic data (AD-12):** the demo deploy sits behind a host-level gate (basic auth or IP allowlist); all data is synthetic; no real identity documents, applications, or attendee PII enter the system before F-701 ships. Public RSVP/check-in routes are enabled only for the rehearsal/demo window.
+- **Access gate + synthetic data (AD-12):** the demo deploy sits behind a host-level gate (basic auth or IP allowlist); all data is synthetic; no real identity documents, applications, or attendee PII enter the system before the joint F-701/F-702/F-703 production gate ships. Public RSVP/check-in routes are enabled only for the rehearsal/demo window.
 
 ## Cross-Cutting Notes
 

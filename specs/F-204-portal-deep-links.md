@@ -1,6 +1,7 @@
 # F-204 · Portal Deep Links + Prepared Packages
 
-**Phase:** 1 (core, week 2) · **Lane:** Dev 3 · **Depends on:** F-201 (portal data on findings), F-202 (renders on checklist) · **Blocked-by facts:** remaining portal-path confirmations (OPEN-QUESTIONS §2, Dev 4 owns)
+**Status:** APPROVED (2026-07-25) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
+**Phase:** 1 (core, week 2) · **Lane:** Dev 3 · **Depends on:** F-201 (portal data on findings), F-202 (renders on checklist) · **Open verification facts (do not block implementation):** remaining portal-path confirmations (OPEN-QUESTIONS §2, Dev 4 owns); unresolved paths use Acceptance Criterion 2
 
 ## User Story
 

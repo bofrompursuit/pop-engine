@@ -1,6 +1,6 @@
 # PopEngine — Architecture Target (Phase 2+)
 
-**Status:** PROPOSED (per `BASELINE.md`) — the destination architecture for Phases 2–4, adopted as a planning target 2026-07-22 so stretch work never needs re-planning. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Do not build workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway before their roadmap phase; AGENTS.md forbids building toward this document early.
+**Status:** APPROVED (2026-07-25; see `BASELINE.md`) — the destination architecture for Phases 2–4 and a planning target only. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Approval does not activate workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway. Each requires its scheduled F-id, approved spec, and any named contract or ADR first.
 **Origin:** delivered by an external documentation audit (2026-07-22, `docs/proposals/documentation-audit-2026-07-22.md`); section references to "the supplied rules file"/"v2 scenario suite" predate the corrected baseline and should be read as "the then-current draft."
 **Companion authority:** Product scope lives in `PRD.md`; phase assignment in `ROADMAP.md`; approved feature behavior in `/specs`; regulatory facts in approved primary sources and published rulesets.
 
@@ -26,12 +26,12 @@ PopEngine must:
 | AD-04 | Treat published rulesets as immutable artifacts. | Git is the publication workflow through Phase 3. The rules admin system in Phase 4 publishes the same immutable artifact format; it does not create a second runtime truth. |
 | AD-05 | Separate stable Event identity from immutable Event Revisions. | Editing intake answers creates a new revision. A plan always references one exact revision; staleness is computed server-side. |
 | AD-06 | Treat plans as immutable evaluations and findings as immutable snapshots. | Regeneration creates a new plan, preserves the old plan, and produces a diff. Active workflow data is never silently rewritten. |
-| AD-07 | Use a layered status model. | Coverage, finding type, deadline status, and workflow status are separate fields. The obsolete `FEASIBLE` flat verdict is not stored or exposed. |
-| AD-08 | Represent conditions and calculations with validated typed data. | No `eval`, dynamic code, or natural-language formulas. Rules use a condition AST and either a calculation AST or a named, versioned calculator. |
+| AD-07 | Use a layered status model. | After its consuming migration, coverage, finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
+| AD-08 | Represent conditions and calculations with validated typed data. | No `eval`, dynamic code, natural-language formulas, or jurisdiction-specific executable extensions. Rules use approved condition and calculation AST primitives; a missing primitive requires a separate reviewed schema/engine change. |
 | AD-09 | Use PostgreSQL as the system of record and S3-compatible object storage for file bytes. | File metadata and authorization stay in PostgreSQL; downloads use short-lived signed URLs. |
 | AD-10 | Use a durable PostgreSQL-backed jobs/outbox model. | Phase 1 alerts may share the API deployment, but job claiming and delivery are durable. Phase 2 runs the same code as a separate worker. Redis is not required. |
 | AD-11 | Introduce authentication before any real-user beta. | A no-account capstone demo is permitted only behind an environment access gate with synthetic data. CORS is never treated as authorization. |
-| AD-12 | Make workspace tenancy the authorization boundary. | Once F-701/F-702 ship, every user-owned aggregate carries `workspace_id`; authorization is enforced server-side in one policy layer. |
+| AD-12 | Make workspace tenancy the authorization boundary. | Once F-701/F-702/F-703 ship, every user-owned aggregate carries `workspace_id`; membership and role authorization are enforced server-side in one policy layer. |
 | AD-13 | Put every external service behind an adapter. | Email, SMS, storage, geocoding, AI, ticketing, calendar, and POS providers cannot leak provider-specific shapes into domain code. |
 | AD-14 | Route all AI work through an AI gateway with proposal semantics. | AI may draft or extract. Material extracted values require confirmation; AI cannot publish a rule or authoritatively determine a permit. |
 | AD-15 | Make OpenAPI, JSON Schema, migrations, and executable fixtures first-class contracts. | Prose explains behavior; machines enforce the contract. Shared contract changes require coordinated review before feature branches consume them. |
@@ -69,9 +69,9 @@ The API owns synchronous commands and reads. The worker owns retryable or schedu
 /contracts/openapi.yaml           Authoritative HTTP contract
 /contracts/event-input.v2.schema.json
 /rules/schemas/ruleset.v2.schema.json
-/rules/published/nyc.v2.json      Current immutable published artifact
+/rules/published/<ruleset_version>.json  One immutable artifact per exact version (for example, nyc.v2.5.json)
 /rules/calendars                  Versioned jurisdiction holiday calendars
-/rules/fixtures/v2               Exact executable inputs and expected outputs
+/rules/fixtures/<ruleset_version> Exact executable inputs and expected outputs for that artifact
 /specs                            One approved specification per scheduled F-id
 /docs/adr                         Durable architecture decisions
 /docs                             Product, delivery, governance, security, and operations docs
@@ -85,16 +85,20 @@ Import rules are enforced with lint/build boundaries:
 - `web` consumes the OpenAPI client and shared presentation-safe enums; it never imports database code.
 - No feature redefines an intake, finding, status, or API type locally.
 
+Type authority changes once, through the approved OpenAPI/JSON Schema code-generation handoff. Until that handoff merges, the Phase 0–1.5 rule remains in force: `packages/engine` owns and exports shared intake, finding, verdict, and status types. The handoff PR moves schema-derived definitions into `packages/contracts`, updates engine and consumer imports plus `AGENTS.md` and `CONTRIBUTING.md` in the same change, and leaves no duplicate authoritative definitions. After it merges, `packages/contracts` is authoritative for those generated contract types.
+
 ## 5. Authoritative machine contracts
 
 | Contract | Authority | Change rule |
 |---|---|---|
 | Event input | `contracts/event-input.v2.schema.json` | Breaking changes require a new schema version and migration/compatibility plan. |
 | Rules artifact | `rules/schemas/ruleset.v2.schema.json` | A rules file cannot publish or boot unless schema validation succeeds. |
-| Regulatory behavior | Approved fixtures under `rules/fixtures/v2` | Fixtures cite an approved rule/source. A lower-authority expected result changes when the approved source or rule changes. |
+| Regulatory behavior | Approved fixtures under `rules/fixtures/<ruleset_version>` | Fixtures cite an approved rule/source. A lower-authority expected result changes when the approved source or rule changes. |
 | HTTP | `contracts/openapi.yaml` | API implementation and generated client must pass contract tests. |
 | Database | Ordered migrations | Existing migrations are immutable after merge. New changes use a forward migration and tested rollback/repair path. |
 | Feature behavior | Approved `specs/F-xxx-*.md` | The implementation may not add behavior outside the scheduled spec. |
+
+Through Phase 3, `docs/BASELINE.md` is the authoritative current-version pointer and each deployment's `RULES_FILE` selects that exact version-bearing artifact path. Advancing either pointer never overwrites a published file. Phase 4 replaces deployment selection with the jurisdiction current pointer in PostgreSQL while preserving the same immutable artifacts.
 
 The current baseline is listed in `docs/BASELINE.md` with status and checksum. Agents stop when two approved contracts disagree; they do not choose one silently.
 
@@ -107,7 +111,7 @@ The current baseline is listed in `docs/BASELINE.md` with status and checksum. A
 | Column | Purpose |
 |---|---|
 | `id` | UUID primary key. |
-| `workspace_id` | Nullable only in the gated capstone mode; required once accounts ship. |
+| `workspace_id` | Nullable only in the gated capstone mode; required before any authenticated user-owned aggregate is persisted. F-701 may establish identity first, but production activation waits for F-702 workspaces/memberships and F-703 roles. |
 | `jurisdiction_code` | Initial value `US-NY-NYC`; never inferred from display text. |
 | `title` | Organizer-facing event name. |
 | `timezone` | IANA timezone, initially `America/New_York`. |
@@ -221,12 +225,9 @@ evaluateEvent({
 
 ### 8.3 Derived values and classifiers
 
-Every derived value must use one of two forms:
+Every derived value uses a typed calculation AST defined by the approved rules schema. Free-form formulas are display metadata only and are never executed.
 
-1. A typed calculation AST defined by the rules schema; or
-2. A named calculator such as `nyc.sapo.classification@2`, implemented as a pure function with its own input schema, decision table, and fixtures.
-
-Free-form formulas are display metadata only. They are never executed. NYC-specific classifiers may live in a jurisdiction package; F-207 guarantees no rewrite of the core evaluator, not that every city requires zero jurisdiction-specific configuration.
+F-207 is data-only: a new jurisdiction may not add a named calculator, jurisdiction package, or other executable extension. If the approved AST cannot express a required classification, publication stops until a separate architecture decision and schema/engine change add a generic primitive with its own input contract, decision table, and fixtures.
 
 ### 8.4 Dedupe and branch semantics
 
@@ -270,7 +271,7 @@ A ruleset snapshot date means “published on,” not “all facts verified on.�
 
 ## 9. Persistence model
 
-### 9.1 Phase 1 tables
+### 9.1 Phase 2+ target tables
 
 | Table | Purpose and critical invariants |
 |---|---|
@@ -288,7 +289,7 @@ A ruleset snapshot date means “published on,” not “all facts verified on.�
 | `message_jobs` / `message_attempts` | Scheduled delivery, idempotency, retries, provider result, cancellation, and failure. |
 | `activity_log` | Append-only significant actions; initially system actor, later user/workspace actor. |
 
-The old `permit_rules(rule_id PK)` and wide mutable `events` design are not compatible with v2 or rollback and must not be used.
+The merged Phase 0–1.5 `permit_rules` and `events` schema remains authoritative for current work. Scheduled Phase 2 migrations evolve it toward this model without editing merged migrations or requiring current lanes to build ahead.
 
 ### 9.2 Plan regeneration
 
@@ -318,6 +319,8 @@ The old `permit_rules(rule_id PK)` and wide mutable `events` design are not comp
 
 ## 10. API design
 
+The resources below are the Phase 2+ target. Current Phase 0–1.5 `/api` routes remain authoritative until an approved consuming spec and OpenAPI migration introduce `/api/v1`; approval of this document does not authorize a wholesale route rewrite.
+
 ### 10.1 Conventions
 
 - All JSON APIs are versioned under `/api/v1`.
@@ -327,7 +330,7 @@ The old `permit_rules(rule_id PK)` and wide mutable `events` design are not comp
 - Every authenticated query derives workspace scope from the session, never a trusted client-supplied workspace ID alone.
 - Errors use stable codes, field paths, user-safe messages, and a correlation ID.
 
-### 10.2 Phase 1 resources
+### 10.2 Phase 2+ target resources
 
 | Method and path | Purpose |
 |---|---|
@@ -386,7 +389,7 @@ An API crash after a provider accepts a message must not cause an unbounded dupl
 
 ### 12.1 Capstone mode
 
-If F-701 is not in Phase 1:
+Until the joint F-701/F-702/F-703 production gate ships:
 
 - the environment is access-gated at the host or app layer;
 - only synthetic events, recipients, attendees, and documents are used;
@@ -396,7 +399,7 @@ If F-701 is not in Phase 1:
 
 ### 12.2 Production mode
 
-- Authentication precedes external beta.
+- Authentication, workspace tenancy, and role enforcement precede persistence of user-owned product data and external beta.
 - Workspace membership and role are checked for every object read/write and signed URL.
 - Platform roles such as rules administrator are separate from workspace roles.
 - Sensitive actions require recent authentication and are logged.
@@ -449,7 +452,7 @@ Rules:
 3. Run affected and full fixture suites.
 4. Obtain verification-owner approval for sources/facets and engine-owner approval for semantics.
 5. Publish an immutable artifact with version, checksum, changelog, and approval metadata.
-6. Deploy or select the new current version; never mutate the prior artifact.
+6. Update `docs/BASELINE.md` and the deployment's `RULES_FILE` to the new exact version-bearing path; never mutate the prior artifact.
 
 ### Phase 4
 
@@ -465,40 +468,30 @@ At no point may both “git file” and “database rows” independently define
 
 ## 15. Roadmap evolution and prerequisites
 
-### Phase 0–1: regulatory core
+### Current Phase 0–1.5 baseline
 
-Required before lanes split:
+`ARCHITECTURE.md`, the published ruleset, and merged migrations remain authoritative for shipped and active Phase 0–1.5 work. Approval of this target is not a retroactive requirement to add Event Revisions, OpenAPI, generated types, plan diffs, workers, or other future contracts. Each target capability enters the baseline only through its scheduled feature spec and reviewed migration, contract, or ADR.
 
-- ratified v2 baseline and status model;
-- rules and Event Input JSON Schemas;
-- approved Tier 1 executable fixtures;
-- Event/Event Revision migration;
-- OpenAPI skeleton and generated shared types;
-- exact package/deployment decisions recorded as ADRs;
-- synthetic-data access boundary.
-
-Phase 1 builds the pure evaluator, two-pass structured intake, plan/finding snapshots, coverage states, plan diff/regeneration, checklist, controlled document uploads, portal/source facets, and durable deadline-message jobs.
-
-### Phase 1.5: public and check-in stretch
+### Phase 1.5 capabilities carried forward
 
 - F-401 walk-in check-in can ship without RSVP; `rsvp_id` is optional.
 - F-402 depends on F-401 and uses a separate capacity value, not expected headcount.
 - F-301 public page and F-302 RSVP form a separate chain; RSVP can enrich check-in later.
-- Public projections, anti-abuse controls, atomic capacity handling, and explicit demo retention are required even for stretch.
+- Existing public projections and atomic capacity handling are retained; scheduled hardening adds the target anti-abuse controls before real-user use.
 
 ### Phase 2: execution hardening
 
-F-701 authentication comes first for real-user use. Durable worker deployment, application/fee/document ledgers, calendar export, campaigns, consent/contact data, attendee history, and runbooks follow. Workspace-dependent “team” portions remain disabled until memberships exist.
+F-701 establishes identity and sessions first, immediately followed by F-702 workspace and membership tenancy, then F-703 roles and permissions. They form one production rollout gate: no user-owned event, contact, document, or workflow data is persisted for authenticated users, and no external beta begins, until all three ship. Durable worker deployment, application/fee/document ledgers, calendar export, campaigns, consent/contact data, attendee history, and runbooks follow.
 
 F-304 introduces the AI gateway before the later F-6xx family; it does not bypass the AI policy.
 
 ### Phase 3: collaboration, operations, and intelligence
 
-Add workspaces and memberships before roles, activity history, assignments, and cross-event analytics. Offline check-in uses append-only operations and conflict-safe sync. Occupancy appears only after both entry and exit events exist. Budget actuals and post-mortems feed immutable metric snapshots; templates copy inputs and always re-evaluate findings.
+With workspaces, memberships, and roles already in place, add activity history, assignments, and cross-event analytics. Offline check-in uses append-only operations and conflict-safe sync. Occupancy appears only after both entry and exit events exist. Budget actuals and post-mortems feed immutable metric snapshots; templates copy inputs and always re-evaluate findings.
 
 ### Phase 4: jurisdiction, AI, rules admin, integrations
 
-Location/authority resolution becomes automatic with confidence plus manual correction. A new jurisdiction supplies an intake schema, classifications/reference data, rules artifact, calendar, sources, and fixtures; the core evaluator remains unchanged unless a new generic primitive is deliberately added. Rules admin publishes the same artifact contract. External webhooks and AI ingestion use the worker and proposal model.
+Location/authority resolution becomes automatic with confidence plus manual correction. F-207 supplies a new jurisdiction's intake schema, classifications/reference data, rules artifact, calendar, sources, and fixtures as data; it adds no jurisdiction-specific executable code. If those contracts cannot express a required classification, F-207 stops until a separately approved generic primitive is added. Rules admin publishes the same artifact contract. External webhooks and AI ingestion use the worker and proposal model.
 
 ## 16. Testing and quality gates
 
@@ -507,8 +500,8 @@ Location/authority resolution becomes automatic with confidence plus manual corr
 - JSON Schema validation.
 - Unique IDs and explicit migration lineage.
 - Every trigger field/operator declared.
-- Every formula a supported AST or named calculator.
-- Every rule has source/review/publication metadata.
+- Every formula uses a supported AST; unsupported calculations block publication pending a separately approved generic primitive.
+- Every rule has review/publication metadata and source metadata unless an assertion-free `COVERAGE_GAP` deliberately records that no source is established.
 - Every numerical boundary has below/equal/above fixtures.
 - Every material rule has positive, negative, and unknown fixtures.
 - No finding claims a verified portal/document/deadline facet without approved evidence.
@@ -542,19 +535,17 @@ Coverage percentage does not replace acceptance behavior. A feature is not done 
 - Backups and restore rehearsal for PostgreSQL; lifecycle/versioning policy for object storage.
 - Deployment rollback never mutates a ruleset or historical plan.
 
-## 18. Blocking ADRs before scaffolding
+## 18. ADR gates for future scaffolding
 
-The team must record one answer for each; agents may not choose independently:
+The current baseline already records the repository toolchain, migration toolkit, demo providers and access gate, and ruleset publication conventions. Reference those decisions rather than duplicating them.
 
-1. Exact Node, pnpm, Next.js, Express, and TypeScript versions and Next.js router mode.
-2. Database query/migration toolkit.
-3. Demo hosting, PostgreSQL, object-storage, email, and SMS providers.
-4. Authentication provider/strategy and the capstone access gate.
-5. Rules/Event schema validator and code-generation path.
-6. Date library and versioned New York holiday-calendar source.
-7. PostgreSQL job/outbox implementation.
-8. Upload limits and scanning approach.
-9. E2E framework and CI environment.
-10. Ruleset version syntax and publication approval roles.
+Before a scheduled feature consumes the remaining target architecture, the team must approve the relevant choice; agents may not choose independently:
 
-Until these ADRs and the v2 baseline are approved, this document is a proposed target, not permission for agents to fill the gaps with their preferred stack.
+1. Authentication provider/strategy for F-701.
+2. OpenAPI and JSON Schema validation/code-generation path, including the atomic shared-type authority handoff defined in §4.
+3. Date library and versioned New York holiday-calendar source.
+4. PostgreSQL job/outbox implementation.
+5. Upload limits and scanning approach.
+6. E2E framework and CI environment.
+
+Approval of this document selects the direction, not these unresolved implementations.

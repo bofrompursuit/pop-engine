@@ -1,9 +1,11 @@
 # PopEngine Design System
 
-**STATUS:** APPROVED
-**AUTHORITATIVE FOR:** UI / UX Specs & Design Language
+**STATUS:** APPROVED (2026-07-25; see `docs/BASELINE.md`)
+**AUTHORITATIVE FOR:** visual foundations and intake-card design language. Approved feature specs remain authoritative for feature behavior, regulatory/safety copy, and required UI states.
 
 > Directly adapted from the architectural design language of Aura’s **Altitude MTL** template (monochrome palette, spatial coordinate tagging, clean typography hierarchy, and structured modular cards) for **PopEngine**'s NYC event intake and permitting engine.
+
+Utility-class names below are reference notation for the intended values. The current app uses plain CSS; this document does not require Tailwind or additional font packages.
 
 ---
 
@@ -66,3 +68,4 @@ PopEngine translates complex, multi-agency municipal permitting rules (DOHMH, Pa
   </div>
   {/* Form fields go here */}
 </div>
+```
