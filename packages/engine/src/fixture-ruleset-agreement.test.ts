@@ -119,6 +119,56 @@ const DOCUMENTED_FIELD_ALIASES: Readonly<Record<string, string>> = {
   open_to_public: "event_open_to_public",
 };
 
+/**
+ * The key names Scenario A's blocking finding in prose rather than by rule id, so the phrase is
+ * declared onto an id here. One entry, because A is the only INFEASIBLE scenario and so the only one
+ * that documents a blocker; a phrase this table does not carry fails the comparison rather than
+ * being matched loosely.
+ */
+const BLOCKER_BY_DOCUMENTED_NAME: Readonly<Record<string, string>> = {
+  "SAPO Street Event (Large)": "SAPO-STREET-LARGE-001",
+};
+
+/**
+ * How many lines state that two rule ids share one finding, per scenario. Pinned so the sentence
+ * cannot be deleted or reworded into silence: E's DOB line is the only one, and it is the grouping
+ * #89 item 6 was about.
+ */
+const DOCUMENTED_GROUPINGS_PER_SCENARIO: Readonly<Record<string, number>> = {
+  A: 0,
+  B: 0,
+  C: 0,
+  D: 0,
+  E: 1,
+  F: 0,
+};
+
+/** The scenarios whose verdict line names a blocking finding, pinned so one going quiet fails. */
+const SCENARIOS_DOCUMENTING_A_BLOCKER: readonly string[] = ["A"];
+
+/**
+ * Disposition-shaped English the key uses that maps onto `Disposition` without interpretation.
+ *
+ * Only one entry, and the omissions are the point. "MAY apply" cannot be mapped: Scenario B uses it
+ * for a finding the engine emits as `required` and Scenario F uses the same words for one it emits
+ * as `may_be_required`. "CONDITIONAL at the boundary" is a verdict token, not a disposition. Reading
+ * either as a disposition would be a guess, so neither is read.
+ */
+const DISPOSITION_BY_DOCUMENTED_PHRASE: readonly {
+  readonly phrase: RegExp;
+  readonly value: Finding["disposition"];
+}[] = [{ phrase: /\bno new permit\b/, value: "no_new_requirement" }];
+
+/** How many lines state a mappable disposition, per scenario, so one that stops stating it fails. */
+const DOCUMENTED_DISPOSITIONS_PER_SCENARIO: Readonly<Record<string, number>> = {
+  A: 0,
+  B: 0,
+  C: 0,
+  D: 0,
+  E: 0,
+  F: 1,
+};
+
 /** Read the documented text as the type the fixture holds, so a comparison is like for like. */
 function asFixtureType(documented: string, fixtureValue: unknown): unknown {
   if (typeof fixtureValue === "boolean") return documented === "yes";
@@ -278,6 +328,12 @@ const VERDICT_BY_DOCUMENTED_NAME: Readonly<Record<string, PermitPlan["verdict"]>
  */
 type DocumentedFinding = {
   readonly ruleId: string;
+  /**
+   * Every rule id the line names, in order. `ruleId` stays the first one because every check that
+   * predates this field keys on it; this is additive so the grouping comparison can ask which ids a
+   * line puts together without changing what anything else reads.
+   */
+  readonly ruleIds: readonly string[];
   readonly dates: readonly string[];
   readonly status: Finding["deadlineStatus"] | null;
   readonly line: string;
@@ -296,6 +352,10 @@ function documentedFindings(scenario: string): DocumentedFinding[] {
     const statuses = DEADLINE_STATUSES.filter((status) => line.includes(status.toUpperCase()));
     documented.push({
       ruleId,
+      // Distinct, because grouping is a question about WHICH ids a line names, and a line may name
+      // one twice: E's DOB line mentions DOB-TALL-STRUCTURE-001 in its prose and again in the
+      // sentence that states the two share a finding.
+      ruleIds: [...new Set([...line.matchAll(new RegExp(RULE_ID.source, "g"))].map((m) => m[0]))],
       dates: [...line.matchAll(/\b(20\d\d-\d\d-\d\d)\b/g)].map((match) => match[1]!),
       // Two statuses on one line would make "the status this line states" ambiguous, so it states
       // none rather than the reader picking.
@@ -1031,6 +1091,163 @@ describe("the fixture suite and the published ruleset agree", () => {
       "small:on_track",
     ]);
   });
+
+  it.each(scenarios)(
+    "Scenario %s's documented grouping is the grouping the engine emits",
+    (scenario) => {
+      // F-201 AC 7 and the residue of #89 item 6. The status and date checks flatten a finding to its
+      // rule ids and match by `includes`, so nothing asserts which ids share ONE finding. If E's two
+      // DOB ids split while some same-status pair merged, the id set is unchanged, the finding count
+      // is unchanged, and every comparison above passes while the grouping the key specifies is gone.
+      //
+      // Read from the key's own statement rather than from line layout, because layout does not mean
+      // grouping here: Scenario F names SLA-ONEDAY-001 and SLA-CATERING-001 on one line and the engine
+      // emits them as two findings, correctly. E's line says "One finding carrying both rule ids", so
+      // that sentence is the claim, and the count of such statements is pinned below so deleting the
+      // sentence fails rather than quietly removing the only grouping this compares.
+      const merged = documentedFindings(scenario).filter((documented) =>
+        /One finding carrying both rule ids/.test(documented.line),
+      );
+      const disagreements = merged
+        .filter((documented) => {
+          const finding = planFor(scenario).findings.find((candidate) =>
+            candidate.ruleIds.includes(documented.ruleIds[0]!),
+          );
+          const emitted = [...(finding?.ruleIds ?? [])].sort();
+          return JSON.stringify(emitted) !== JSON.stringify([...documented.ruleIds].sort());
+        })
+        .map((documented) => {
+          const finding = planFor(scenario).findings.find((candidate) =>
+            candidate.ruleIds.includes(documented.ruleIds[0]!),
+          );
+          return `${documented.ruleIds.join("+")}: key groups them as one finding, engine emits ${
+            finding ? finding.ruleIds.join("+") : "no finding"
+          }`;
+        });
+      expect(disagreements, `Scenario ${scenario} documented grouping`).toEqual([]);
+      // Pinned per scenario for the round-2 reason: without this, deleting the sentence empties the
+      // reader and the comparison passes having compared nothing, which is the defect this test
+      // exists to close rather than to reproduce.
+      expect(merged.length, `Scenario ${scenario} grouping statements read out of the key`).toBe(
+        DOCUMENTED_GROUPINGS_PER_SCENARIO[scenario] ?? 0,
+      );
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s's documented slack days are the ones the engine computes",
+    (scenario) => {
+      // F-102 AC 5. The date reader is ISO-only, so "(10 days)" was invisible to every check. Two
+      // different statements against two different engine fields, deliberately not conflated:
+      // a parenthesised count on a FINDING line is that finding's `slackDays`, and a count on the
+      // verdict line is the PLAN's `minSlackDays`. Changing either to nine moved no date, status,
+      // verdict or count before this.
+      //
+      // Narrow on purpose. The key states lead times in the same units all over these lines ("45-day
+      // deadline", "≥5 days", "15 business days", "processing 21–30 days"), and none of those is
+      // slack. Only a parenthetical that contains nothing but the count is read, which is the shape
+      // the key uses when it means slack.
+      const plan = planFor(scenario);
+      const disagreements: string[] = [];
+      for (const documented of documentedFindings(scenario)) {
+        const stated = /\((~?)(\d+) days?(?: slack)?\)/.exec(documented.line);
+        if (stated === null) continue;
+        const finding = plan.findings.find((candidate) =>
+          candidate.ruleIds.includes(documented.ruleId),
+        );
+        if (finding?.slackDays !== Number(stated[2]!)) {
+          disagreements.push(
+            `${documented.ruleId}: key states ${stated[2]} days of slack, engine computes ${finding?.slackDays ?? "no finding"}`,
+          );
+        }
+      }
+      const verdictLine = sectionFor(scenario)
+        .split("\n")
+        .find((line) => line.startsWith("**EXPECTED VERDICT"));
+      const statedMin = /(?:within|with)\s*~?(\d+) days/.exec(verdictLine ?? "");
+      if (statedMin !== null && plan.verdictDetail.minSlackDays !== Number(statedMin[1]!)) {
+        disagreements.push(
+          `verdict line: key states ${statedMin[1]} days, engine computes minSlackDays ${plan.verdictDetail.minSlackDays}`,
+        );
+      }
+      expect(disagreements, `Scenario ${scenario} documented slack`).toEqual([]);
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s's documented blocking finding is the one the engine blocks on",
+    (scenario) => {
+      // `blockingFinding` appeared nowhere in this file, so the rule the key names as the blocker was
+      // compared by nothing: only the top-level INFEASIBLE token was, and swapping the named blocker
+      // for any other rule the scenario lists passed.
+      //
+      // The key names it in prose ("blocking finding: SAPO Street Event (Large)") rather than by rule
+      // id, so the phrase is mapped onto an id by a declared table, the way VERDICT_BY_DOCUMENTED_NAME
+      // and DOCUMENTED_FIELD_ALIASES are. A phrase the table does not carry fails rather than being
+      // guessed at, which is what makes renaming the blocker to another rule surface.
+      const verdictLine =
+        sectionFor(scenario)
+          .split("\n")
+          .find((line) => line.startsWith("**EXPECTED VERDICT")) ?? "";
+      const stated = /blocking finding:\s*([^;]+?)\s*;/.exec(verdictLine)?.[1]?.trim();
+      if (stated === undefined) {
+        expect(
+          SCENARIOS_DOCUMENTING_A_BLOCKER.includes(scenario),
+          `Scenario ${scenario} states no blocking finding`,
+        ).toBe(false);
+        return;
+      }
+      expect(
+        SCENARIOS_DOCUMENTING_A_BLOCKER.includes(scenario),
+        `Scenario ${scenario} states a blocking finding nothing pins`,
+      ).toBe(true);
+      const ruleId = BLOCKER_BY_DOCUMENTED_NAME[stated];
+      expect(
+        ruleId,
+        `Scenario ${scenario} names blocking finding "${stated}", which no mapping carries`,
+      ).toBeDefined();
+      expect(
+        [...(planFor(scenario).verdictDetail.blockingFinding?.ruleIds ?? [])],
+        `Scenario ${scenario} blocking finding`,
+      ).toEqual([ruleId]);
+    },
+  );
+
+  it.each(scenarios)(
+    "Scenario %s's documented no-new-requirement results are the engine's disposition",
+    (scenario) => {
+      // The key does not state a disposition for most findings, and where it uses disposition-shaped
+      // English the phrase does not map onto the enum one-to-one: Scenario B writes "MAY apply" for a
+      // finding the engine emits as `required`, while Scenario F writes "may apply" for one it emits
+      // as `may_be_required`. One phrase, two engine values, so a table over that phrase would encode
+      // a guess and would manufacture a disagreement on B. Reported rather than mapped.
+      //
+      // What IS unambiguous is "no new permit", which names the `no_new_requirement` disposition in
+      // the key's own words. That is mapped and compared, and the count is pinned per scenario so a
+      // line that stops stating it fails.
+      const disagreements: string[] = [];
+      let stated = 0;
+      for (const documented of documentedFindings(scenario)) {
+        const disposition = DISPOSITION_BY_DOCUMENTED_PHRASE.find((entry) =>
+          entry.phrase.test(documented.line),
+        );
+        if (disposition === undefined) continue;
+        stated += 1;
+        const finding = planFor(scenario).findings.find((candidate) =>
+          candidate.ruleIds.includes(documented.ruleId),
+        );
+        if (finding?.disposition !== disposition.value) {
+          disagreements.push(
+            `${documented.ruleId}: key states ${disposition.value}, engine emits ${finding?.disposition ?? "no finding"}`,
+          );
+        }
+      }
+      expect(disagreements, `Scenario ${scenario} documented dispositions`).toEqual([]);
+      expect(stated, `Scenario ${scenario} dispositions read out of the key`).toBe(
+        DOCUMENTED_DISPOSITIONS_PER_SCENARIO[scenario] ?? 0,
+      );
+    },
+  );
 
   it("reads an output out of the key for every scenario, so a reformat cannot empty these", () => {
     // The scrape guard the checks above depend on. A key whose formatting drifts would make every
