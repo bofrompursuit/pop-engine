@@ -649,6 +649,60 @@ describe("business-day arithmetic against the pinned calendar", () => {
   });
 });
 
+describe("calendar arithmetic refuses a result outside the representable range", () => {
+  const ISO_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+
+  // The boundary is not a constant. `addCalendarDays` adds to its argument's epoch day, so the
+  // backward range is `epochDay(start) − epochDay(0000-01-01)` and depends on where you start.
+  it("throws one day past the backward boundary, from several starting dates", () => {
+    for (const [start, bound] of [
+      ["1970-01-01", 719_528],
+      ["2026-08-26", 740_219],
+      ["0001-01-01", 366],
+    ] as const) {
+      expect(addCalendarDays(start, -bound), `${start} at its bound`).toBe("0000-01-01");
+      expect(() => addCalendarDays(start, -(bound + 1)), `${start} one past`).toThrow(
+        EvaluationError,
+      );
+    }
+  });
+
+  // The guard sits in the shared formatting step, so it covers addition too. Overflowing forward
+  // truncates to `"+010000-01"` rather than `"-000001-12"`, and is equally not a date.
+  it("throws one day past the forward boundary as well", () => {
+    expect(addCalendarDays("1970-01-01", 2_932_896)).toBe("9999-12-31");
+    expect(() => addCalendarDays("1970-01-01", 2_932_897)).toThrow(EvaluationError);
+    expect(() => addCalendarDays("9999-12-31", 1)).toThrow(/produced "\+010000-01"/);
+  });
+
+  it("names the offending value and what happened", () => {
+    const past = (): string => addCalendarDays("2026-08-26", -740_220);
+    expect(past).toThrow(
+      /epoch day -719529 is outside the representable calendar range \(years 0000-9999\)/,
+    );
+    expect(past).toThrow(/produced "-000001-12", which is not a calendar date/);
+  });
+
+  // Two different boundaries. Past ±8.64e15 ms `toISOString` throws `RangeError` on its own, before
+  // the guard can run; the much wider band below that is what the guard covers.
+  it("is distinguishable from the outer RangeError", () => {
+    expect(() => addCalendarDays("1970-01-01", -100_000_000)).toThrow(EvaluationError);
+    expect(() => addCalendarDays("1970-01-01", -100_000_001)).toThrow(RangeError);
+    expect(() => addCalendarDays("1970-01-01", -100_000_001)).not.toThrow(EvaluationError);
+  });
+
+  // Why this is safe to land: the longest window nyc.v2.7 publishes is 60 calendar days (SAPO
+  // multi-block, rules[4]/[5]/[8]) and the longest business-day window is 15. Both are five orders
+  // of magnitude short of the bound, so no published rule can reach the guard.
+  it("is unreachable from anything the ruleset publishes", () => {
+    for (const window of [5, 10, 14, 21, 30, 45, 60]) {
+      expect(addCalendarDays("2026-08-26", -window), `${window}-day window`).toMatch(ISO_SHAPE);
+    }
+    expect(subtractBusinessDays("2026-08-26", 15, calendar)).toMatch(ISO_SHAPE);
+    expect(countBusinessDays("2026-08-26", "2026-10-25", calendar)).toBeGreaterThan(0);
+  });
+});
+
 describe("failures are explicit and never a 'no requirement' result (AC 5)", () => {
   const validCalendar = calendar;
 

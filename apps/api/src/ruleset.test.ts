@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { addCalendarDays, differenceInCalendarDays } from "@pop-engine/engine";
+import { addCalendarDays, differenceInCalendarDays, EvaluationError } from "@pop-engine/engine";
 import {
   loadRuleset,
   MAX_PRODUCT_DAYS_BEFORE,
@@ -493,9 +493,10 @@ describe("ruleset validation", () => {
     // the real `addCalendarDays`.
     //
     // What the measurement found is not what #122 assumed. A RangeError is only the OUTER boundary,
-    // at ±100,000,000 days from the Unix epoch. Well inside it, `addCalendarDays` stops returning
-    // dates and starts returning truncated extended years — with no error — because
-    // `toISOString().slice(0, 10)` cuts `-000001-12-31T…` down to `"-000001-12"`. So the usable
+    // at ±100,000,000 days from the Unix epoch. Well inside it, `addCalendarDays` leaves the range
+    // `toISOString` can format as a plain date, because `toISOString().slice(0, 10)` cuts
+    // `-000001-12-31T…` down to `"-000001-12"`. That used to be RETURNED, with no error; it now
+    // throws, because `fromEpochDay` tests its own output against ISO_DATE (#126). So the usable
     // boundary is where the RESULT leaves years 0000–9999, and it is date-dependent:
     // `epochDay(deadline) − epochDay(0000-01-01)`. MAX_REPRESENTABLE_DAYS_BEFORE is that value at the
     // Unix epoch, where it is smallest, and therefore safe for every later deadline.
@@ -509,16 +510,20 @@ describe("ruleset validation", () => {
     );
     expect(ISO_DATE.test(atBound)).toBe(true);
 
-    // ...and one day further is the silent truncation, not an exception. This is the assertion that
-    // fails if fromEpochDay is ever given the guard it is missing, which is the point: this file
-    // would then be describing behaviour that no longer exists.
-    const pastBound = addCalendarDays(EPOCH, -(MAX_REPRESENTABLE_DAYS_BEFORE + 1));
-    expect(ISO_DATE.test(pastBound), `expected a malformed result, got ${pastBound}`).toBe(false);
-    expect(pastBound).toBe("-000001-12");
+    // ...and one day further throws instead of returning `"-000001-12"` silently. The guard lives in
+    // `fromEpochDay`, so this validator's bound and the arithmetic it protects now agree: the last
+    // offset the validator admits is the last one that yields a date.
+    const pastBound = (): string => addCalendarDays(EPOCH, -(MAX_REPRESENTABLE_DAYS_BEFORE + 1));
+    expect(pastBound).toThrow(EvaluationError);
+    expect(pastBound).toThrow(/epoch day -719529 is outside the representable calendar range/);
 
-    // The outer RangeError boundary, so the two are not confused for each other.
-    expect(() => addCalendarDays(EPOCH, -100_000_000)).not.toThrow();
-    expect(() => addCalendarDays(EPOCH, -100_000_001)).toThrow();
+    // The outer RangeError boundary is a DIFFERENT boundary and still distinguishable by type: the
+    // guard reports leaving years 0000–9999, while past ±8.64e15 ms `toISOString` throws RangeError
+    // before the guard can run. -100,000,000 no longer returns `"-271821-04"`; it is inside the band
+    // the guard now covers, which is why this assertion moved from `.not.toThrow()`.
+    expect(() => addCalendarDays(EPOCH, -100_000_000)).toThrow(EvaluationError);
+    expect(() => addCalendarDays(EPOCH, -100_000_001)).toThrow(RangeError);
+    expect(() => addCalendarDays(EPOCH, -100_000_001)).not.toThrow(EvaluationError);
 
     // Every offset the validator admits stays well inside the usable range, from a real deadline.
     for (const deadline of ["1970-01-01", "2026-08-26", "2026-12-04"]) {
