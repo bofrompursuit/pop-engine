@@ -120,16 +120,6 @@ const DOCUMENTED_FIELD_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The key names Scenario A's blocking finding in prose rather than by rule id, so the phrase is
- * declared onto an id here. One entry, because A is the only INFEASIBLE scenario and so the only one
- * that documents a blocker; a phrase this table does not carry fails the comparison rather than
- * being matched loosely.
- */
-const BLOCKER_BY_DOCUMENTED_NAME: Readonly<Record<string, string>> = {
-  "SAPO Street Event (Large)": "SAPO-STREET-LARGE-001",
-};
-
-/**
  * The slack statements each scenario makes, split by which engine field they are about.
  *
  * `findings` counts the parenthesised counts on finding lines, each of which is that finding's
@@ -1212,10 +1202,17 @@ describe("the fixture suite and the published ruleset agree", () => {
       // compared by nothing: only the top-level INFEASIBLE token was, and swapping the named blocker
       // for any other rule the scenario lists passed.
       //
-      // The key names it in prose ("blocking finding: SAPO Street Event (Large)") rather than by rule
-      // id, so the phrase is mapped onto an id by a declared table, the way VERDICT_BY_DOCUMENTED_NAME
-      // and DOCUMENTED_FIELD_ALIASES are. A phrase the table does not carry fails rather than being
-      // guessed at, which is what makes renaming the blocker to another rule surface.
+      // The name is compared directly against `verdictDetail.blockingFinding.name`, which the engine
+      // copies from the rule's published `permit_name`, so the name identifies the rule and no
+      // mapping is needed. An earlier revision declared an alias from "SAPO Street Event (Large)"
+      // onto the rule id and asserted `ruleIds` only, which let a name disagreement survive: the key
+      // was calling the same finding "Street Event Permit (Large)" on its own finding line and
+      // "SAPO Street Event (Large)" on its verdict line, and the alias declared the two equivalent
+      // instead of surfacing it. The key's verdict line is corrected in the same commit, because the
+      // published rule outranks the fixture (DOCUMENTATION-GOVERNANCE §27-35, and the key says so
+      // itself at its own line 5). Checked across all six scenarios before correcting: A is the only
+      // verdict line that names a blocking finding at all, so there was no naming convention to
+      // defend.
       const verdictLine =
         sectionFor(scenario)
           .split("\n")
@@ -1232,15 +1229,10 @@ describe("the fixture suite and the published ruleset agree", () => {
         SCENARIOS_DOCUMENTING_A_BLOCKER.includes(scenario),
         `Scenario ${scenario} states a blocking finding nothing pins`,
       ).toBe(true);
-      const ruleId = BLOCKER_BY_DOCUMENTED_NAME[stated];
       expect(
-        ruleId,
-        `Scenario ${scenario} names blocking finding "${stated}", which no mapping carries`,
-      ).toBeDefined();
-      expect(
-        [...(planFor(scenario).verdictDetail.blockingFinding?.ruleIds ?? [])],
-        `Scenario ${scenario} blocking finding`,
-      ).toEqual([ruleId]);
+        planFor(scenario).verdictDetail.blockingFinding?.name ?? null,
+        `Scenario ${scenario} blocking finding name`,
+      ).toBe(stated);
     },
   );
 
