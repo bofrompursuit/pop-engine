@@ -168,14 +168,23 @@ const DISPOSITION_BY_DOCUMENTED_PHRASE: readonly {
   readonly value: Finding["disposition"];
 }[] = [{ phrase: /\bno new permit\b/, value: "no_new_requirement" }];
 
-/** How many lines state a mappable disposition, per scenario, so one that stops stating it fails. */
-const DOCUMENTED_DISPOSITIONS_PER_SCENARIO: Readonly<Record<string, number>> = {
-  A: 0,
-  B: 0,
-  C: 0,
-  D: 0,
-  E: 0,
-  F: 1,
+/**
+ * The mappable disposition statements each scenario makes, and how many sit on a branch sub-line.
+ *
+ * Two numbers rather than one: a sub-line that stops parsing as a branch still matches the phrase,
+ * so `statements` would hold while the comparison quietly fell back to the scenario's own plan.
+ * F's single statement is on the `yes` branch, so its two numbers are equal, and either dropping
+ * to zero fails.
+ */
+const DOCUMENTED_DISPOSITIONS_PER_SCENARIO: Readonly<
+  Record<string, { readonly statements: number; readonly onBranch: number }>
+> = {
+  A: { statements: 0, onBranch: 0 },
+  B: { statements: 0, onBranch: 0 },
+  C: { statements: 0, onBranch: 0 },
+  D: { statements: 0, onBranch: 0 },
+  E: { statements: 0, onBranch: 0 },
+  F: { statements: 1, onBranch: 1 },
 };
 
 /** Read the documented text as the type the fixture holds, so a comparison is like for like. */
@@ -345,6 +354,14 @@ type DocumentedFinding = {
   readonly ruleIds: readonly string[];
   readonly dates: readonly string[];
   readonly status: Finding["deadlineStatus"] | null;
+  /**
+   * The branch this line documents, when it is a sub-line under a "branch on <field>" parent.
+   *
+   * Scenario F's finding 2 is the case: the parent names the field and each sub-line names the
+   * value, so a `yes →` line documents the output for that field being yes, not the output of the
+   * scenario's own intake, which leaves the field unknown.
+   */
+  readonly branch: { readonly field: string; readonly value: string } | null;
   readonly line: string;
 };
 
@@ -355,7 +372,14 @@ function documentedFindings(scenario: string): DocumentedFinding[] {
   if (block === undefined) throw new Error(`Scenario ${scenario} has no expected-findings block`);
 
   const documented: DocumentedFinding[] = [];
+  // The field a "branch on <field>" parent line puts its sub-lines under, cleared by the next
+  // numbered item so a sub-line cannot inherit a branch from an unrelated finding above it.
+  let branchField: string | null = null;
   for (const line of block.split("\n")) {
+    const parent = /branch on ([a-z_]+)/.exec(line);
+    if (parent !== null) branchField = parent[1]!;
+    else if (/^\d+\./.test(line.trim())) branchField = null;
+    const branchValue = /^\s*-\s*(yes|no)\s*→/.exec(line)?.[1];
     const ruleId = new RegExp(RULE_ID.source).exec(line)?.[0];
     if (ruleId === undefined) continue;
     const statuses = DEADLINE_STATUSES.filter((status) => line.includes(status.toUpperCase()));
@@ -369,6 +393,10 @@ function documentedFindings(scenario: string): DocumentedFinding[] {
       // Two statuses on one line would make "the status this line states" ambiguous, so it states
       // none rather than the reader picking.
       status: statuses.length === 1 ? statuses[0]! : null,
+      branch:
+        branchField !== null && branchValue !== undefined
+          ? { field: branchField, value: branchValue }
+          : null,
       line: line.trim(),
     });
   }
@@ -1246,29 +1274,51 @@ describe("the fixture suite and the published ruleset agree", () => {
       // a guess and would manufacture a disagreement on B. Reported rather than mapped.
       //
       // What IS unambiguous is "no new permit", which names the `no_new_requirement` disposition in
-      // the key's own words. That is mapped and compared, and the count is pinned per scenario so a
-      // line that stops stating it fails.
+      // the key's own words. That is mapped and compared.
+      //
+      // Compared against the plan the LINE is about, which is not always the scenario's own plan. F
+      // states this one on the `yes →` sub-line of a "branch on venue_license_covers_event_area"
+      // parent, while F's fixture leaves that field `unknown`. Reading `planFor("F")` compared the
+      // conditional placeholder the unknown plan emits instead of the documented branch output, so
+      // branch evaluation could stop emitting SLA-VENUE-LICENSE-001 for `yes` and this check, and
+      // the base-plan rule-id checks, would all stay green. The branch is re-evaluated with that one
+      // field set, through the same `rescopePlan` the rescope comparison uses rather than a second
+      // mechanism.
       const disagreements: string[] = [];
       let stated = 0;
+      let onBranch = 0;
       for (const documented of documentedFindings(scenario)) {
         const disposition = DISPOSITION_BY_DOCUMENTED_PHRASE.find((entry) =>
           entry.phrase.test(documented.line),
         );
         if (disposition === undefined) continue;
         stated += 1;
-        const finding = planFor(scenario).findings.find((candidate) =>
+        if (documented.branch !== null) onBranch += 1;
+        const plan =
+          documented.branch === null ? planFor(scenario) : rescopePlan(scenario, documented.branch);
+        const finding = plan.findings.find((candidate) =>
           candidate.ruleIds.includes(documented.ruleId),
         );
         if (finding?.disposition !== disposition.value) {
           disagreements.push(
-            `${documented.ruleId}: key states ${disposition.value}, engine emits ${finding?.disposition ?? "no finding"}`,
+            `${documented.ruleId}${
+              documented.branch === null
+                ? ""
+                : ` on ${documented.branch.field}=${documented.branch.value}`
+            }: key states ${disposition.value}, engine emits ${finding?.disposition ?? "no finding"}`,
           );
         }
       }
       expect(disagreements, `Scenario ${scenario} documented dispositions`).toEqual([]);
-      expect(stated, `Scenario ${scenario} dispositions read out of the key`).toBe(
-        DOCUMENTED_DISPOSITIONS_PER_SCENARIO[scenario] ?? 0,
-      );
+      // Pinned on both axes, because the branch half can go quiet on its own. If the sub-line stops
+      // parsing as a branch while still matching the phrase, `stated` holds and the comparison
+      // silently falls back to the scenario's own plan, which is the defect being fixed here. That
+      // regression has been the finding three times tonight; counting only the statements would
+      // leave the door open a fourth.
+      expect(
+        { statements: stated, onBranch },
+        `Scenario ${scenario} dispositions read out of the key`,
+      ).toEqual(DOCUMENTED_DISPOSITIONS_PER_SCENARIO[scenario] ?? { statements: 0, onBranch: 0 });
     },
   );
 
