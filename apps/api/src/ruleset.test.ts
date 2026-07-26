@@ -3,7 +3,15 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { loadRuleset, syncPermitRules, validateRuleset, type PublishedRuleset } from "./ruleset";
+import { addCalendarDays, differenceInCalendarDays } from "@pop-engine/engine";
+import {
+  loadRuleset,
+  MAX_PRODUCT_DAYS_BEFORE,
+  MAX_REPRESENTABLE_DAYS_BEFORE,
+  syncPermitRules,
+  validateRuleset,
+  type PublishedRuleset,
+} from "./ruleset";
 
 type JsonObject = Record<string, unknown>;
 
@@ -199,28 +207,67 @@ describe("ruleset validation", () => {
       mutate: (ruleset) => {
         alertOffsets(ruleset).deadline_reminder = { days_before: [7, "1"] };
       },
-      error: /days_before\[1\] must be a positive whole number/,
+      error: /days_before\[1\] must be a positive whole number of days, received 1/,
     },
     {
       name: "a negative offset, which would fire after the deadline",
       mutate: (ruleset) => {
         alertOffsets(ruleset).deadline_reminder = { days_before: [7, -1] };
       },
-      error: /days_before\[1\] must be a positive whole number/,
+      error: /days_before\[1\] must be a positive whole number of days, received -1/,
     },
     {
       name: "a zero offset, which is the deadline rather than a warning",
       mutate: (ruleset) => {
         alertOffsets(ruleset).deadline_reminder = { days_before: [7, 0] };
       },
-      error: /days_before\[1\] must be a positive whole number/,
+      error: /days_before\[1\] must be a positive whole number of days, received 0/,
     },
     {
       name: "a fractional offset, which lands mid-day",
       mutate: (ruleset) => {
         alertOffsets(ruleset).deadline_reminder = { days_before: [7, 1.5] };
       },
-      error: /days_before\[1\] must be a positive whole number/,
+      error: /days_before\[1\] must be a positive whole number of days, received 1.5/,
+    },
+    {
+      // The reported case on #122: Number.isInteger(1e20) is true, so this passed boot and the
+      // failure waited for the first reminder F-203 tried to schedule.
+      name: "an offset the date arithmetic cannot represent (#122)",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [7, 1e20] };
+      },
+      // 1e20 interpolates as its full decimal expansion, not "1e+20", and the message names it
+      // either way — the point of naming the value is that nobody has to hunt for it by hand.
+      error:
+        /days_before\[1\] is 100000000000000000000, beyond the 719528 days the calendar arithmetic can subtract/,
+    },
+    {
+      // The first value past the MEASURED representable boundary, so the constant is pinned at its
+      // edge rather than somewhere inside a range that happens to work.
+      name: "the first offset past the representable boundary",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [719_529] };
+      },
+      error:
+        /days_before\[0\] is 719529, beyond the 719528 days the calendar arithmetic can subtract/,
+    },
+    {
+      // Representable but absurd: rejected by the product bound, and the message has to say so,
+      // because "the arithmetic cannot hold it" would be false here and would send someone to the
+      // wrong constant.
+      name: "the first offset past the product bound",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [3_651] };
+      },
+      error: /days_before\[0\] is 3651, beyond the 3650-day maximum reminder offset/,
+    },
+    {
+      name: "a representable offset that is still nonsense for a reminder",
+      mutate: (ruleset) => {
+        alertOffsets(ruleset).deadline_reminder = { days_before: [100_000] };
+      },
+      error: /days_before\[0\] is 100000, beyond the 3650-day maximum reminder offset/,
     },
     {
       name: "a duplicated offset, which would send twice",
@@ -438,6 +485,50 @@ describe("ruleset validation", () => {
     const ruleset = await readRawRuleset();
     mutate(ruleset);
     expect(() => validateRuleset(ruleset)).toThrow(error);
+  });
+
+  it("bounds the offset where the calendar arithmetic actually stops working", async () => {
+    // The #114 precedent: measure the divergence rather than patch the reported value, and pin the
+    // measurement so it fails if calendar.ts changes underneath this file. Every assertion below runs
+    // the real `addCalendarDays`.
+    //
+    // What the measurement found is not what #122 assumed. A RangeError is only the OUTER boundary,
+    // at ±100,000,000 days from the Unix epoch. Well inside it, `addCalendarDays` stops returning
+    // dates and starts returning truncated extended years — with no error — because
+    // `toISOString().slice(0, 10)` cuts `-000001-12-31T…` down to `"-000001-12"`. So the usable
+    // boundary is where the RESULT leaves years 0000–9999, and it is date-dependent:
+    // `epochDay(deadline) − epochDay(0000-01-01)`. MAX_REPRESENTABLE_DAYS_BEFORE is that value at the
+    // Unix epoch, where it is smallest, and therefore safe for every later deadline.
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+    const EPOCH = "1970-01-01";
+
+    // The bound itself still returns a real date from the tightest possible deadline...
+    const atBound = addCalendarDays(EPOCH, -MAX_REPRESENTABLE_DAYS_BEFORE);
+    expect(atBound, "the bound is reachable from the earliest deadline the product can hold").toBe(
+      "0000-01-01",
+    );
+    expect(ISO_DATE.test(atBound)).toBe(true);
+
+    // ...and one day further is the silent truncation, not an exception. This is the assertion that
+    // fails if fromEpochDay is ever given the guard it is missing, which is the point: this file
+    // would then be describing behaviour that no longer exists.
+    const pastBound = addCalendarDays(EPOCH, -(MAX_REPRESENTABLE_DAYS_BEFORE + 1));
+    expect(ISO_DATE.test(pastBound), `expected a malformed result, got ${pastBound}`).toBe(false);
+    expect(pastBound).toBe("-000001-12");
+
+    // The outer RangeError boundary, so the two are not confused for each other.
+    expect(() => addCalendarDays(EPOCH, -100_000_000)).not.toThrow();
+    expect(() => addCalendarDays(EPOCH, -100_000_001)).toThrow();
+
+    // Every offset the validator admits stays well inside the usable range, from a real deadline.
+    for (const deadline of ["1970-01-01", "2026-08-26", "2026-12-04"]) {
+      const scheduled = addCalendarDays(deadline, -MAX_PRODUCT_DAYS_BEFORE);
+      expect(ISO_DATE.test(scheduled), `${deadline} - ${MAX_PRODUCT_DAYS_BEFORE}`).toBe(true);
+      expect(differenceInCalendarDays(scheduled, deadline)).toBe(MAX_PRODUCT_DAYS_BEFORE);
+    }
+
+    // And the product bound is the tighter of the two, which is what makes it the effective one.
+    expect(MAX_PRODUCT_DAYS_BEFORE).toBeLessThan(MAX_REPRESENTABLE_DAYS_BEFORE);
   });
 
   it("accepts a later alert kind that schedules by something other than days_before", async () => {

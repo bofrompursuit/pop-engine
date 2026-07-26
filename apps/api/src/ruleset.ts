@@ -150,10 +150,56 @@ function requireIsoDate(value: string, label: string): void {
 const REQUIRED_ALERT_TYPE = "deadline_reminder";
 
 /**
+ * The largest offset `packages/engine/src/calendar.ts` can subtract from a filing deadline and still
+ * return a real calendar date, MEASURED rather than assumed.
+ *
+ * `addCalendarDays` converts to an epoch day, adds, and formats with
+ * `new Date(ms).toISOString().slice(0, 10)`. Two boundaries fall out of that, and the useful one is
+ * not the obvious one:
+ *
+ * - It throws `RangeError` past ±100,000,000 days from the Unix epoch, the ECMAScript time-value
+ *   limit (8.64e15 ms). Confirmed at the edge: 100,000,000 formats, 100,000,001 throws.
+ * - Long BEFORE that it stops being correct without throwing. `toISOString` switches to an extended
+ *   year outside 0000–9999, so `.slice(0, 10)` truncates `-000001-12-31T…` to `"-000001-12"` — ten
+ *   characters that are not a date, returned with no error. From 2026-08-26, offset 740,219 gives
+ *   `0000-01-01` and 740,220 gives `"-000001-12"`, while `RangeError` waits until 100,020,692. That
+ *   silent band is a defect in `fromEpochDay` rather than in this validator, reported separately and
+ *   deliberately not fixed here; this bound keeps every admitted offset far outside it.
+ *
+ * The usable boundary is therefore date-dependent — `epochDay(deadline) − epochDay(0000-01-01)` — so
+ * there is no single representable constant. This is the tightest value that holds for ANY deadline
+ * at or after the Unix epoch, which every deadline the product can produce is: they come from a
+ * Postgres `date` column the engine computes from an event date F-101 refuses to accept in the past.
+ * Measured from 1970-01-01, where it is smallest.
+ */
+export const MAX_REPRESENTABLE_DAYS_BEFORE = 719_528;
+
+/**
+ * The longest reminder offset the product will accept, independent of what the arithmetic can hold.
+ *
+ * PRODUCT JUDGMENT, NOT A MECHANICAL LIMIT, AND NOT YET RATIFIED — the product owner proposed 3,650
+ * days (10 years) and has not signed it off, so this is the one number to change at review and it is
+ * deliberately alone on this line. Rationale: an offset counts days back from a filing deadline, and
+ * the longest window published in nyc.v2.7 is 60 days, so 3,650 never binds on anything real while
+ * still refusing nonsense. It is ~200× smaller than `MAX_REPRESENTABLE_DAYS_BEFORE`, so in practice
+ * this is the bound that does the work; the representable one documents the mechanical ceiling and
+ * catches the case where this is ever raised past what the arithmetic can take.
+ */
+export const MAX_PRODUCT_DAYS_BEFORE = 3_650;
+
+/**
  * A `days_before` list: one reminder per entry, scheduled at the item's `latest_apply_date` minus
  * that many whole days.
  *
  * Extracted so the closed and open halves below cannot drift into checking it differently.
+ *
+ * `Number.isInteger` alone was the third instance in this file of one shape: a JavaScript predicate
+ * standing in for a constraint that lives downstream. `requireIsoDate` accepted ISO year zero that
+ * Postgres rejects (#114); the checksum reader treated a malformed digest as an absent one (#120).
+ * `Number.isInteger(1e20)` is true and the date arithmetic cannot represent it (#122), so boot
+ * reported success and the failure waited for the first reminder F-203 tried to schedule. Both
+ * bounds below are named and checked separately because they answer different questions, and the
+ * error says which one refused the value so nobody has to guess which line to change.
  */
 function requireDaysBefore(value: unknown, label: string): void {
   const days = requireArray(value, label);
@@ -166,7 +212,22 @@ function requireDaysBefore(value: unknown, label: string): void {
     // A fraction lands mid-day, a negative fires after the deadline it warns about, and zero is the
     // deadline itself rather than a warning — none of the three is a reminder.
     if (typeof day !== "number" || !Number.isInteger(day) || day <= 0) {
-      validationError(`${at} must be a positive whole number of days`);
+      validationError(`${at} must be a positive whole number of days, received ${String(day)}`);
+    }
+    // Checked before the product bound so an absurd value is named for what it is. Unreachable while
+    // the product bound is the tighter of the two, and here so that raising that one past what the
+    // arithmetic can hold fails loudly instead of reopening #122.
+    if (day > MAX_REPRESENTABLE_DAYS_BEFORE) {
+      validationError(
+        `${at} is ${day}, beyond the ${MAX_REPRESENTABLE_DAYS_BEFORE} days the calendar arithmetic ` +
+          `can subtract from a filing deadline and still return a real date`,
+      );
+    }
+    if (day > MAX_PRODUCT_DAYS_BEFORE) {
+      validationError(
+        `${at} is ${day}, beyond the ${MAX_PRODUCT_DAYS_BEFORE}-day maximum reminder offset; the ` +
+          `longest window nyc.v2.7 publishes is 60 days`,
+      );
     }
     if (seen.has(day)) {
       validationError(`${at} repeats ${day}, which would send the same reminder twice`);
