@@ -23,7 +23,7 @@ const TODAY = "2026-07-22";
 const ruleset = parseEngineRuleset(
   JSON.parse(
     readFileSync(
-      fileURLToPath(new URL("../../../rules/nyc-rules.v2.5.json", import.meta.url)),
+      fileURLToPath(new URL("../../../rules/nyc-rules.v2.6.json", import.meta.url)),
       "utf8",
     ),
   ),
@@ -467,10 +467,12 @@ describe("Scenario E — Plaza Brand Activation (max complexity)", () => {
     generator_kw: 50,
   };
 
-  it("produces the expected findings, with both DOB structure lines conditional", () => {
-    // The key's prose says "eight findings" and folds DOB-TALL-STRUCTURE-001 into its item 8,
-    // but only DOB-TALL-STRUCTURE-001 publishes `dedupe_key: dob-structure` — DOB-TENT-001
-    // publishes none — so the published data yields two separate findings. Reported, not resolved.
+  it("produces the expected findings, with the two DOB structure rules as one line", () => {
+    // Eight findings, and item 8 carries both DOB rule ids — what the key has specified since v3.
+    // Until nyc.v2.6 only DOB-TALL-STRUCTURE-001 published `dedupe_key: dob-structure` and
+    // DOB-TENT-001 published none, so the key paired with nothing and the plan rendered two lines
+    // for one DOB temporary-structure permit. v2.6 wired the missing side (#89 item 6), resolving
+    // the ruleset against its own note_text rather than bending the fixture.
     expectFindings(plan(intakeE).findings, [
       {
         ruleIds: ["SAPO-PLAZA-001"],
@@ -514,18 +516,13 @@ describe("Scenario E — Plaza Brand Activation (max complexity)", () => {
         disposition: "required",
         deadlineStatus: "not_calculable",
       },
-      // At exactly 400 sq ft the engine refuses to assert the trigger (proposals §4).
+      // At exactly 400 sq ft the engine refuses to assert the trigger (proposals §4). The merged
+      // line retains both contributing rule ids, so neither route to the permit is lost.
       {
-        ruleIds: ["DOB-TENT-001"],
+        ruleIds: ["DOB-TENT-001", "DOB-TALL-STRUCTURE-001"],
         kind: "permit",
         disposition: "may_be_required",
         deadlineStatus: "on_track",
-      },
-      {
-        ruleIds: ["DOB-TALL-STRUCTURE-001"],
-        kind: "permit",
-        disposition: "may_be_required",
-        deadlineStatus: "not_applicable",
       },
     ]);
   });
@@ -840,8 +837,10 @@ describe("Boundary and unit fixtures (AC 8)", () => {
     const ladder = result.findings
       .filter((finding) => finding.ruleIds[0]?.startsWith("SAPO-STREET-"))
       .map((finding) => [finding.ruleIds[0], finding.disposition, finding.latestApplyDate]);
-    // Every published size arm stays open, each with its own date. The key's prose names
-    // 14/30/45; the extra-large arm's 60 days is equally unresolved and is listed too.
+    // Every published size arm stays open, each with its own date — four, not three. The key's
+    // ladder line named 14/30/45 until fixtures v5 corrected it to 14/30/45/60 (#89 item 1): the
+    // extra-large arm's 60 days is equally unresolved, and it is the only arm an organizer can
+    // already be late for, so omitting it hid the case that matters.
     expect(ladder).toEqual([
       ["SAPO-STREET-SMALL-001", "may_be_required", "2026-11-20"],
       ["SAPO-STREET-MEDIUM-001", "may_be_required", "2026-11-04"],

@@ -3,10 +3,10 @@
 **Build name:** PopEngine
 **Owner:** Naquan McKune, Jason Zeng, Adedoyin Ahoton, Bo Moldenhauer
 **Date:** July 21, 2026
-**Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25 with no regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
+**Status:** APPROVED 2026-07-22 against nyc.v2.1; pointer retargeted to nyc.v2.5 on 2026-07-25, and to nyc.v2.6 on 2026-07-25, neither with a regulatory change (see `docs/BASELINE.md`). All earlier phases of this PRD are superseded in full by this document.
 **Scope of this document:** the full product vision. The iron-clad MVP (permit planning) carries detailed, demo-observable requirements; everything else is planned scope, phased in `ROADMAP.md`. Completing the full vision by the capstone demo is explicitly not a commitment.
-**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v4) · `rules/nyc-rules.v2.5.json` (published ruleset).
-**Permit facts:** every permit fact traces to `rules/nyc-rules.v2.5.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.
+**Companion docs:** `BASELINE.md` (current artifact versions) · `ROADMAP.md` (phases + features) · `DESIGN.md` (lanes, gates, demo plan) · `ARCHITECTURE.md` (technical design) · `ARCHITECTURE-FUTURE.md` (Phase 2+ target) · `test-scenario-answer-key.md` (scenario fixtures v4) · `rules/nyc-rules.v2.6.json` (published ruleset).
+**Permit facts:** every permit fact traces to `rules/nyc-rules.v2.6.json`, whose facts carry evidence references to fetch-confirmed quotes in `VERIFICATION-SOURCES.md`. Verification statuses (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP) render honestly in-product. No permit fact is ever invented.
 
 ---
 
@@ -16,10 +16,10 @@ Independent pop-up and event organizers in New York City must navigate a permit 
 
 ### Supporting Context
 
-- Reporting from THE CITY (March 2026) documents organizers pressuring City Hall to simplify the process: thousands of groups stage events in public space yearly, and organizers with a decade of experience describe the system as a maze with no clear starting point. *(thecity.nyc, 2026-03-10)*
-- The process is structurally fragmented: DOT Open Streets applications run through Survey123 while SAPO, NYPD, Parks, and Media & Entertainment use E-Apply. A civic proposal (Neighborhood Commons) formally asks the city to unify them, which has not happened. *(neighborhoodcommons.nyc)*
-- Real lead-time spread, per official sources: SAPO deadlines run 14–60 days depending on event class and size (festival classes close the prior December 31); Parks special event permits (20+ guests) carry a 21-day hard floor and 21–30-day processing; NYPD precinct sound permits need 5+ days; liquor permits require 15 business days; large tents, stages, open flame, generators, and public food each trigger additional agency requirements. *(nyc.gov/cecm; nycgovparks.org; sla.ny.gov — see VERIFICATION-SOURCES.md)*
-- Today this navigation is sold as human expertise: NYC event-production agencies market permit navigation as a core professional service, noting that major event permits require 3–6 months of lead time and that requirements shift seasonally and by neighborhood. *(ideko.com)*
+- Reporting from THE CITY (March 2026) documents organizers pressuring City Hall to simplify the process: thousands of groups stage events in public space yearly, and organizers with a decade of experience describe the system as a maze with no clear starting point. _(thecity.nyc, 2026-03-10)_
+- The process is structurally fragmented: DOT Open Streets applications run through Survey123 while SAPO, NYPD, Parks, and Media & Entertainment use E-Apply. A civic proposal (Neighborhood Commons) formally asks the city to unify them, which has not happened. _(neighborhoodcommons.nyc)_
+- Real lead-time spread, per official sources: SAPO deadlines run 14–60 days depending on event class and size (festival classes close the prior December 31); Parks special event permits (20+ guests) carry a 21-day hard floor and 21–30-day processing; NYPD precinct sound permits need 5+ days; liquor permits require 15 business days; large tents, stages, open flame, generators, and public food each trigger additional agency requirements. _(nyc.gov/cecm; nycgovparks.org; sla.ny.gov — see VERIFICATION-SOURCES.md)_
+- Today this navigation is sold as human expertise: NYC event-production agencies market permit navigation as a core professional service, noting that major event permits require 3–6 months of lead time and that requirements shift seasonally and by neighborhood. _(ideko.com)_
 
 ### 1a. Opportunity
 
@@ -33,13 +33,13 @@ Give independent organizers, in two minutes, what currently requires a productio
 
 ### 1b. Users & Needs
 
-- **Primary users:** Independent event organizers, including pop-up market runners, community arts organizers, and small brand founders, who stage 1–20 events per year without an ops team or agency. *(Persona model: the small-organization founders profiled in THE CITY's March 2026 reporting.)*
+- **Primary users:** Independent event organizers, including pop-up market runners, community arts organizers, and small brand founders, who stage 1–20 events per year without an ops team or agency. _(Persona model: the small-organization founders profiled in THE CITY's March 2026 reporting.)_
 - **Secondary users:** Event attendees who check in on-site and expect a fast, app-less experience.
 
 #### Key User Needs
 
-- As an **independent organizer**, I need to know *which* permits my specific event requires, because the requirements are scattered across seven agencies and I don't know what I don't know.
-- As an **independent organizer**, I need to know *immediately* whether my event date is feasible given permit lead times, because discovering a 60-day requirement 30 days out kills the event.
+- As an **independent organizer**, I need to know _which_ permits my specific event requires, because the requirements are scattered across seven agencies and I don't know what I don't know.
+- As an **independent organizer**, I need to know _immediately_ whether my event date is feasible given permit lead times, because discovering a 60-day requirement 30 days out kills the event.
 - As an **independent organizer**, I need one timeline tracking every application, fee, and document deadline, because each agency runs its own portal and nothing aggregates my obligations.
 - As an **event attendee**, I need an instant, zero-friction mobile check-in, because long lines and form-heavy sign-ups destroy the event experience.
 
@@ -51,12 +51,12 @@ Give independent organizers, in two minutes, what currently requires a productio
 
 ### 1c. Competitive Landscape
 
-| Bucket | Who | What they do | Why the gap remains |
-|---|---|---|---|
-| City portals | SAPO E-Apply, DOT Survey123, Parks, NYPD precinct forms | Accept applications | Submission, not navigation: assume you already know which permits you need; no cross-agency view |
-| Human services | IDEKO and NYC production agencies, event planners | Expert permit navigation as a service | Priced for brand activations; unavailable to independents |
-| Static content | citylaws.org, venue/planner blog guides, nyc.gov info pages | Explain the rules generically | Cannot evaluate a specific event or generate a plan; no deadlines, no tracking |
-| Event software | Eventeny, Eventbrite, Luma, Partiful | Ticketing, vendor management, RSVPs, check-in | None generates jurisdiction-aware permit requirements; document features are passive upload/storage |
+| Bucket         | Who                                                         | What they do                                  | Why the gap remains                                                                                 |
+| -------------- | ----------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| City portals   | SAPO E-Apply, DOT Survey123, Parks, NYPD precinct forms     | Accept applications                           | Submission, not navigation: assume you already know which permits you need; no cross-agency view    |
+| Human services | IDEKO and NYC production agencies, event planners           | Expert permit navigation as a service         | Priced for brand activations; unavailable to independents                                           |
+| Static content | citylaws.org, venue/planner blog guides, nyc.gov info pages | Explain the rules generically                 | Cannot evaluate a specific event or generate a plan; no deadlines, no tracking                      |
+| Event software | Eventeny, Eventbrite, Luma, Partiful                        | Ticketing, vendor management, RSVPs, check-in | None generates jurisdiction-aware permit requirements; document features are passive upload/storage |
 
 **The empty intersection:** software ✕ organizer-side ✕ generative (event parameters → permit plan) ✕ NYC jurisdiction depth. No product found occupies it; the incumbents are human consultants and nyc.gov itself.
 
@@ -70,9 +70,9 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 ### 2b. Top 3 MVP Value Props
 
-- **The Vitamin (must-have baseline):** Live checklist, document tracker, and portal links for the generated plan: statuses, uploads, deadline alerts per permit. *(F-202, F-203, F-204)*
-- **The Painkiller (solves core pain):** The permit navigator itself: a short intake producing a complete, source-transparent permit plan with agencies, lead times, fees, and required documents. *(F-101, F-201)*
-- **The Steroid (the magic moment):** The instant feasibility verdict. Enter a Large street activation 35 days out and PopEngine flags "the published 45-day filing deadline has already passed," shows the deadline ladder by event size, then shows what changes (smaller event class, private venue) would make it work. *(F-102)*
+- **The Vitamin (must-have baseline):** Live checklist, document tracker, and portal links for the generated plan: statuses, uploads, deadline alerts per permit. _(F-202, F-203, F-204)_
+- **The Painkiller (solves core pain):** The permit navigator itself: a short intake producing a complete, source-transparent permit plan with agencies, lead times, fees, and required documents. _(F-101, F-201)_
+- **The Steroid (the magic moment):** The instant feasibility verdict. Enter a Large street activation 35 days out and PopEngine flags "the published 45-day filing deadline has already passed," shows the deadline ladder by event size, then shows what changes (smaller event class, private venue) would make it work. _(F-102)_
 
 ### 2c. Product Principles
 
@@ -109,14 +109,14 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 #### MVP (all observable in a live demo; no real-event denominators)
 
-| Goal | Signal | Metric | Target |
-| :- | :- | :- | :- |
-| Complete plan generation | Demo events produce correct plans | Expected findings matched vs. the approved fixture suite (6 scenarios + boundary fixtures, derived from ruleset nyc.v2.5) | 100% of expected findings, 0 false omissions, 0 false additions |
-| Trustworthy output | Every plan line is source-transparent | Verification status plus an official citation when published, or an explicit source-not-established coverage gap | 100% |
-| Feasibility detection | Infeasible dates caught at intake | Scenarios with impossible timelines flagged, with reason | 100% of seeded cases, <5 sec |
-| Determinism | Same input, same output | Re-running any scenario against the same ruleset version | Identical plan, 100% |
-| Speed | Organizer gets answers fast | Intake start to rendered plan | <2 minutes |
-| Check-in flow *(stretch: only if F-401 ships)* | Attendee friction stays near zero | QR scan to completed 2-field check-in | <20 seconds, no app install |
+| Goal                                           | Signal                                | Metric                                                                                                                    | Target                                                          |
+| :--------------------------------------------- | :------------------------------------ | :------------------------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------- |
+| Complete plan generation                       | Demo events produce correct plans     | Expected findings matched vs. the approved fixture suite (6 scenarios + boundary fixtures, derived from ruleset nyc.v2.6) | 100% of expected findings, 0 false omissions, 0 false additions |
+| Trustworthy output                             | Every plan line is source-transparent | Verification status plus an official citation when published, or an explicit source-not-established coverage gap          | 100%                                                            |
+| Feasibility detection                          | Infeasible dates caught at intake     | Scenarios with impossible timelines flagged, with reason                                                                  | 100% of seeded cases, <5 sec                                    |
+| Determinism                                    | Same input, same output               | Re-running any scenario against the same ruleset version                                                                  | Identical plan, 100%                                            |
+| Speed                                          | Organizer gets answers fast           | Intake start to rendered plan                                                                                             | <2 minutes                                                      |
+| Check-in flow _(stretch: only if F-401 ships)_ | Attendee friction stays near zero     | QR scan to completed 2-field check-in                                                                                     | <20 seconds, no app install                                     |
 
 #### Post-MVP metric directions (qualitative until real usage exists; no invented targets)
 
@@ -127,11 +127,11 @@ Independent NYC event organizers who can't afford production agencies use PopEng
 
 ## 3. REQUIREMENTS — MVP CORE (iron-clad; Phase 1)
 
-The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v4, derived from ruleset nyc.v2.5) are the acceptance suite for F-201/F-102.
+The seven features below must be complete, real, and demoable. No mocks in this path. Acceptance detail lives in `/specs`; the scenario + boundary fixtures in `test-scenario-answer-key.md` (v5, derived from ruleset nyc.v2.6) are the acceptance suite for F-201/F-102.
 
 ### F-101 · Event Intake Questionnaire [P0]
 
-- User completes a conditional intake whose fields mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.5.json` is authoritative for the field list): borough; location type; whether the activity obstructs the public way; SAPO event class + size or plaza level where applicable; headcount; event date; open-to-public; food (present, vendor count, private-function exception); selling anything; amplified sound (+ audibility from the public way at private venues); structures by type with dimensions; flame/fuel types; generator specs (fuel gallons, kW); whether a battery system is present and its kWh; alcohol + whether the venue's license covers the event area; assembly approval at 75+.
+- User completes a conditional intake whose fields mirror the ruleset's `intake_fields` registry (`rules/nyc-rules.v2.6.json` is authoritative for the field list): borough; location type; whether the activity obstructs the public way; SAPO event class + size or plaza level where applicable; headcount; event date; open-to-public; food (present, vendor count, private-function exception); selling anything; amplified sound (+ audibility from the public way at private venues); structures by type with dimensions; flame/fuel types; generator specs (fuel gallons, kW); whether a battery system is present and its kWh; alcohol + whether the venue's license covers the event area; assembly approval at 75+.
 - Conditional follow-ups appear only when triggered; a typical event answers 10–15 questions. Target stays under 2 minutes for typical events.
 - Branching facts allow "I don't know" (recorded as `unknown`, propagating to CONDITIONAL); unknowns are never silently defaulted.
 - Contradictory inputs are challenged, not silently resolved (e.g., tent dimensions without a tent; a block party plus sales).
@@ -140,7 +140,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 
 ### F-201 · Permit Plan Generator [P0]
 
-- System evaluates the published ruleset (`rules/nyc-rules.v2.5.json`: 33 rules + 4 advisories) against the intake and returns every applicable finding: kind (permit / insurance / notification / registration / eligibility / prohibition / advisory / note), disposition (required / may-be-required / prohibited-or-ineligible / advisory / no-new-requirement), name, agency, typed deadline, fee, portal, and the rule + triggering answers that produced it.
+- System evaluates the published ruleset (`rules/nyc-rules.v2.6.json`: 33 rules + 4 advisories) against the intake and returns every applicable finding: kind (permit / insurance / notification / registration / eligibility / prohibition / advisory / note), disposition (required / may-be-required / prohibited-or-ineligible / advisory / no-new-requirement), name, agency, typed deadline, fee, portal, and the rule + triggering answers that produced it.
 - Every line shows its verification status. A source-bearing line cites its official source; a source-less COVERAGE_GAP visibly says "source not yet established" and never invents one. RESEARCH_REQUIRED facts render "confirm with agency"; OFFICIAL_CONFLICT rules render both readings with their sources; the system never fills gaps with guesses or silently resolves conflicts.
 - A near-empty result is first-class and honest: "no new city event requirement identified from your answers," plus exactly what to confirm (Scenario B).
 - The ruleset version is stored with the generated plan; re-running the same event on the same version and date is deterministic.
@@ -156,7 +156,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 
 ### F-206 · Rules Snapshot Banner [P0]
 
-- "Rules snapshot nyc.v2.5 · published July 25, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
+- "Rules snapshot nyc.v2.6 · published July 25, 2026" renders on every plan. Never "verified as of": a snapshot date means published-on, not all-facts-verified-on.
 - Per-line verification status renders honestly (SOURCE_CONFIRMED / OFFICIAL_CONFLICT / RESEARCH_REQUIRED / COVERAGE_GAP); published citations click through to official sources, while source-less gaps render no invented link.
 
 ### F-202 · Compliance Checklist & Status Tracker [P0]
@@ -182,7 +182,7 @@ The seven features below must be complete, real, and demoable. No mocks in this 
 - **F-402 · Live Ops Dashboard [P1]:** real-time check-in counts + capacity gauge vs. the optional confirmed `events.capacity` value. Check-ins only; never presented as live occupancy (that requires F-410).
 - **F-301 · Public Event Page [P1]:** auto-generated from the intake (title, date, venue, description, RSVP button, map) at a shareable URL.
 - **F-302 · RSVP / Guest List [P1]:** capacity-aware RSVPs; guest list exports to check-in.
-- **F-205 · Insurance Requirement Detector [P1]:** street/plaza events flag $1M liability with City as additional insured (SAPO-INSURANCE-001; block parties without rides are exempt per 50 RCNY §1-08(b)); parks events render "insurance determined by borough office at review" (PARKS-INSURANCE-NOTE-001), never hard-required. *(These rules ship in the day-one ruleset; F-205 is the dedicated UI surfacing.)*
+- **F-205 · Insurance Requirement Detector [P1]:** street/plaza events flag $1M liability with City as additional insured (SAPO-INSURANCE-001; block parties without rides are exempt per 50 RCNY §1-08(b)); parks events render "insurance determined by borough office at review" (PARKS-INSURANCE-NOTE-001), never hard-required. _(These rules ship in the day-one ruleset; F-205 is the dedicated UI surfacing.)_
 
 ## 5. REQUIREMENTS — PLANNED SCOPE (Phases 2–4; outlined for delegation, specs written when scheduled)
 
@@ -229,20 +229,20 @@ Phasing lives in `ROADMAP.md`. Requirement statements here are directional, one 
 
 ## 6. RISKS & MITIGATIONS
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Incorrect regulatory determination | Critical | Deterministic rules; fixture acceptance suite; verification discipline (primary sources, evidence refs, one sign-off owner); "confirm with agency" over guessing; official conflicts rendered, never resolved silently |
-| Rules drift (seasonal/administrative change, documented by IDEKO) | High | Verification status on every line; source when published or an explicit source-not-established gap; last-verified date when published; snapshot banner (F-206); ruleset versioning; re-verification before demo |
-| Users read the plan as an approval guarantee | High | "Filing eligibility is not approval" principle; explicit disclaimer wording in plan output |
-| Scope dilution in a 2-week build | High | Iron-clad core stays first for anyone holding a blocker; the green gate selects the demo narrative, and unfinished stretch is cut rather than mocked (`DESIGN.md`) |
-| Twilio A2P/SMS registration delays | Medium | Registration starts day 1 (Phase 0); email-first alerts; labeled SMS simulation as demo fallback |
-| AI output treated as authority (future phases) | Critical | AI policy: extraction is proposed data, user-confirmed; rules published only via review (F-714) |
+| Risk                                                              | Impact   | Mitigation                                                                                                                                                                                                             |
+| ----------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Incorrect regulatory determination                                | Critical | Deterministic rules; fixture acceptance suite; verification discipline (primary sources, evidence refs, one sign-off owner); "confirm with agency" over guessing; official conflicts rendered, never resolved silently |
+| Rules drift (seasonal/administrative change, documented by IDEKO) | High     | Verification status on every line; source when published or an explicit source-not-established gap; last-verified date when published; snapshot banner (F-206); ruleset versioning; re-verification before demo        |
+| Users read the plan as an approval guarantee                      | High     | "Filing eligibility is not approval" principle; explicit disclaimer wording in plan output                                                                                                                             |
+| Scope dilution in a 2-week build                                  | High     | Iron-clad core stays first for anyone holding a blocker; the green gate selects the demo narrative, and unfinished stretch is cut rather than mocked (`DESIGN.md`)                                                     |
+| Twilio A2P/SMS registration delays                                | Medium   | Registration starts day 1 (Phase 0); email-first alerts; labeled SMS simulation as demo fallback                                                                                                                       |
+| AI output treated as authority (future phases)                    | Critical | AI policy: extraction is proposed data, user-confirmed; rules published only via review (F-714)                                                                                                                        |
 
 ## 7. APPENDIX
 
-- **Technical Stack:** React / Next.js (frontend), Node.js / Express (backend), PostgreSQL (main database + rules tables), Twilio (SMS deadline alerts). *(Redis removed from MVP: check-in volume at demo scale doesn't require a queue layer; re-add post-MVP if needed.)*
-- **Rules Engine:** NYC permit logic encoded as data (conditions → findings), not hardcoded. Each rule stores kind, trigger, typed deadline (published minimum by class/size/level, hard floor, processing range, business-day, before-issuance), fee, portal, evidence reference, and verification status. Published ruleset: `rules/nyc-rules.v2.5.json` (33 rules + 4 advisories); scenario fixtures in `test-scenario-answer-key.md` derive from it. Rule updates are data changes, published per `DOCUMENTATION-GOVERNANCE.md`.
-- **Known Risk & Mitigation:** Permit rules change seasonally and administratively *(IDEKO practitioner guidance)*. Every output shows its verification status, cites its source when published or exposes the source-not-established gap, shows a last-verified date only when one is published, and states its rules snapshot date on screen (F-206).
+- **Technical Stack:** React / Next.js (frontend), Node.js / Express (backend), PostgreSQL (main database + rules tables), Twilio (SMS deadline alerts). _(Redis removed from MVP: check-in volume at demo scale doesn't require a queue layer; re-add post-MVP if needed.)_
+- **Rules Engine:** NYC permit logic encoded as data (conditions → findings), not hardcoded. Each rule stores kind, trigger, typed deadline (published minimum by class/size/level, hard floor, processing range, business-day, before-issuance), fee, portal, evidence reference, and verification status. Published ruleset: `rules/nyc-rules.v2.6.json` (33 rules + 4 advisories); scenario fixtures in `test-scenario-answer-key.md` derive from it. Rule updates are data changes, published per `DOCUMENTATION-GOVERNANCE.md`.
+- **Known Risk & Mitigation:** Permit rules change seasonally and administratively _(IDEKO practitioner guidance)_. Every output shows its verification status, cites its source when published or exposes the source-not-established gap, shows a last-verified date only when one is published, and states its rules snapshot date on screen (F-206).
 - **Demo Script Anchor (Scenario A, re-anchored 2026-07-22):** Bushwick street activation, 75 people, DJ, food vendor, 35 days out, classified as a Large street event. The plan generates; the published 45-day SAPO deadline has already passed; PopEngine shows the deadline ladder (Small 14 / Medium 30 / Large 45) and re-evaluated rescopes (Medium → at-risk, private venue → SAPO drops); a checklist is created with portal links. Full demo sequence in `DESIGN.md`.
 
 ## Sources

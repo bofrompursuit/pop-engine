@@ -16,7 +16,7 @@ import { IntakeForm } from "./intake-form";
 // Resolved from the repo root, which is vitest's working directory: under jsdom
 // `import.meta.url` is the document's http URL, not a file one.
 const contract = parseIntakeContract(
-  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.5.json"), "utf8")),
+  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.6.json"), "utf8")),
 );
 
 const jsonResponse = (status: number, body: unknown): Response =>

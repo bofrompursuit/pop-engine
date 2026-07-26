@@ -23,7 +23,7 @@ const publishedRuleset: {
     source?: { citation: string; urls: string[] };
     verification: { status: string; qualification?: string };
   }[];
-} = JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.5.json"), "utf8"));
+} = JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.6.json"), "utf8"));
 
 const publishedRule = (id: string) => {
   const rule = publishedRuleset.rules.find((candidate) => candidate.id === id);

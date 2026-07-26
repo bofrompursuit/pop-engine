@@ -11,7 +11,7 @@ export async function intakeFormProps(): Promise<{
   contract: IntakeContract;
   apiBaseUrl: string;
 }> {
-  const rulesFile = resolve(process.env.RULES_FILE ?? "../../rules/nyc-rules.v2.5.json");
+  const rulesFile = resolve(process.env.RULES_FILE ?? "../../rules/nyc-rules.v2.6.json");
   return {
     contract: parseIntakeContract(JSON.parse(await readFile(rulesFile, "utf8"))),
     apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001",

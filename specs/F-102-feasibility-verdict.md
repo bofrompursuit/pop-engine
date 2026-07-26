@@ -2,7 +2,7 @@
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-201 (same engine invocation) · **Feeds:** plan UI, F-203 slack warnings
-**Updated:** 2026-07-22 against nyc.v2.1 (layered status model, AD-10); retargeted to nyc.v2.5 on 2026-07-25.
+**Updated:** 2026-07-22 against nyc.v2.1 (layered status model, AD-10); retargeted to nyc.v2.5 on 2026-07-25, and to nyc.v2.6 on 2026-07-25 with no verdict change.
 
 ## User Story
 
@@ -18,12 +18,12 @@ Per-finding **deadline status**: ON_TRACK / DEADLINE_APPROACHING / PUBLISHED_DEA
 
 One top-level verdict on the `permit_plans` row, plus `verdict_detail`:
 
-| Verdict | detail carries | Copy rule |
-|---|---|---|
-| FEASIBLE | min_slack_days | "On track" |
-| FEASIBLE-AT-RISK | tightest finding, "apply within N days" | threshold labeled as PopEngine's **internal planning buffer**, never an official threshold |
-| CONDITIONAL | each missing fact + every branch's verdict and reason | branch table rendered |
-| INFEASIBLE | blocking finding, rescope suggestions (each a full re-evaluation) | **"published deadline missed as scoped"** — a missed filing window, never a claim of legal impossibility |
+| Verdict          | detail carries                                                    | Copy rule                                                                                                |
+| ---------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| FEASIBLE         | min_slack_days                                                    | "On track"                                                                                               |
+| FEASIBLE-AT-RISK | tightest finding, "apply within N days"                           | threshold labeled as PopEngine's **internal planning buffer**, never an official threshold               |
+| CONDITIONAL      | each missing fact + every branch's verdict and reason             | branch table rendered                                                                                    |
+| INFEASIBLE       | blocking finding, rescope suggestions (each a full re-evaluation) | **"published deadline missed as scoped"** — a missed filing window, never a claim of legal impossibility |
 
 ## Acceptance Criteria
 
