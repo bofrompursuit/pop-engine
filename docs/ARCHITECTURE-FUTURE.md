@@ -150,7 +150,7 @@ Do not compress all meaning into one verdict.
 
 ### 7.1 Result completeness
 
-Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule, no primary source is published — shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the *result* sense; F-109 keeps the *scope* sense under its own name, **scope support states**. `COVERAGE_GAP` keeps its name, being the most literal use and already in production.
+Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule — "combination not modeled by this ruleset version; advisory asserts nothing", the published legend at `rules/nyc-rules.v2.7.json`; shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the *result* sense; F-109 keeps the *scope* sense under its own name, **scope support states**. `COVERAGE_GAP` keeps its name, being the most literal use and already in production.
 
 | Value | Meaning |
 |---|---|
@@ -159,11 +159,11 @@ Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverag
 | `CANNOT_DETERMINE` | Authority/classification or another prerequisite cannot be resolved. |
 | `OUTSIDE_VALIDATED_COVERAGE` | A material event element is unsupported. Supported findings may be shown, but the plan is labeled incomplete. |
 
-`OPEN_FACTS_MAY_CHANGE_OUTCOME` was `CONDITIONAL` until 2026-07-26. That token is `Verdict`'s (`packages/engine/src/types.ts:128`, shipped), where it means something else, and the two appear side by side by design — §7 exists so that meaning is not compressed into one verdict, so a reader sees result completeness next to the verdict and has to tell them apart. Spelling them differently is not enough when the failure being fixed is a reader conflating two axes, so the replacement differs in meaning and not only in token. No code changes: these four values are not implemented anywhere, and every `CONDITIONAL` in `packages/` and `apps/` is `Verdict`.
+`OPEN_FACTS_MAY_CHANGE_OUTCOME` was `CONDITIONAL` until 2026-07-26. That token is `Verdict`'s (`packages/engine/src/types.ts:128`, shipped), where it means something else. The two coexist only through the transition AD-07 describes — the flat verdict is retired once these layered fields land, so this is a replacement and not a permanent second axis — but the transition is exactly when both tokens are readable in one repository and a reader has to tell them apart. Spelling them differently is not enough when the failure being fixed is a reader conflating two axes, so the replacement differs in meaning and not only in token. No code changes: these four values are not implemented anywhere, and every `CONDITIONAL` in `packages/` and `apps/` is `Verdict`.
 
 `VALIDATED_COVERAGE` survives inside two value names on purpose. "Validated coverage" is a compound naming the *ruleset's validated scope*, a different sense from `COVERAGE_GAP`'s per-rule *source* gap; forcing them apart by spelling would lose meaning rather than add clarity.
 
-**Left open deliberately, so a future reader knows it was seen and not missed.** `OUTSIDE_VALIDATED_COVERAGE`'s own gloss above is written in F-109's vocabulary — "a material event element is **unsupported**. **Supported** findings may be shown". If that is not a coincidence, then these values and F-109's `unsupported` are one axis measured at two points in the pipeline, before and after evaluation, rather than two axes. This pass disambiguated the **names**; it did not decide whether the two vocabularies describe one thing or two. Anyone proposing to merge them should start here.
+**Left open deliberately, so a future reader knows it was seen and not missed.** `OUTSIDE_VALIDATED_COVERAGE`'s own gloss above is written in F-109's vocabulary — "a material event element is **unsupported**. **Supported** findings may be shown". If that is not a coincidence, then these values and F-109's `unsupported` are one axis measured at two points in the pipeline, before and after evaluation, rather than two axes. This pass disambiguated the **names**; it did not decide whether the two vocabularies describe one thing or two. Anyone proposing to merge them should start here. Note that the published `COVERAGE_GAP` — "combination not modeled by this ruleset version" — sits nearer this axis than its name once suggested, so the open question is plausibly three-cornered rather than two: a combination the ruleset does not model, an event element outside validated coverage, and a described scope that is unsupported may be one fact observed at three points. Nothing here establishes that they are, and `COVERAGE_GAP` is shipped either way.
 
 **Someone has already argued the merge, and it was set aside on authority rather than on merits.** The `PROPOSED` draft of `specs/F-109` (PR #134) carries an acceptance criterion adopting this section's four values outright and stating that F-109 "does not define its own vocabulary", on the reasoning that a second set of state names in a spec that classifies coverage would put two incompatible vocabularies in one contract. That is the merge argument, made in full, and it is not a weak one. It was set aside because a `PROPOSED` spec's acceptance criterion cannot overrule two `APPROVED` artifacts — `PRD.md:225` and `ROADMAP.md:88` both publish F-109's five values verbatim, and `BASELINE.md` requires approval before a `PROPOSED` input is implementable. So the question above stays open on the merits: what settled it here was governance, not a finding that the two axes are distinct. Anyone reopening it should read F-109's criterion first rather than re-deriving it.
 
@@ -289,7 +289,7 @@ A ruleset snapshot date means “published on,” not “all facts verified on.�
 | `event_revisions` | Immutable validated questionnaire versions. Unique `(event_id, revision_number)`. |
 | `rulesets` | Immutable metadata: jurisdiction, version, schema version, checksum, snapshot date, status, artifact location. |
 | `rules` | Read model keyed by `(ruleset_id, rule_id)`; never hand-edited. |
-| `permit_plans` | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes coverage and deadline summary. |
+| `permit_plans` | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes result-completeness (§7.1) and deadline summary. |
 | `plan_findings` | Generic immutable finding snapshot with kind, disposition, deadline status, source facets, trigger trace, and `payload_json`. |
 | `plan_diffs` | Added, removed, and materially changed findings between two plans. |
 | `checklist_items` | Workflow item linked to a plan finding; plan evidence remains immutable. |
@@ -539,7 +539,7 @@ Coverage percentage does not replace acceptance behavior. A feature is not done 
 ## 17. Observability and operations
 
 - Structured logs with request/job correlation IDs; no raw secrets, documents, or unredacted contact data.
-- Metrics: API error/latency, evaluation failure, job lag, send success/failure, webhook replay, ruleset version usage, and coverage-status distribution.
+- Metrics: API error/latency, evaluation failure, job lag, send success/failure, webhook replay, ruleset version usage, and result-completeness (§7.1) distribution.
 - Audit events for plan acceptance, rule publication, authorization/role changes, source review, document lifecycle, message send, and integration connection.
 - Health endpoints distinguish process liveness from database, artifact, and worker readiness.
 - Backups and restore rehearsal for PostgreSQL; lifecycle/versioning policy for object storage.
