@@ -140,6 +140,13 @@ describe("ruleset validation", () => {
       error: /snapshot_date must be an ISO date/,
     },
     {
+      name: "year-zero snapshot date",
+      mutate: (ruleset) => {
+        ruleset.snapshot_date = "0000-01-01";
+      },
+      error: /snapshot_date has no year 0000/,
+    },
+    {
       name: "unapproved status",
       mutate: (ruleset) => {
         ruleset.status = "PROPOSED";
@@ -179,6 +186,26 @@ describe("ruleset validation", () => {
         firstVerification(ruleset).last_verified_date = "2026-7-18";
       },
       error: /last_verified_date must be an ISO date/,
+    },
+    {
+      // The one value the shape check and the calendar round trip both accept and Postgres does
+      // not: ISO 8601 has a year zero and ECMAScript implements it, so this passes every check the
+      // validator made before this case existed and then fails at the INSERT — the deferred failure
+      // the validator exists to stop, surviving inside the validator.
+      name: "year-zero verification date",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "0000-01-01";
+      },
+      error: /last_verified_date has no year 0000/,
+    },
+    {
+      // Year zero is refused for being year zero, not for being an odd day: February 29 of year 0
+      // is a real proleptic-Gregorian date that Postgres still has no year for.
+      name: "year-zero leap day",
+      mutate: (ruleset) => {
+        firstVerification(ruleset).last_verified_date = "0000-02-29";
+      },
+      error: /last_verified_date has no year 0000/,
     },
     {
       name: "empty verification date",
@@ -319,6 +346,17 @@ describe("ruleset validation", () => {
     const ruleset = await readRawRuleset();
     mutate(ruleset);
     expect(() => validateRuleset(ruleset)).toThrow(error);
+  });
+
+  it("accepts the years either side of the one Postgres has no room for", async () => {
+    // The boundary in the other direction, so the year-zero rejection cannot widen unnoticed.
+    // Postgres stores 0001-01-01 and 9999-12-31 without complaint, so refusing either would reject
+    // an artifact the column can hold — a validator that over-rejects fails a boot that should work.
+    for (const date of ["0001-01-01", "0001-12-31", "9999-12-31"]) {
+      const ruleset = await readRawRuleset();
+      firstVerification(ruleset).last_verified_date = date;
+      expect(() => validateRuleset(ruleset), date).not.toThrow();
+    }
   });
 });
 
@@ -774,3 +812,102 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
     expect(Number(count.rows[0]?.count)).toBe(37);
   });
 });
+
+// The validator's promise is "this survives the `date` column", and the mechanism is a JS check —
+// so the two have to be shown to agree rather than assumed to. Year zero is where they did not:
+// ISO 8601 has one, ECMAScript implements it, Postgres has none, so a value that passed every
+// clause failed at the INSERT. Casting the boundaries through a real column is what keeps that
+// claim honest; the sweep behind it covered every string the shape admits (the full year axis,
+// the full month and day axes, February 28 and 29 of all 10,000 years, each month's last and
+// first-invalid day) and found year 0000 to be the only disagreement, with no value that both
+// accept stored as a different day.
+describe.runIf((process.env.DATABASE_URL ?? "").length > 0)(
+  "the date check agrees with the column it stands in for",
+  () => {
+    let client: Client;
+
+    beforeAll(async () => {
+      client = new Client({ connectionString: process.env.DATABASE_URL });
+      await client.connect();
+    }, 30_000);
+
+    afterAll(async () => {
+      await client.end();
+    }, 30_000);
+
+    /** Whether a Postgres `date` accepts the value, and what it stores if it does. */
+    const asStoredDate = async (value: string): Promise<string | null> => {
+      try {
+        const { rows } = await client.query<{ d: string }>("SELECT ($1::date)::text AS d", [value]);
+        return rows[0]?.d ?? null;
+      } catch {
+        return null;
+      }
+    };
+
+    const validatorAccepts = async (date: string): Promise<boolean> => {
+      const ruleset = await readRawRuleset();
+      firstVerification(ruleset).last_verified_date = date;
+      try {
+        validateRuleset(ruleset);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    it.each([
+      // Accepted by both, and stored as itself.
+      "0001-01-01",
+      "0001-12-31",
+      "1582-10-04",
+      "1582-10-15",
+      "1900-02-28",
+      "2000-02-29",
+      "2024-02-29",
+      "2026-07-18",
+      "9999-12-31",
+      // Rejected by both: impossible days inside the shape.
+      "2026-02-29",
+      "2026-02-31",
+      "2026-13-45",
+      "2026-00-01",
+      "2026-01-00",
+      // Rejected by both, and the reason differs on each side — the shape rejects these before the
+      // round trip, while Postgres would accept several of them and reinterpret them entirely.
+      "2026-7-18",
+      "20260718",
+      "2026-189",
+      "today",
+      "epoch",
+      "infinity",
+      "10000-01-01",
+      // The one the validator had to be taught: legal ISO, no such Postgres date.
+      "0000-01-01",
+      "0000-02-29",
+      "0000-12-31",
+    ])("agrees about %s", async (date) => {
+      const stored = await asStoredDate(date);
+      const accepted = await validatorAccepts(date);
+      // Equivalence in the direction that matters: nothing the validator accepts may fail the cast,
+      // and nothing it accepts may be stored as a different day. The reverse — Postgres accepting
+      // what the validator refuses — is deliberate and safe, so it is not asserted as equality.
+      if (accepted) {
+        expect(stored, `${date} passed the validator, so the column must take it`).toBe(date);
+      }
+    });
+
+    it("rejects every year-zero day while accepting the years either side", async () => {
+      // Stated as a pair so the fix cannot drift into rejecting year 1 or 9999, which the column
+      // stores without complaint.
+      for (const date of ["0000-01-01", "0000-02-29", "0000-06-15", "0000-12-31"]) {
+        expect(await validatorAccepts(date), date).toBe(false);
+        expect(await asStoredDate(date), date).toBeNull();
+      }
+      for (const date of ["0001-01-01", "9999-12-31"]) {
+        expect(await validatorAccepts(date), date).toBe(true);
+        expect(await asStoredDate(date), date).toBe(date);
+      }
+    });
+  },
+);
