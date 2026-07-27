@@ -616,9 +616,14 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
       expect(warning?.payload.body).toContain(
-        "the number above is the width of the window it can be filed in, not the time remaining",
+        "the number is the WIDTH of the window it can be filed in, not time remaining and not " +
+          "measured from any date",
       );
       expect(warning?.payload.body).not.toContain("days away");
+      // AND THE FIRST LINE NO LONGER CONTRADICTS IT. It used to say the number was measured from
+      // the plan's evaluation date and then correct itself two lines later, so the body disagreed
+      // with itself in exactly the case the qualification exists to describe.
+      expect(warning?.payload.body).not.toContain("measured from the plan's evaluation date");
     });
 
     it("does not warn twice when an identical plan is regenerated", async () => {
@@ -3024,6 +3029,166 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(String(reminder?.payload.body)).toContain(
         "sent now because your checklist was created after that day had already passed",
       );
+    });
+
+    it("calls an ungated controlling minimum a countdown even when the plan has a gated row", async () => {
+      // THE CASE THE PROXY GETS WRONG. `planHasGatedFiling` is true if ANY row is gated; the
+      // question is whether the row that PRODUCED the number is. A park event with a closer
+      // ordinary filing deadline has both, and the copy then called an ungated countdown a window
+      // width. Here the controlling minimum is 5 days from an UNGATED requirement, while a gated
+      // one sits behind it at 40.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 40,
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+        laterDated: { latestApplyDate: dayFromToday(5), slackDays: 5 },
+      });
+      await pool.query(
+        `UPDATE permit_plans SET verdict_detail = jsonb_set(verdict_detail, '{minSlackDays}', '5')
+          WHERE id = $1`,
+        [planId],
+      );
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      // The controlling requirement is ungated, so the number IS a countdown and is anchored.
+      expect(warning?.payload.subject).toBe(`At risk — apply within 5 days of ${todayInJurisdiction("US-NY-NYC")}`);
+      expect(String(warning?.payload.body)).toContain("measured from the plan's evaluation date");
+      expect(String(warning?.payload.body)).not.toContain("WIDTH of the window");
+    });
+
+    it("cancels a slack warning whose controlling window shut during an outage", async () => {
+      // The sweep excluded this by TYPE, because a plan-level warning has no checklist item to join
+      // through. So an immediate warning that failed during an outage, whose window shut before
+      // delivery recovered, was still selected by the due query and went out saying "apply within N
+      // days" that scheduling would now refuse to create. The type filter was a way of not asking
+      // the question; the warning now carries its own controlling date so it can be asked.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(9),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(warning).toBeDefined();
+      await pool.query("UPDATE alerts SET status = 'failed', failure_count = 1 WHERE id = $1", [
+        warning?.id,
+      ]);
+      // The outage outlasted the window the number counted down to.
+      await pool.query(
+        `UPDATE alerts SET payload = payload || jsonb_build_object('controlling_apply_by', $2::text)
+          WHERE id = $1`,
+        [warning?.id, dayFromToday(-1)],
+      );
+      const provider = fakeProvider();
+
+      await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      expect(provider.attempts).toHaveLength(0);
+      const after = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(after?.status).toBe("cancelled");
+    });
+
+    it(
+      "does not make a full batch wait an interval for the rest",
+      async () => {
+        // THE THIRD TIME THIS SHAPE HAS BITTEN, so the fix is the distinction rather than the case.
+        // The scan is capped, so a tick that fills its batch has NOT reached the end of the work —
+        // but with every send succeeding it reported no shortfall at all, `start` read that as a
+        // finished tick, and the overflow waited a whole interval. Round 16 was the same missing
+        // distinction with an all-skipped tick. The summary now says whether it drained the queue,
+        // so both cases and any future one collapse into one question.
+        const eventId = await createEvent(scenario("C"));
+        const overflow = 97;
+        await pool.query(
+          `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                               send_at, status, payload)
+           SELECT gen_random_uuid(), $1, 'slack_warning', 'email', 'organizer@example.test',
+                  $2 || ':batch:' || step, current_timestamp - interval '1 minute', 'pending',
+                  '{"subject":"s","body":"b"}'::jsonb
+             FROM generate_series(1, $3) AS step`,
+          [eventId, `${eventId}`, overflow],
+        );
+        const provider = fakeProvider();
+        const poller = createAlertPoller({
+          database: pool,
+          senders: provider.senders,
+          jurisdiction: ruleset.jurisdiction,
+        });
+        const startedAt = Date.now();
+
+        poller.start();
+        try {
+          await vi.waitFor(
+            async () => {
+              const { rows } = await pool.query<{ pending: string }>(
+                "SELECT count(*)::text AS pending FROM alerts WHERE event_id = $1 AND status <> 'sent'",
+                [eventId],
+              );
+              expect(rows[0]?.pending).toBe("0");
+            },
+            { timeout: 30_000, interval: 250 },
+          );
+        } finally {
+          poller.stop();
+        }
+
+        // The whole set went out without waiting for the next scheduled scan, which is the bound
+        // the overflow used to miss with a healthy provider and an otherwise empty queue.
+        expect(Date.now() - startedAt).toBeLessThan(POLL_INTERVAL_MS);
+        expect(provider.delivered.length).toBe(overflow);
+      },
+      45_000,
+    );
+
+    it("reports a full batch as not drained", async () => {
+      // The statement the poller now reads, asserted directly so the classification is pinned and
+      // not only its consequence.
+      const eventId = await createEvent(scenario("C"));
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         SELECT gen_random_uuid(), $1, 'slack_warning', 'email', 'organizer@example.test',
+                $2 || ':full:' || step, current_timestamp - interval '1 minute', 'pending',
+                '{"subject":"s","body":"b"}'::jsonb
+           FROM generate_series(1, 97) AS step`,
+        [eventId, `${eventId}`],
+      );
+      const provider = fakeProvider();
+
+      const summary = await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      expect(summary.sent).toBeGreaterThan(0);
+      expect(summary.abandoned).toBe(0);
+      // Everything it claimed succeeded, and it still did not reach the end.
+      expect(summary.drained).toBe(false);
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

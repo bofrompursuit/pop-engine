@@ -346,6 +346,13 @@ type PlannedAlert = {
    * through `checklist_item_id`, and reading the plan's live row beats trusting a snapshot.
    */
   readonly planEventRevision?: number;
+  /**
+   * The day this alert's number counts down to, for rows the sweep cannot reach through an item.
+   *
+   * Only the plan-level slack warning sets it. Everything else hangs off a checklist item and the
+   * sweep reads that item's own `latest_apply_date`, which is live rather than a snapshot.
+   */
+  readonly controllingApplyBy?: string;
 };
 
 const isoDate = (value: Date | string | null): string | null =>
@@ -694,7 +701,8 @@ const slackWarningCopy = (
   minSlackDays: number,
   slackWarningDays: number,
   evaluatedOn: string,
-  planHasGatedFiling: boolean,
+  /** Whether the requirement that PRODUCED this number waits on another agency's decision. */
+  controllingIsGated: boolean,
 ): { subject: string; body: string } => ({
   // THE SUBJECT BRANCHES TOO, and not branching it was a regression this file's own argument had
   // already refuted. Anchoring "apply within N days" to a date is right when N is a countdown from
@@ -708,22 +716,27 @@ const slackWarningCopy = (
   // plan and neither moves, so unlike a countdown it does not decay and there is nothing to fix by
   // dating it. It says what the number is instead, which is what F-102 calls it.
   //
-  // Branched on `planHasGatedFiling`, the same coarse test the body uses, rather than on whether
-  // the CONTROLLING finding is gated. It is over-inclusive in one direction only: a plan with a
-  // gated requirement whose minimum happens to come from an ungated one loses the anchor it could
-  // have had. Losing an anchor costs a little precision; anchoring a width invents a deadline.
-  // One notion of "this plan has a gated filing", not two.
-  subject: planHasGatedFiling
+  // BRANCHED ON THE CONTROLLING FINDING, not on whether the plan has any gated row. The first
+  // version of this asked the plan-level question, which is a proxy: a park event with a closer
+  // ordinary filing deadline has a gated row AND an ungated controlling minimum, and the proxy
+  // then called an ungated countdown a window width. The caller identifies the requirement that
+  // produced the number and passes that, so one value decides every sentence here.
+  subject: controllingIsGated
     ? `At risk — the narrowest filing window is ${minSlackDays} days wide`
     : `At risk — apply within ${minSlackDays} days of ${evaluatedOn}`,
   body: [
-    `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
-      `${minSlackDays} days, measured from the plan's evaluation date ${evaluatedOn}.`,
-    planHasGatedFiling
-      ? `One of those requirements waits on another agency's decision. For that one the number ` +
-        `above is the width of the window it can be filed in, not the time remaining — its own ` +
-        `start and filing dates are on your checklist.`
-      : null,
+    // THE FIRST LINE BRANCHES TOO, because it was contradicting the qualification below it. It
+    // said the number was measured from the evaluation date while the next line said it was a
+    // width, so the body disagreed with itself in exactly the case the qualification exists to
+    // describe. A width is not measured from a date at all, so the gated sentence says what the
+    // number is once rather than stating it wrongly and then correcting it.
+    controllingIsGated
+      ? `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
+        `${minSlackDays} days. That requirement waits on another agency's decision, so the number ` +
+        `is the WIDTH of the window it can be filed in, not time remaining and not measured from ` +
+        `any date. Its own start and filing dates are on your checklist.`
+      : `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
+        `${minSlackDays} days, measured from the plan's evaluation date ${evaluatedOn}.`,
     `The ${slackWarningDays}-day threshold is PopEngine's internal planning buffer, not an ` +
       `official threshold.`,
   ]
@@ -910,30 +923,44 @@ async function plannedAlerts(
   // by picking a row, which handles ties without choosing between them: if the controlling
   // requirement has expired, the minimum across what remains is necessarily larger than the number
   // the copy states.
-  const openSlackDays = rows
+  // ONE VALUE DECIDES THE GUARD, THE SUBJECT AND THE BODY, so they cannot disagree again.
+  //
+  // Round 18 identified the requirement that PRODUCED the minimum in order to narrow the guard,
+  // and that identity stopped at the guard. Round 20 then asked the copy a different question —
+  // does the plan have ANY gated row — which is a proxy that agrees in the common case and not in
+  // the one that matters: a park event with a closer ordinary filing deadline has a gated row and
+  // an ungated controlling minimum, and the copy then called an ungated countdown a window width.
+  // Same shape as the defect round 18 fixed, one layer over. So the controlling row is carried
+  // rather than re-approximated, and everything the copy says about the number reads from it.
+  const openDated = rows
     .filter((row) => {
       const applyBy = isoDate(row.latest_apply_date);
       return applyBy !== null && applyBy >= schedulingToday;
     })
-    .map((row) => renderings.get(renderingKey(row.rule_ids))?.slack_days)
-    .filter((slack): slack is number => typeof slack === "number");
+    .map((row) => ({ row, slack: renderings.get(renderingKey(row.rule_ids))?.slack_days }))
+    .filter((dated): dated is { row: PlanAlertRow; slack: number } => typeof dated.slack === "number");
   const controllingFilingStillOpen =
-    openSlackDays.length > 0 && Math.min(...openSlackDays) === minSlackDays;
+    openDated.length > 0 && Math.min(...openDated.map((dated) => dated.slack)) === minSlackDays;
+  /** Every still-open requirement whose slack IS the number the copy quotes. */
+  const controlling = openDated.filter((dated) => dated.slack === minSlackDays);
+  // Gated if ANY tied candidate is, which is the safe side of a tie: calling a width a countdown
+  // invents a deadline, while calling a countdown a width only loses an anchor.
+  const controllingIsGated = controlling.some((dated) => dated.row.apply_after_date !== null);
+  /** The day the number counts down to, for the poller to compare once the window shuts. */
+  const controllingApplyBy = controlling
+    .map((dated) => isoDate(dated.row.latest_apply_date))
+    .filter((day): day is string => day !== null)
+    .sort()[0];
   if (
     plan.verdict === "feasible_at_risk" &&
     typeof minSlackDays === "number" &&
     controllingFilingStillOpen
   ) {
-    // Whether any dated requirement in this plan waits on another agency, which decides whether
-    // the number above can be read as a countdown at all.
-    const planHasGatedFiling = rows.some(
-      (row) => row.apply_after_date !== null && row.latest_apply_date !== null,
-    );
     const { subject, body } = slackWarningCopy(
       minSlackDays,
       settings.slackWarningDays,
       plan.today,
-      planHasGatedFiling,
+      controllingIsGated,
     );
     planned.push({
       alertType: "slack_warning",
@@ -946,6 +973,10 @@ async function plannedAlerts(
       // the staleness check to join through. Reasoned about on `NOT_FROM_A_STALE_PLAN`. The
       // identity below is deliberately untouched.
       planEventRevision: plan.event_revision,
+      // The controlling requirement's own filing date. Carried for the same reason the revision is:
+      // this row has no `checklist_item_id`, so the poller has nothing to join through, and without
+      // it the sweep had to exclude the type instead of asking the question.
+      controllingApplyBy,
       // KEYED ON THE RISK, not on the plan row. A plan UUID is minted fresh by every generation,
       // so an identical regeneration produced a second identity, a second immediately-due warning
       // and a second send to the same address while the first sat there already sent. That is a
@@ -1199,6 +1230,9 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
               ...(alert.planEventRevision === undefined
                 ? {}
                 : { event_revision: alert.planEventRevision }),
+              ...(alert.controllingApplyBy === undefined
+                ? {}
+                : { controlling_apply_by: alert.controllingApplyBy }),
             }),
           ],
         );
@@ -1420,6 +1454,21 @@ export type AlertTickSummary = {
    * that could not start: the work is still there and nobody is doing it.
    */
   readonly skipped: number;
+  /**
+   * Whether this tick reached the end of the work that was due, which is the ONE question the
+   * poller has to answer and has been inferring three different ways.
+   *
+   * Round 16 taught it that an all-skipped tick is not an idle tick. A full batch then looked like
+   * a finished one, because the scan is capped and 96 successful sends report no shortfall at all.
+   * Both are the same missing distinction: "there is no more work" against "there is more work I
+   * did not reach", inferred from counters that happen to correlate with it. A fourth condition
+   * would have been a fourth correlation.
+   *
+   * So the tick states it instead. `false` when the scan came back at its cap, when the budget
+   * stopped it with rows still queued, or when a writer's lock left rows unattempted. Anything
+   * that later stops a tick short only has to set this, rather than teaching `start` a new shape.
+   */
+  readonly drained: boolean;
 };
 
 export type AlertPoller = {
@@ -1506,7 +1555,8 @@ export function createAlertPoller(dependencies: {
                  CASE alert_type WHEN 'dependency_unlocked' THEN 0 ELSE 1 END, id
         LIMIT ${MAX_ALERTS_PER_TICK}`,
     );
-    if (rows.length === MAX_ALERTS_PER_TICK) {
+    const scanWasFull = rows.length === MAX_ALERTS_PER_TICK;
+    if (scanWasFull) {
       // At the cap, so there may be more due than the delivery bound covers. Said out loud
       // because the alternative is a scan that silently serves a prefix of the queue.
       console.warn(
@@ -1552,18 +1602,26 @@ export function createAlertPoller(dependencies: {
     // failure evidence off the organizer's screen on the way. Regeneration cancels or revives
     // them, which is what the review is for.
     await database.query(
+      // NO TYPE FILTER ANY MORE, because filtering by type was a way of not answering the
+      // question. An immediate slack warning that fails during an outage, whose controlling window
+      // shuts before delivery recovers, was excluded here while the due query still selected it,
+      // so the poller sent "apply within N days" that scheduling would now refuse to create. It was
+      // excluded because it carries no checklist item to join through — so the fix is to give it a
+      // deadline to compare rather than to name the types that happen to have one.
       `UPDATE alerts SET status = 'cancelled'
         WHERE status IN ('pending', 'failed')
-          AND alert_type IN ('deadline_reminder', 'dependency_unlocked')
           AND coalesce(payload->>'test', 'false') <> 'true'
-          AND EXISTS (
-            SELECT 1
-              FROM checklist_items AS closed_checklist
-              JOIN permit_plan_items AS closed_item
-                ON closed_item.id = closed_checklist.plan_item_id
-             WHERE closed_checklist.id = alerts.checklist_item_id
-               AND closed_item.latest_apply_date IS NOT NULL
-               AND closed_item.latest_apply_date < $1::date
+          AND (
+            EXISTS (
+              SELECT 1
+                FROM checklist_items AS closed_checklist
+                JOIN permit_plan_items AS closed_item
+                  ON closed_item.id = closed_checklist.plan_item_id
+               WHERE closed_checklist.id = alerts.checklist_item_id
+                 AND closed_item.latest_apply_date IS NOT NULL
+                 AND closed_item.latest_apply_date < $1::date
+            )
+            OR (alerts.payload->>'controlling_apply_by')::date < $1::date
           )
           AND ${NOT_FROM_A_STALE_PLAN}`,
       [todayInJurisdiction(jurisdiction, new Date())],
@@ -1642,6 +1700,9 @@ export function createAlertPoller(dependencies: {
     }
     const stillSkipped = skipped.length;
     abandoned += stillSkipped;
+    // At the cap there may be more due than this scan could see, so a tick that filled its batch
+    // has not reached the end however well every send in it went.
+    const drained = !scanWasFull && abandoned === 0;
 
     if (abandoned > 0) {
       // Said out loud, because the alternative is a tick that quietly did a fraction of its work.
@@ -1650,7 +1711,7 @@ export function createAlertPoller(dependencies: {
           `they stay due and are taken by the next tick`,
       );
     }
-    return { sent, failed, abandoned, skipped: stillSkipped };
+    return { sent, failed, abandoned, skipped: stillSkipped, drained };
   };
 
   /** Set while consecutive ticks keep reporting skipped work, so the chasing cannot run forever. */
@@ -1675,10 +1736,13 @@ export function createAlertPoller(dependencies: {
             // idle time the due set is not getting: the interval is how often to LOOK when there
             // is nothing to do, not how fast work may be done when there is.
             //
-            // Only when the tick actually moved something, so a tick that abandons everything
-            // without sending — a budget already spent before the first claim — waits for the
-            // timer instead of respawning itself into a hot loop.
-            if (summary.abandoned > 0 && summary.sent + summary.failed > 0) {
+            // ONE QUESTION, ASKED ONCE: did this tick reach the end of what was due. Everything
+            // below reads `drained` rather than inferring it from a counter, which is what let a
+            // full batch of successful sends look like a finished tick and leave the rest waiting
+            // a whole interval.
+            //
+            // Still making progress, so go straight back for the rest.
+            if (!summary.drained && summary.sent + summary.failed > 0) {
               chasingSince = null;
               setImmediate(run);
               return;
@@ -1700,7 +1764,10 @@ export function createAlertPoller(dependencies: {
             // reverse the `SKIP LOCKED` decision. So the chasing runs for at most the window AC 2
             // gives the delivery in the first place, and then the interval takes over — by which
             // point a lock held that long is not a race, and no retry policy can send through it.
-            if (summary.skipped > 0) {
+            // Not drained and nothing moved: a writer's lock, or a budget spent before the first
+            // claim. Chased on a delay rather than immediately, because respawning a tick that
+            // achieved nothing is a hot loop.
+            if (!summary.drained) {
               chasingSince ??= clock();
               if (clock() - chasingSince < DELIVERY_BOUND_MS) {
                 followUp = setTimeout(run, SKIPPED_FOLLOW_UP_WAIT_MS);
