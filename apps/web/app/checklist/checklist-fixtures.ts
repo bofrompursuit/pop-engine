@@ -20,19 +20,44 @@
 // `timelineUnresolvedReason` — are not published values and depend on an event's date and today's
 // date. They default to the "nothing computed" answer and are set per test through `computed`.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   DEFAULT_DISPOSITION_BY_RULE_KIND,
   parseEngineRuleset,
   type Deadline,
 } from "@pop-engine/engine";
 
+/** Where published rulesets live, relative to the repo root, which is vitest's working directory. */
+const RULES_DIRECTORY = "rules";
+
 /**
- * The same artifact the api and the intake routes read. Resolved against the working directory,
- * which is the repo root under vitest — `apps/web/app/pages.test.tsx` points `RULES_FILE` at it
- * the same way.
+ * The published ruleset, found rather than named.
+ *
+ * This used to hard-code `rules/nyc-rules.v2.7.json`, and that broke main: publishing v2.8 deleted
+ * the v2.7 file, and because this read happens at module scope the whole suite failed to import
+ * rather than failing a test. Naming the version again — as v2.8 — would only move the landmine to
+ * the next bump, and a bump structurally cannot find references that did not exist when it ran.
+ *
+ * So the directory is read instead. Exactly one published ruleset is expected and two would be
+ * ambiguous, so both other counts throw with what was found; a fixture silently picking one of two
+ * rulesets is worse than a fixture that stops. `RULES_FILE` still overrides, because
+ * `apps/web/app/pages.test.tsx` sets it.
  */
-const RULES_FILE = process.env.RULES_FILE ?? "rules/nyc-rules.v2.7.json";
+function publishedRulesFile(): string {
+  if (process.env.RULES_FILE !== undefined) return process.env.RULES_FILE;
+  const published = readdirSync(RULES_DIRECTORY).filter((entry) =>
+    /^nyc-rules\.v.+\.json$/.test(entry),
+  );
+  if (published.length !== 1) {
+    throw new Error(
+      `expected exactly one published ruleset in ${RULES_DIRECTORY}/, found ${published.length}` +
+        (published.length === 0 ? "" : `: ${published.join(", ")}`),
+    );
+  }
+  return `${RULES_DIRECTORY}/${published[0] as string}`;
+}
+
+const RULES_FILE = publishedRulesFile();
 
 const RULESET = parseEngineRuleset(JSON.parse(readFileSync(RULES_FILE, "utf8")));
 
