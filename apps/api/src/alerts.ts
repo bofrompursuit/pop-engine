@@ -1253,6 +1253,33 @@ const providerKey = (row: DueAlertRow): string => row.idempotency_key;
  * distinction is why `AlertContactsUpdate` keeps `undefined` and `null` apart — collapsing them
  * would make every checklist review that omits a phone number silently delete the one on file.
  */
+/**
+ * An email address as a destination rather than as typed, so one mailbox is one destination.
+ *
+ * `person@example.com` and `person@EXAMPLE.COM` reach the same mailbox. Stored as typed they hash
+ * differently, so the reconciler saw a different destination, inserted new pending rows and sent
+ * the same reminders again — which AC 7 permits only for a genuinely different destination, and a
+ * case change is not one.
+ *
+ * WHAT IS CANONICALISED: surrounding whitespace, and the DOMAIN lowercased. RFC 1035 makes the
+ * domain case-insensitive, so those two really are one destination and treating them as two is a
+ * defect.
+ *
+ * WHAT IS DELIBERATELY NOT, because over-normalising an address is its own defect and a worse one:
+ * the LOCAL part is case-sensitive by RFC 5321, so `Person@` and `person@` may be different
+ * mailboxes and folding them would send one organizer's filing deadlines to another. Nor are dots
+ * stripped or plus-tags removed: those are conventions of particular providers, not properties of
+ * an address, and applying them generally merges mailboxes that are not the same. An address with
+ * no `@` is left exactly as typed rather than guessed at.
+ */
+const canonicalEmail = (value: string | null): string | null => {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  const at = trimmed.lastIndexOf("@");
+  if (at === -1) return trimmed;
+  return `${trimmed.slice(0, at)}@${trimmed.slice(at + 1).toLowerCase()}`;
+};
+
 async function resolveContacts(
   client: PoolClient,
   eventId: string,
@@ -1268,7 +1295,7 @@ async function resolveContacts(
          SET email = CASE WHEN $4 THEN EXCLUDED.email ELSE event_alert_contacts.email END,
              phone = CASE WHEN $5 THEN EXCLUDED.phone ELSE event_alert_contacts.phone END,
              updated_at = current_timestamp`,
-      [eventId, supplied.email ?? null, supplied.phone ?? null, setsEmail, setsPhone],
+      [eventId, canonicalEmail(supplied.email ?? null), supplied.phone ?? null, setsEmail, setsPhone],
     );
   }
   const { rows } = await client.query<{ email: string | null; phone: string | null }>(
@@ -1361,10 +1388,40 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
                  --
                  -- Only from 'cancelled'. A 'failed' row whose review changed nothing keeps
                  -- everything its attempts established, which is round 9 and is not reopened here.
+                 -- ONE RULE RATHER THAN A FOURTH BRANCH, because four special cases is what
+                 -- produced this finding. The rule is that these two columns are different KINDS
+                 -- of thing and only one of them is a fact:
+                 --
+                 --   failure_count is EVIDENCE about a destination. It survives anything the plan
+                 --   recomputes, because attempts against an address happened whatever the plan
+                 --   now says. It is cleared in exactly one case, a row returning from cancelled,
+                 --   because those attempts were made for a requirement PopEngine had since
+                 --   decided not to send at all.
+                 --
+                 --   next_attempt_at is DERIVED from that evidence at a moment, as clock plus a
+                 --   backoff step. A derived value is only valid while everything it was derived
+                 --   from is unchanged, so it cannot outlive either the evidence being cleared or
+                 --   the schedule it was anchored to being rewritten.
+                 --
+                 -- That covers all four transitions without naming them. Unchanged destination,
+                 -- unchanged schedule: both survive, which is round 9. Corrected address: a
+                 -- different key and therefore a different row, which is round 11 and never
+                 -- reaches this clause. Cancelled and revived: evidence cleared, so the derivation
+                 -- goes with it. Recomputed to a new send_at: the anchor moved, so the derivation
+                 -- goes even though the evidence stays.
+                 --
+                 -- The cost of the last one, stated: a dead address whose alert is rescheduled
+                 -- gets one immediate attempt rather than serving out its backoff. Round 9's
+                 -- concern was that EVERY review wiped it; only a review that MOVES the row does
+                 -- now, the retained count re-derives the right step on the next failure, and the
+                 -- scan orders it behind untried work regardless.
                  failure_count = CASE WHEN alerts.status = 'cancelled' THEN 0
                                       ELSE alerts.failure_count END,
-                 next_attempt_at = CASE WHEN alerts.status = 'cancelled' THEN NULL
-                                        ELSE alerts.next_attempt_at END
+                 next_attempt_at = CASE
+                   WHEN alerts.status = 'cancelled' THEN NULL
+                   WHEN alerts.send_at IS DISTINCT FROM EXCLUDED.send_at THEN NULL
+                   ELSE alerts.next_attempt_at
+                 END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
            -- xmax = 0 is true only for a row this statement inserted, which is what separates a
            -- newly scheduled alert from one that already existed and was recomputed in place.
@@ -1705,7 +1762,26 @@ export function createAlertPoller(dependencies: {
         -- race rather than a guarantee. What IS pinned is the sequencing note, which is the thing
         -- an organizer actually receives. This line makes the order deterministic instead of
         -- uuid-random, costs nothing, and is defence rather than demonstrated behaviour.
-        ORDER BY failure_count, send_at,
+        -- CHANNELS INTERLEAVE, so a channel that is timing out cannot consume the budget of one
+        -- that is healthy. failure_count already demotes a failing ROW and puts every untried
+        -- alert ahead of every retried one, which is why the reported case is not an eligibility
+        -- problem: it is that 48 untried emails timing out at ten seconds each fill scan after
+        -- scan while the healthy SMS behind them waits its turn in send_at order. Nothing demoted
+        -- the failing CHANNEL, and a provider outage is per-channel here — email goes to Resend
+        -- and SMS is rendered in-product — so taking the oldest of each channel in turn puts the
+        -- healthy one in the first wave instead of behind the whole backlog.
+        --
+        -- WITHIN a channel the order is untouched: oldest first, exactly as before. This changes
+        -- which channel is served next, never which alert within one.
+        --
+        -- WHAT I DID NOT DO, because it trades against the bound it protects: give the first retry
+        -- a real delay. RETRY_BACKOFF makes it immediate on purpose, one failure is usually a
+        -- blip, and an alert that has already spent up to a polling interval waiting cannot also
+        -- absorb a backoff step before its first retry and stay inside AC 2. Demoting the channel
+        -- costs nothing an alert is owed.
+        ORDER BY failure_count,
+                 row_number() OVER (PARTITION BY channel ORDER BY send_at, id),
+                 send_at,
                  CASE alert_type WHEN 'dependency_unlocked' THEN 0 ELSE 1 END, id
         LIMIT ${MAX_ALERTS_PER_TICK}`,
     );
@@ -2003,6 +2079,31 @@ async function deliverTestAlert(
 }
 
 /**
+ * Stop a demo row the endpoint has already reported on, so the poller does not send it later.
+ *
+ * The scan takes any due row and a test row is due immediately, which is deliberate: the poller
+ * legitimately delivers one when it claims it in the gap before the endpoint does, and the endpoint
+ * reports that as the success it is. What must not happen is the poller continuing to retry a row
+ * whose outcome has ALREADY been reported as a failure to whoever asked for the test. A transient
+ * outage would then deliver a demo message after the caller was told it failed, and a caller who
+ * retried would get both.
+ *
+ * Cancelled rather than excluded from the poller, and the difference matters: excluding test rows
+ * outright would break the race above, where the poller finishing a claim it won is the correct
+ * outcome. Cancelling is narrower — it acts only once this endpoint has answered, which is exactly
+ * when PopEngine stops intending to send it. Third exclusion of demo rows from an organizer-facing
+ * mechanism, after `failedDeliveries` and the simulated count, and the same reason each time.
+ *
+ * The response still reports `failed`, because that is the truthful outcome of the attempt the
+ * caller asked for. The row says cancelled, because that is PopEngine's intent afterwards. Those
+ * are different questions.
+ */
+async function retireFailedTestAlert(database: Pool, view: AlertView | null): Promise<void> {
+  if (view === null || view.status !== "failed") return;
+  await database.query("UPDATE alerts SET status = 'cancelled' WHERE id = $1", [view.id]);
+}
+
+/**
  * AC 6's demo utility. One real alert, immediately, through the same delivery path a scheduled
  * alert takes — and labeled a test in the copy itself, so nobody reading the message has to know
  * which endpoint produced it.
@@ -2071,6 +2172,9 @@ export function createAlertsRouter(dependencies: AlertsDependencies): Router {
       );
 
       const view = await deliverTestAlert(database, alertId, senders);
+      // Reported once, retried never: the poller must not deliver a demo message after this
+      // endpoint has told its caller it failed.
+      await retireFailedTestAlert(database, view);
       if (view?.status !== "sent") {
         res.status(502).json({ error: "test alert could not be delivered", alert: view });
         return;

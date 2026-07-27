@@ -1718,6 +1718,44 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(corrected.every((row) => row.status === "pending")).toBe(true);
     });
 
+    it("treats a domain case change as the same destination", async () => {
+      // The domain is case-insensitive by RFC, so these reach the same mailbox. Stored as typed
+      // they hashed differently, so the reconciler saw a different destination, inserted new
+      // pending rows and sent the same reminders again — which AC 7 permits only for a genuinely
+      // different destination, and a case change is not one.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "person@example.test" });
+      const before = await alertsOf(eventId);
+      expect(before.length).toBeGreaterThan(0);
+      await pool.query("UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE event_id = $1", [
+        eventId,
+      ]);
+
+      await materialize(eventId, { contactEmail: "person@EXAMPLE.TEST" });
+
+      const after = await alertsOf(eventId);
+      // Same rows, still sent. No second delivery to the same mailbox.
+      expect(after).toHaveLength(before.length);
+      expect(after.every((row) => row.status === "sent")).toBe(true);
+      // Stored canonically, so every later comparison agrees with this one.
+      expect(after.every((row) => row.recipient === "person@example.test")).toBe(true);
+    });
+
+    it("keeps a local-part case change as a different destination", async () => {
+      // The other half, and the reason this canonicalises the domain ONLY. The local part is
+      // case-sensitive by RFC 5321, so folding it could send one organizer's filing deadlines to
+      // another mailbox. Over-normalising an address is its own defect and a worse one.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "person@example.test" });
+      const before = await alertsOf(eventId);
+
+      await materialize(eventId, { contactEmail: "Person@example.test" });
+
+      const after = await alertsOf(eventId);
+      expect(after.some((row) => row.recipient === "Person@example.test")).toBe(true);
+      expect(after.length).toBeGreaterThan(before.length);
+    });
+
     it("keeps the evidence when a review changes nothing about the destination", async () => {
       // The mirror of the same rule, and the reason the reset is conditional rather than blanket.
       // This upsert runs on EVERY checklist review, so clearing unconditionally would let an
@@ -2461,6 +2499,33 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       });
     });
 
+    it("does not let the poller deliver a test the endpoint already called failed", async () => {
+      // The endpoint reports 502 and the row stayed failed with an eligible next_attempt_at, and
+      // the scan takes any due row. A transient outage then delivered a demo message after the
+      // caller had been told it failed, and a caller who retried got both.
+      const eventId = await createEvent(scenario("C"));
+      const failing = fakeProvider();
+      failing.fail = "provider down";
+      const response = await request(appWith(failing))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+      expect(response.status).toBe(502);
+      // The response still reports the attempt truthfully; the row records the intent afterwards.
+      expect(response.body.alert.status).toBe("failed");
+
+      // The provider recovers and the poller runs.
+      const recovered = fakeProvider();
+      await createAlertPoller({
+        database: pool,
+        senders: recovered.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      expect(recovered.attempts).toHaveLength(0);
+      const test = (await alertsOf(eventId)).find((row) => row.payload.test === true);
+      expect(test?.status).toBe("cancelled");
+    });
+
     it("survives a later regeneration rather than being cancelled with the plan's alerts", async () => {
       const eventId = await createEvent(scenario("C"));
       const provider = fakeProvider();
@@ -2469,10 +2534,19 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         .post(`/api/events/${eventId}/alerts/test`)
         .send({ channel: "email", recipient: "organizer@example.test" });
 
+      // Retired by the endpoint that reported the failure, so the poller will not deliver a demo
+      // message after the caller was told it failed.
+      const before = (await alertsOf(eventId)).find((row) => row.payload.test === true);
+      expect(before?.status).toBe("cancelled");
+
       await materialize(eventId);
 
-      const test = (await alertsOf(eventId)).find((row) => row.payload.test === true);
-      expect(test?.status).toBe("failed");
+      // And the regeneration leaves it exactly as it was, which is what this test is about: the
+      // reconciler sweeps the plan's alerts and does not touch a demo row.
+      const after = (await alertsOf(eventId)).find((row) => row.payload.test === true);
+      expect(after?.id).toBe(before?.id);
+      expect(after?.status).toBe(before?.status);
+      expect(after?.failure_count).toBe(before?.failure_count);
     });
 
     it("answers in JSON when the request fails outright", async () => {
@@ -3556,6 +3630,100 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       } finally {
         client.release();
       }
+    });
+
+    it("clears a stale backoff when regeneration moves the alert", async () => {
+      // The fourth transition, and the reason it is one rule rather than a fourth branch:
+      // failure_count is EVIDENCE about a destination and survives what the plan recomputes, while
+      // next_attempt_at is DERIVED from that evidence at a moment and cannot outlive the schedule
+      // it was anchored to. A row in the fifteen-minute backoff, recomputed as due now, was staying
+      // ineligible for the rest of a delay measured against a send time that no longer exists.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(30) });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, first.planId, contacts);
+        const before = (await alertsOf(eventId))[0];
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 3,
+                             next_attempt_at = clock_timestamp() + interval '15 minutes'
+            WHERE id = $1`,
+          [before?.id],
+        );
+
+        // The filing date moves, so this alert's send time is recomputed.
+        const second = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(20),
+          reuseChecklistItemId: first.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, second.planId, contacts);
+
+        const moved = (await alertsOf(eventId)).find((row) => row.id === before?.id);
+        expect(moved?.send_at.getTime()).not.toBe(before?.send_at.getTime());
+        // The derivation goes with the anchor.
+        expect(moved?.next_attempt_at).toBeNull();
+        // The evidence stays, because attempts against this address really happened.
+        expect(moved?.failure_count).toBe(3);
+      } finally {
+        client.release();
+      }
+    });
+
+    it("keeps a backoff when the review changes nothing about the schedule", async () => {
+      // Round 9, unchanged, and here so the rule above cannot be rewritten as "always clear".
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 3,
+                           next_attempt_at = clock_timestamp() + interval '15 minutes'
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+
+      const after = await alertsOf(eventId);
+      expect(after.every((row) => row.failure_count === 3)).toBe(true);
+      expect(after.every((row) => row.next_attempt_at !== null)).toBe(true);
+    });
+
+    it("serves a healthy channel without waiting out a failing channel's backlog", async () => {
+      // The queue policy. failure_count already puts every untried alert ahead of every retried
+      // one, so this was never an eligibility problem: it is that a backlog of emails timing out at
+      // ten seconds each fills scan after scan while the healthy SMS behind them waits its turn in
+      // send_at order. Nothing demoted the failing CHANNEL, and an outage here is per-channel.
+      const eventId = await createEvent(scenario("C"));
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         SELECT gen_random_uuid(), $1, 'slack_warning', 'email', 'dead@example.test',
+                $2 || ':email:' || step, current_timestamp - interval '5 minutes', 'pending',
+                '{"subject":"s","body":"b"}'::jsonb
+           FROM generate_series(1, 40) AS step`,
+        [eventId, `${eventId}`],
+      );
+      // Written LAST, so in send_at order it sits behind the whole email backlog.
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         VALUES (gen_random_uuid(), $1, 'slack_warning', 'sms', '+15550000000', $2 || ':sms',
+                 current_timestamp - interval '1 minute', 'pending',
+                 '{"subject":"s","body":"b"}'::jsonb)`,
+        [eventId, `${eventId}`],
+      );
+      const provider = fakeProvider();
+      provider.failFor = "dead@example.test";
+
+      await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      // The one healthy channel went out in the first scan rather than queueing behind 40 emails.
+      const sms = (await alertsOf(eventId)).find((row) => row.channel === "sms");
+      expect(sms?.status).toBe("sent");
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {
