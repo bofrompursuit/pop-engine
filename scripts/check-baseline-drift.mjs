@@ -272,7 +272,42 @@ if (unsupportedGlobs.length > 0) {
 // anyone thinking to revisit this list. A `.mts` config or a `.cjs` script naming a deleted ruleset
 // would have been invisible to a check whose whole purpose is that references cannot hide.
 const CODE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".js", ".jsx"];
-const SKIPPED_DIRECTORIES = new Set(["node_modules", ".next", ".git", "dist", "coverage", "build"]);
+
+/**
+ * The directories that are not this repo's source, READ FROM `.gitignore` rather than listed here.
+ *
+ * The list used to be written by hand, and it held `build`. Nothing in this repo ignores `build`,
+ * so `apps/api/src/build/reader.ts` is an ordinary tracked source file — and the walker pruned it
+ * by BASENAME at any depth, so that file could name an absent ruleset and this check exited 0. It
+ * also reported a smaller file count on its way past, which is the worse half: a guard that quietly
+ * scans less reads exactly like a clean repo, and that is the failure mode this file has closed
+ * three times elsewhere. The count is now part of the diagnostic for that reason.
+ *
+ * Deriving it removes the class rather than the one bad entry. A tree that is genuinely build
+ * output is gitignored, because otherwise it would be committed; a tree that is not gitignored is
+ * source by definition, whatever it is called. So the two facts cannot drift apart any more, and
+ * nobody has to remember to keep them together. Only bare directory entries are taken (`dist/`,
+ * not `apps/web/dist/` or `*.tsbuildinfo`), which is exactly the "any depth" form git itself
+ * applies, so this prunes where git prunes and nowhere else.
+ *
+ * WHEN `.gitignore` IS ABSENT the set falls back to the two names that are never source under any
+ * convention, and the direction of that fallback is the point: a smaller prune set scans MORE, so
+ * a missing file makes this check noisier and never quieter. A fallback that scanned less would be
+ * the silent narrowing above, arrived at by a different route.
+ */
+const ALWAYS_SKIPPED = ["node_modules", ".git"];
+const skippedDirectories = () => {
+  const gitignore = join(repoRoot, ".gitignore");
+  if (!existsSync(gitignore)) return new Set(ALWAYS_SKIPPED);
+  const declared = readFileSync(gitignore, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith("/") && !line.startsWith("#"))
+    .map((line) => line.slice(0, -1))
+    .filter((name) => name !== "" && !name.includes("/") && !name.includes("*"));
+  return new Set([...ALWAYS_SKIPPED, ...declared]);
+};
+const SKIPPED_DIRECTORIES = skippedDirectories();
 
 /**
  * Every file under `directory` that `matches`, skipping the trees that are not this repo's source.
@@ -582,17 +617,84 @@ function danglingInLiterals(sourceFile, literals) {
  *      a genuinely dangling path that someone would rather not fix, so a test that reads the REAL
  *      `rules/` directory by literal name and marks the line goes unguarded by this check. The
  *      marker is greppable and shows up in a diff, which is the whole of its defence.
- *   2. IT IS NOT AVAILABLE TO PRODUCTION CODE, which is the half that matters. Only `*.test.*`
- *      files may claim it. `apps/web/app/checklist/checklist-fixtures.ts` is a fixture BUILDER and
- *      not a test file, so the PR #138 break — that file hardcoding `rules/nyc-rules.v2.7.json` —
- *      is still caught today. Claiming the exemption there means renaming the file into `*.test.*`,
- *      which changes what vitest runs and what coverage measures, so it cannot be done quietly.
+ *   2. IT IS NOT AVAILABLE TO PRODUCTION CODE, which is the half that matters, and which the
+ *      predicate below now actually delivers. `apps/web/app/checklist/checklist-fixtures.ts` is a
+ *      fixture BUILDER and not a test file, so the PR #138 break — that file hardcoding
+ *      `rules/nyc-rules.v2.7.json` — is still caught today. Claiming the exemption there means
+ *      renaming the file into one VITEST RUNS, which changes what the suite executes and what
+ *      coverage measures, so it cannot be done quietly.
+ *
+ * THAT SENTENCE WAS AN ARGUMENT BEFORE IT WAS A FACT, and this design was chosen over a
+ * directory-shaped alternative on the strength of it, so it is worth being exact about the gap. The
+ * predicate was `.test.` ANYWHERE IN THE BASENAME, which is broader than the set vitest discovers
+ * in two independent ways. `apps/web/app/reader.test.helper.ts` contains `.test.` and ends in
+ * `.helper.ts`, so vitest never runs it and it imports like any other module; `tools/reader.test.ts`
+ * has the right suffix in a tree no include pattern covers. Both claimed the exemption, both
+ * suppressed a genuinely absent path, and both are ordinary production code. The escape hatch was
+ * reachable from exactly where it was advertised as unreachable.
+ *
+ * So the predicate is now vitest's own include globs rather than a paraphrase of them. A file may
+ * claim the exemption only if vitest would collect it, which is what makes the rename real: a file
+ * that claims this and is not run does not exist.
  */
 const FIXTURE_NAMES_MARKER = "baseline-check: fixture ruleset names";
 
+/**
+ * A COPY of `vitest.config.ts`'s `include`, and the copy is deliberate for the same reason
+ * `PUBLISHED_RULESET` is one.
+ *
+ * Reading the real config would remove the duplication and would also make this check unable to run
+ * against a tree that does not contain a vitest config — and every test in this file's suite works
+ * by planting a minimal tree and pointing the real script at it. That is precisely what was tried
+ * with `apps/api/src/ruleset.ts` in round 7 and reverted after twenty-seven of thirty-one tests
+ * went red. `vitestIncludeMatches` in the suite is what stops this drifting: it reads the real
+ * config's include array and fails if it is not this list.
+ */
+const VITEST_INCLUDE = [
+  "{apps,packages}/*/src/**/*.test.{ts,tsx}",
+  "apps/web/app/**/*.test.{ts,tsx}",
+  "scripts/**/*.test.mjs",
+];
+
+/**
+ * One include glob as a regular expression, supporting exactly the three constructs vitest's
+ * patterns use here: `{a,b}` alternation, `**` across directories, and `*` within a segment.
+ *
+ * Written out rather than pulled in, because the alternative is a glob dependency in a script whose
+ * entire job is to be trustworthy, and these three constructs are the whole of what the config uses.
+ * A pattern using anything else fails the divergence test in the suite rather than being silently
+ * mismatched here.
+ */
+function globToRegExp(glob) {
+  let pattern = "";
+  for (let index = 0; index < glob.length; index += 1) {
+    const character = glob[index];
+    if (character === "{") {
+      const close = glob.indexOf("}", index);
+      pattern += `(?:${glob
+        .slice(index + 1, close)
+        .split(",")
+        .map((option) => option.replace(/[.+^$()|[\]\\]/g, "\\$&"))
+        .join("|")})`;
+      index = close;
+    } else if (character === "*" && glob[index + 1] === "*") {
+      // `**/` spans any number of directories, none included, so `a/**/b.ts` matches `a/b.ts`.
+      pattern += glob[index + 2] === "/" ? "(?:[^/]+/)*" : ".*";
+      index += glob[index + 2] === "/" ? 2 : 1;
+    } else if (character === "*") {
+      pattern += "[^/]*";
+    } else {
+      pattern += character.replace(/[.+^$()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${pattern}$`);
+}
+
+const VITEST_COLLECTS = VITEST_INCLUDE.map(globToRegExp);
+
 /** Whether `file` may claim the exemption at all, and whether `line` claims it. */
 function claimsFixtureExemption(relative, sourceLines, line) {
-  if (!/(^|\/)[^/]*\.test\.[^/]*$/.test(relative)) return false;
+  if (!VITEST_COLLECTS.some((pattern) => pattern.test(relative))) return false;
   const own = sourceLines[line - 1] ?? "";
   const above = sourceLines[line - 2] ?? "";
   return own.includes(FIXTURE_NAMES_MARKER) || above.includes(FIXTURE_NAMES_MARKER);
@@ -617,6 +719,53 @@ function claimsFixtureExemption(relative, sourceLines, line) {
  */
 const CONFIGURES_RULES_FILE =
   /(^|\/)(\.env(\..+)?|docker-compose.*\.ya?ml)$|^\.github\/workflows\/.+\.ya?ml$/;
+
+/**
+ * Workspace manifests, whose `scripts` are executable entry points and were not being read.
+ *
+ * A package script is a command CI and developers actually run — the CI workflow invokes several
+ * root scripts by name — so `"seed": "node seed.mjs rules/nyc-rules.v2.8.json"` is a path that
+ * breaks on a publication exactly like the `.env` override did, and for the same reason it was
+ * invisible: it is not JavaScript source and it is not a config format this check knew about. This
+ * is a new file CATEGORY in the sense `.env`, compose and workflow files were, not a new rule.
+ *
+ * ONLY THE `scripts` FIELD, and only in manifests. Scanning JSON generally would be actively wrong
+ * here: the ruleset artifacts ARE JSON and are full of ruleset names by definition, as are the
+ * replay fixtures, so a blanket JSON rule would report the published artifact as a dangling
+ * reference to itself. The narrow field is the whole point — it is the part of a manifest that gets
+ * executed.
+ *
+ * A manifest that will not parse is a HARD failure, for the same reason an unparseable source file
+ * is: a file this check cannot read is a file it cannot vouch for.
+ */
+const WORKSPACE_MANIFEST = /^(package\.json|(apps|packages)\/[^/]+\/package\.json)$/;
+
+/** Where a manifest's `scripts` name a ruleset that is not there, and on what line. */
+function danglingInScripts(relative, text) {
+  const found = [];
+  let scripts;
+  try {
+    scripts = JSON.parse(text).scripts;
+  } catch (error) {
+    console.error(
+      `${relative} could not be parsed, so its scripts were not scanned: ${error.message}` +
+        "\n\nA file this check cannot read is a file this check cannot vouch for.",
+    );
+    process.exit(1);
+  }
+  if (typeof scripts !== "object" || scripts === null) return found;
+  const lines = text.split(/\r?\n/);
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command !== "string") continue;
+    for (const dangling of danglingIn(command)) {
+      // The command is one string with no line structure of its own, so the line reported is the
+      // manifest line the script is declared on, which is what a reader needs to go and fix it.
+      const declaredOn = lines.findIndex((line) => line.includes(`"${name}"`));
+      found.push({ line: declaredOn === -1 ? 1 : declaredOn + 1, named: dangling.named });
+    }
+  }
+  return found;
+}
 
 /**
  * The string literals a JavaScript or TypeScript source contains, found by PARSING it.
@@ -780,6 +929,7 @@ const scanned = filesUnder(repoRoot, (_relative, name) =>
   CODE_EXTENSIONS.some((extension) => name.endsWith(extension)),
 );
 const configFiles = filesUnder(repoRoot, (relative) => CONFIGURES_RULES_FILE.test(relative));
+const manifests = filesUnder(repoRoot, (relative) => WORKSPACE_MANIFEST.test(relative));
 const danglingReferences = [];
 
 /** Each scanned file's parse, kept so the pin lookup reads the same tree rather than a second one. */
@@ -814,6 +964,13 @@ for (const file of scanned) {
 for (const file of configFiles) {
   const relative = file.slice(repoRoot.length + 1);
   for (const found of danglingIn(readFileSync(file, "utf8"))) {
+    danglingReferences.push({ file: relative, ...found });
+  }
+}
+
+for (const file of manifests) {
+  const relative = file.slice(repoRoot.length + 1);
+  for (const found of danglingInScripts(relative, readFileSync(file, "utf8"))) {
     danglingReferences.push({ file: relative, ...found });
   }
 }
@@ -935,8 +1092,9 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Ruleset reference check passed: ${scanned.length} source and ${configFiles.length} config ` +
-    `files scanned, every ruleset name exists, and ${pinFile} pins ${pinned}.`,
+  `Ruleset reference check passed: ${scanned.length} source, ${configFiles.length} config and ` +
+    `${manifests.length} manifest files scanned, every ruleset name exists, and ${pinFile} pins ` +
+    `${pinned}.`,
 );
 console.log(`Baseline status check passed: ${checked.length} APPROVED artifacts consistent.`);
 for (const c of checked) console.log("  ✓ " + c);

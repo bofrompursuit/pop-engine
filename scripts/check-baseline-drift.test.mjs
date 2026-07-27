@@ -777,3 +777,144 @@ describe("round 9: valid code the check used to reject", () => {
     expect(output).toContain("no longer declares EXPECTED_RULESET_VERSION");
   });
 });
+
+describe("round 10: the exemption is only for files vitest runs", () => {
+  // The property this design was chosen over a directory-shaped alternative to get: claiming the
+  // exemption forces a rename into a file the suite EXECUTES, which cannot be done quietly. The
+  // predicate was `.test.` anywhere in the basename, which is broader than vitest's include set in
+  // two independent ways, so the escape hatch was reachable from exactly where it was advertised as
+  // unreachable. Both shapes below are ordinary importable production code.
+  it.each([
+    ["a suffix vitest does not collect", "apps/web/app/reader.test.helper.ts"],
+    ["a tree no include pattern covers", "tools/reader.test.ts"],
+  ])("refuses the marker in %s", (_label, path) => {
+    const { status, output } = runOn({
+      [path]: `// baseline-check: fixture ruleset names\n` + `export const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`${path}:2 names ${MISSING}`);
+  });
+
+  // The pair, and the half that makes it an exemption rather than a ban: the files vitest really
+  // does collect must still be able to claim it. One per include pattern.
+  it.each([
+    ["apps/web/app/reader.test.ts"],
+    ["apps/web/app/nested/deep/reader.test.tsx"],
+    ["apps/api/src/reader.test.ts"],
+    ["packages/engine/src/nested/reader.test.ts"],
+  ])("still lets %s claim it", (path) => {
+    const { status } = runOn({
+      [path]: `// baseline-check: fixture ruleset names\n` + `export const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(0);
+  });
+
+  // The copy of vitest's include array is the thing that can drift, so the copies are compared
+  // directly. Reading the repo rather than a planted tree on purpose: divergence is a fact about
+  // the real files. Reading the config at RUNTIME was not an option for the same reason reading
+  // `ruleset.ts` was not in round 7 — the planted trees do not contain one.
+  it("keeps its copy of vitest's include patterns identical to the real config", () => {
+    const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    // Quoted entries between the brackets, NOT a comma split: `{apps,packages}` contains a comma
+    // and splitting on it silently produced two half-patterns that happened to compare equal.
+    const arrayAfter = (text, declaration) => {
+      const opens = new RegExp(`${declaration}\\s*\\[`).exec(text);
+      if (opens === null) return [];
+      const body = text.slice(opens.index + opens[0].length);
+      return [...body.slice(0, body.indexOf("]")).matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]);
+    };
+
+    const fromConfig = arrayAfter(readFileSync(join(repo, "vitest.config.ts"), "utf8"), "include:");
+    const fromCheck = arrayAfter(
+      readFileSync(join(repo, "scripts/check-baseline-drift.mjs"), "utf8"),
+      "const VITEST_INCLUDE =",
+    );
+
+    expect(fromConfig.length).toBeGreaterThan(0);
+    expect(fromCheck).toEqual(fromConfig);
+  });
+});
+
+describe("round 10: pruning by basename pruned real source", () => {
+  // `build` was in a hand-written skip list and is in nobody's .gitignore, so `src/build/` is an
+  // ordinary tracked source directory. The walker pruned it by basename at any depth: the file went
+  // unscanned, the check exited 0, and the count it printed simply got smaller. A guard that
+  // quietly scans less reads exactly like a clean repo.
+  it("scans a source directory whose name is not ignored", () => {
+    const { status, output } = runOn({
+      ".gitignore": "node_modules/\ndist/\n",
+      "apps/api/src/build/reader.ts": `export const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/src/build/reader.ts:1 names ${MISSING}`);
+  });
+
+  // The pair. A tree the repo really does ignore is still pruned, because a gitignored directory
+  // cannot hold a committed reference and descending into `node_modules` reports pnpm's symlinked
+  // workspace copies beside the real files.
+  it.each([["node_modules"], ["dist"]])("still prunes %s, which is ignored", (ignored) => {
+    const { status } = runOn({
+      ".gitignore": "node_modules/\ndist/\n",
+      [`apps/api/src/${ignored}/reader.ts`]: `export const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(0);
+  });
+
+  // With no .gitignore the set falls back to the two names that are never source, and the direction
+  // is the point: a smaller prune set scans MORE, so a missing file makes this noisier, never
+  // quieter. The opposite fallback would be the same silent narrowing by another route.
+  it("scans an ignorable-looking directory when nothing declares it ignored", () => {
+    const { status, output } = runOn({
+      "apps/api/src/dist/reader.ts": `export const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/src/dist/reader.ts:1 names ${MISSING}`);
+  });
+});
+
+describe("round 10: package scripts are executable entry points", () => {
+  // A package script is a command CI and developers actually run, so a ruleset path in one breaks
+  // on a publication exactly like the `.env` override did, and was invisible for the same reason:
+  // not JavaScript source, and not a config format this check knew about.
+  it.each([["package.json"], ["apps/api/package.json"], ["packages/engine/package.json"]])(
+    "fails on a stale ruleset in %s",
+    (manifest) => {
+      const { status, output } = runOn({
+        [manifest]: JSON.stringify({ name: "x", scripts: { seed: `node seed.mjs rules/${MISSING}` } }, null, 2),
+      });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`${manifest}:4 names ${MISSING}`);
+    },
+  );
+
+  // The boundary, and it is the reason this is scoped to one field rather than to JSON. The ruleset
+  // artifacts ARE JSON and are full of ruleset names by definition, as are the replay fixtures, so
+  // a blanket JSON rule would report the published artifact as a dangling reference to itself.
+  it("does not read ruleset names out of the rest of a manifest", () => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify(
+        { name: "x", description: `supersedes rules/${MISSING}`, scripts: { build: "tsc" } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A manifest this check cannot read is a manifest it cannot vouch for, the same rule the source
+  // scan applies to a file that will not parse.
+  it("fails on a manifest it cannot parse rather than passing it unscanned", () => {
+    const { status, output } = runOn({ "package.json": "{ not json\n" });
+
+    expect(status).toBe(1);
+    expect(output).toContain("could not be parsed");
+  });
+});
