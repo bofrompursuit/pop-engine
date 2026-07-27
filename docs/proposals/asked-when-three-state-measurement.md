@@ -190,13 +190,27 @@ change at all (see the note under 4).
 2. The suite passing is evidence about the fixtures, not about production rows. Every failure the
    change produced came from a state that, as measured in section 3, the API cannot create.
 
-**Failure counts across the three attempts**, so the shape of the correction is visible:
+**Failure counts across the three attempts.** Every cell is measured on UNEDITED fixtures unless
+the column says otherwise, re-run together on one tree so they compare like with like (1163 tests
+after the round 4 rebase):
 
-| Attempt | Semantics | Failures before fixture fix | After | Non-termination |
-| --- | --- | --- | --- | --- |
-| 1 | as #108 asks | 15 | 5 | 5 fixtures |
-| 2 | narrower | 15 | 0 | none |
-| 3 | as #108 asks | 6 | **0** | none |
+| Attempt | Semantics | Branching | Failures, fixtures unedited | After 2 fixture lines | Non-termination |
+| --- | --- | --- | --- | --- | --- |
+| 1 | as #108 asks | original | 15 (11 engine + 4 plan) | 5 | 5 fixtures |
+| 2 | narrower | original | 15 | 0 | none |
+| 3 | as #108 asks | on the gate | **6** (2 engine + 4 plan) | **0** | none |
+
+**Attempt 3's 6 is not attempt 1's 15 minus the 5 crashes, and that is worth being explicit about
+because the arithmetic invites the wrong inference.** The branching change is not semantics-neutral
+for OUTPUT. It changes which field the conditional resolver branches on, so four plans that diverged
+under attempt 1 converge under attempt 3: branching on `battery_present` reaches the same verdict on
+both branches, and a fact that does not change the answer is not reported as missing. Measured, not
+reasoned: attempt 1 gives 11 engine failures on this tree and attempt 3 gives 2, with the only
+difference being the branching.
+
+So the branching fix removes 9 of the 15, of which 5 are the non-termination and 4 are plans that
+now settle. The remaining 6 are the 4 `plan.test.ts` and 2 `engine.test.ts` failures that the two
+fixture lines clear.
 
 ## 3. Whether the case can arise today
 
@@ -247,19 +261,62 @@ The remaining routes to "in scope, unanswered" are:
 4. A ruleset edit adding a new gate reduces to route 1, because `ruleset.test.ts` requires the
    events columns to equal the ruleset's intake fields plus the eight fixed columns, so a new field
    cannot land without a migration.
+5. **WIDENING an existing gate's `asked_when`, which needs NO migration and NO direct SQL.** This
+   route was missing from rounds 1 to 3 and it is the one that matters, because it is reachable by
+   a supported, routine action rather than by a mistake or by hand-written SQL.
 
-**So the state the change protects against is not currently reachable in production, and route 1 has
-never occurred.** Routes 2 and 3 are fixture mechanisms; they produced every failure this
-measurement observed, and none of them is a thing the API can do. That materially weakens the case
-for changing the engine. It does not eliminate it: route 1 becomes live the first time a
-gate-adding ruleset version meets a deployment with rows, and that is a matter of sequencing rather
-than of impossibility.
+   A row keeps the NULL it legitimately stored while the gate was out of scope. Widen the scope and
+   that same NULL is now in-scope-and-unanswered on the next regeneration, with nothing else having
+   changed. **No migration is triggered**, verified against the guard rather than assumed:
+   `ruleset.test.ts` compares the events column NAMES against the ruleset's intake field names, and
+   a widened expression changes no field name, so the schema contract passes untouched.
+
+   The exposure surface is exactly the gates that are both schema-nullable and themselves gated:
+   `obstructs_public_way` and `sapo_event_type`. Under v2.8 a park or private-venue row stores NULL
+   for `obstructs_public_way`, and any row where it is NULL or `no` stores NULL for
+   `sapo_event_type`. Widening either expression exposes every one of those rows.
+   `battery_present` is the third schema-nullable gate but has no `asked_when` at all, so it cannot
+   be widened; it is only reachable by route 1.
+
+**So the state is not reachable through the API, and no route to it has ever been taken.** Routes 2
+and 3 are fixture mechanisms; they produced every failure this measurement observed, and none is a
+thing the API can do.
+
+**But routes 1 and 5 are not the same kind of thing, and rounds 1 to 3 of this document framed the
+whole question as though only route 1 existed.** Route 1 needs a migration author to add a gate
+column and forget to backfill it. Route 5 needs only a published ruleset whose `asked_when` is
+wider than the previous one, which is a routine act by the verification owner and involves no
+migration, no backfill decision and no SQL. Describing the state as reachable only by a mistake or
+by hand-written SQL was wrong, and it was the central argument for doing nothing.
+
+**Is route 5 reachable TODAY, or only on a future ruleset? Only on a future one, and it has never
+happened.** Checked across every published version rather than assumed: comparing the `asked_when`
+of every field from v2.3 through v2.8, the only change in six versions is v2.4 to v2.5, and it is a
+NARROWING (`battery_system_kwh` went from always-asked to gated on the new `battery_present`). No
+expression has ever been widened. A narrowing is safe in this respect, because it moves fields OUT
+of scope rather than in.
+
+So route 5 is a FUTURE gap rather than a live one, and that is the honest reading. What changes is
+its character, not its status: the trigger is a normal ruleset publication rather than a migration
+error, so "this cannot happen without someone making a mistake" is not a defence the evidence
+supports.
 
 ## 4. What `IntakeValue` would need
 
 `IntakeValue` is `string | number | boolean | readonly string[] | null` and is **declared twice**,
-in `packages/engine/src/types.ts` and `packages/engine/src/intake/visibility.ts`. Both would move
-together or drift.
+identically, in `packages/engine/src/types.ts` and `packages/engine/src/intake/visibility.ts`, with
+`index.ts` re-exporting the `visibility.ts` one.
+
+**Rounds 1 to 3 budgeted two coordinated edits for that. That was the wrong reading: the duplicate
+is a defect, not a cost to plan around.** `AGENTS.md:42` requires shared types to be imported from
+`packages/engine` and never redefined, and the same authority argument applies inside the engine:
+budgeting both edits preserves a second declaration of a type that should have exactly one. Nothing
+in either site needs a separate definition, and they have not drifted only because nobody has edited
+one of them yet.
+
+So the correct entry is: keep the declaration in `types.ts`, have `visibility.ts` import it, and
+then the three-state work touches one declaration. That is a tidy-up this measurement identifies
+rather than proposes, and it is independent of whether issue #108 is acted on at all.
 
 Today `null` carries at least four meanings, and they are only distinguishable by asking the
 registry and the scope resolver, never by looking at the value:
@@ -271,8 +328,8 @@ registry and the scope resolver, never by looking at the value:
 
 The measured change did **not** need `IntakeValue` altered, which is worth stating plainly because
 the issue lists it as likely scope. The distinction was carried in the scope resolver as a separate
-set, not in the value. Adding a distinct "unanswered" member instead would reach: the two type
-declarations, `EventIntake`, `resolveAnswer`, `compareAnswer`, `evaluateClause` and `termHolds`,
+set, not in the value. Adding a distinct "unanswered" member instead would reach: the type
+declaration, `EventIntake`, `resolveAnswer`, `compareAnswer`, `evaluateClause` and `termHolds`,
 `validate.ts`'s reader functions and its persistence loop, `apps/api/src/plan.ts`, and every
 `?? null` that currently flattens the distinction on the way to Postgres.
 
@@ -356,7 +413,7 @@ rule in the ruleset whose trigger references the field.
 `battery_present` is itself NULL.** This is not a theoretical answer: the measurement produced
 precisely that finding, on precisely that rule, on the two fixtures where `battery_present` is
 absent. Since section 3 shows the API cannot produce a NULL `battery_present`, the reintroduction is
-confined to rows created by routes 1 to 3, none of which the API can produce.
+confined to rows created by routes 1 to 3 and 5, none of which the API can produce.
 
 So the argument against in the issue is correct in mechanism and narrow in reach: it is the same
 rule and the same shape, reachable only where an answer is genuinely missing.
@@ -364,8 +421,23 @@ rule and the same shape, reachable only where an answer is genuinely missing.
 ## 6. An option the issue does not list
 
 Three gates already carry `unknown` in their published `values` and the engine already handles it
-correctly. Extending that to the gates that cannot express it moves the 5 boolean gates to enums
-with `yes/no/unknown`.
+correctly. Extending that to the gates that cannot express it would move the 5 boolean gates to
+enums with `yes/no/unknown`.
+
+**This option is PARTIAL, and rounds 1 to 3 described it as though it were complete.** Section 1
+identifies eight gates that cannot carry `unknown`: the five booleans plus `location_type`,
+`headcount` and `structure_types`. Converting the booleans reaches five of the eight. The other
+three are harder in different ways and none of their costs is priced below:
+
+- `location_type` is an enum already, so adding `unknown` to its values is cheap in the schema but
+  every `asked_when` and trigger comparing it must decide what an unknown location means;
+- `headcount` is an integer, so it has no room for a sentinel without changing the column type and
+  every numeric comparison and threshold that reads it;
+- `structure_types` is a multi-enum whose `none` option already carries "no structures", so an
+  `unknown` member has to be given a meaning against `none` and against membership tests.
+
+So the honest framing is that this option makes the distinction expressible for the five gates it
+converts, not for all eight.
 
 **The first version of this document priced this as leaving `asked_when` untouched. That is wrong:
 the ruleset does not load.** `parseAskedWhenClause` accepts a bare token as a flag only when the
@@ -386,29 +458,43 @@ corrected price:
    `food_vendor_count`, `food_affinity_private_exception_claimed`, `sound_audible_from_public_way`,
    `generator_gasoline_gallons`, `generator_diesel_gallons`, `generator_kw`, `battery_system_kwh`,
    `venue_license_covers_event_area`.
-2. **9 rules, 10 trigger conditions** that compare one of these fields to a boolean. These fail
-   quietly rather than loudly: a trigger comparing `bool true` against a stored `"yes"` simply
-   stops matching, and every finding behind it disappears from plans with no error anywhere.
-   `SAPO-BLOCK-PARTY-ELIG-001`, `NYPD-SOUND-001` (2 conditions), `NYPD-SOUND-PARKS-DEP-001`,
-   `DOHMH-VENDOR-PERMIT-001`, `DOHMH-ORGANIZER-NOTIFY-001`, `DOHMH-EXEMPTION-001`,
-   `SLA-VENUE-LICENSE-001`, `SLA-ONEDAY-001`, `SLA-CATERING-001`.
-3. A new published ruleset version, a migration per changed column (boolean to text), and a form
+2. **11 published objects, 12 trigger conditions** that compare one of these fields to a boolean.
+   Rounds 1 to 3 said 9 and 10, because the walk that produced them iterated the ruleset's `rules`
+   array and the ruleset also has an `advisories` array. Corrected by walking every top-level array
+   that carries an `id`:
+
+   - **9 rules**: `SAPO-BLOCK-PARTY-ELIG-001`, `NYPD-SOUND-001` (2 conditions),
+     `NYPD-SOUND-PARKS-DEP-001`, `DOHMH-VENDOR-PERMIT-001`, `DOHMH-ORGANIZER-NOTIFY-001`,
+     `DOHMH-EXEMPTION-001`, `SLA-VENUE-LICENSE-001`, `SLA-ONEDAY-001`, `SLA-CATERING-001`.
+   - **2 advisories**, missed entirely: `ADV-ALCOHOL-PUBLIC-001` (`alcohol bool true`) and
+     `ADV-NOISE-CODE-001` (`amplified_sound bool true`). Losing the first drops the public-alcohol
+     COVERAGE_GAP, which is the ruleset telling an organizer it does not cover their situation.
+
+   These fail QUIETLY: a trigger comparing `bool true` against a stored `"yes"` stops matching, and
+   every finding behind it leaves the plan with no error anywhere.
+3. **`packages/engine/src/intake/validate.ts`**, also missed. `intakeWarnings` has two direct
+   `applicable("alcohol") === true` checks, at the block-party eligibility conflict and the
+   alcohol-in-public-space coverage gap. With enum strings both stop firing, silently, so the two
+   inline warnings the spec requires at submission time disappear as well as the findings.
+4. A new published ruleset version, a migration per changed column (boolean to text), and a form
    control change.
-4. Answer-key impact, which this document has **not** measured for this option. The engine change
-   was measured and moves nothing; this one changes 10 trigger conditions across 9 rules and cannot
-   be assumed to move nothing.
+5. Answer-key impact, which this document has **not** measured for this option. The engine change
+   was measured and moves nothing; this one changes 12 trigger conditions across 11 published
+   objects plus two validator checks, and cannot be assumed to move nothing.
 
 What it buys: the distinction is expressible by an organizer who genuinely does not know, which is a
 case the engine change does *not* address, because that change only helps where nobody was asked at
 all.
 
 What it does not do: help route 1. A row predating a column is still unanswered whatever the
-column's type. If route 1 is the motivating case, only the engine change reaches it.
+column's type, and neither does a widened `asked_when` under route 5. If either is the motivating
+case, only the engine change reaches it.
 
-**On the corrected price this option is no longer the cheap one.** The engine change is one file,
-+32/-3, with the answer key measured and unmoved. This one is 8 regulatory decisions, 9 rules at
-risk of silent non-matching, a ruleset publication, a migration, a form change, and an unmeasured
-answer key. I am still not recommending either. I am recording that the first version of this
+**On the corrected price this option is no longer the cheap one.** The engine change is **two
+files, `conditions.ts` +47/-3 and `verdict.ts` +18/-2**, with the answer key measured and unmoved
+under #108's own semantics. This one is 8 regulatory decisions, 11 published objects and 2 validator
+checks at risk of silent non-matching, a ruleset publication, a migration, a form change, an
+unmeasured answer key, and it reaches only five of the eight gates that need it. I am still not recommending either. I am recording that the first version of this
 document understated this option's cost and overstated the other's, and that correcting both moves
 them in the same direction.
 
@@ -425,10 +511,12 @@ semantics.
 
 The two facts a decision should turn on, neither of which is about fixtures:
 
-- The state being protected against is **not reachable through the API today** (section 3). Changing
-  engine semantics to handle it is insurance against a migration that has not been written, on a
-  deployment that has no rows. Route 1 has never occurred; v2.5 is an instance of a migration author
-  closing it, not of it happening.
+- The state being protected against is **not reachable through the API today** (section 3), and no
+  route to it has ever been taken. But **route 5, a widened `asked_when`, needs no migration and no
+  SQL**, so this is insurance against a routine ruleset publication rather than only against a
+  migration error. Rounds 1 to 3 of this document said the latter, and the product owner and an
+  external reviewer weighed it. No expression has ever been widened across six published versions,
+  so the gap is future rather than live.
 - The change is **larger than the issue scopes it**: `verdict.ts` must change too, or the plan
   generator does not terminate (section 2). That is a correctness-critical file the issue does not
   mention, and it is where the whole difficulty of this change lives. The semantics are three lines;
@@ -436,15 +524,17 @@ The two facts a decision should turn on, neither of which is about fixtures:
 
 **The round 2 corrections all moved in the same direction, and it is not the direction that favours
 the alternative.** The engine option lost a cost it never had (no database change: section 4), and
-the ruleset option gained several it does have (8 regulatory decisions, 9 rules that fail quietly,
-an unmeasured answer key: section 6). That narrows the gap between them considerably.
+the ruleset option gained several it does have (8 regulatory decisions, 11 published objects and
+2 validator checks that fail quietly, an unmeasured answer key: section 6). That narrows the gap between them considerably.
 
 It still does not force an answer, and the reason is the one fact none of the corrections touched:
 the engine change buys correctness in a state nothing can currently produce. A cheaper option that
 addresses an unreachable state is not thereby worth taking.
 
-If the deployment gains real rows before the next gate-adding ruleset version, route 1 becomes live
-and the calculus changes. Until then the measurement supports deferring, without forcing it.
+If the deployment gains real rows before the next ruleset version that widens a gate, route 5
+becomes live and the calculus changes, and route 5 needs no migration to arrive. Until then the
+measurement supports deferring, without forcing it. What it no longer supports is the sentence
+rounds 1 to 3 offered for deferring: that reaching this state requires a mistake.
 
 ---
 
@@ -462,8 +552,8 @@ because three of them were errors in the direction of the conclusion.
    production reachability. SQL inserts omitting columns and in-memory records missing keys are
    different things, and neither is a production route (sections 2 and 3).
 4. **The alternative was underpriced and the engine change overpriced.** The ruleset option does not
-   load without rewriting 8 expressions and auditing 9 rules; the engine option needs no database
-   change at all (sections 4 and 6).
+   load without rewriting 8 expressions and auditing 11 published objects; the engine option needs
+   no database change at all (sections 4 and 6).
 
 Errors 1, 2 and 4 each made the engine change look worse or the alternative look better than the
 evidence supports. Corrected, the two options are closer than the first version implied.
@@ -495,3 +585,35 @@ Three more, and the first is the most serious error in the history of this docum
 
 Error 5 is the one to weigh: for two rounds this document's most quoted sentence was evidence about
 a change nobody had proposed.
+
+### Round 4
+
+Six more. The first changes an argument the product owner and an external reviewer have been
+reasoning from.
+
+8. **A route to the state was missing, and it is the one that needs no migration and no SQL**
+   (section 3, route 5). Widening an existing gate's `asked_when` leaves a legitimately-NULL row
+   in scope and unanswered on the next regeneration, and no migration is triggered because the
+   schema contract compares field NAMES. Rounds 1 to 3 framed the state as reachable only by a
+   migration error or hand-written SQL, and that was the central argument for doing nothing.
+   Checked across v2.3 to v2.8: no expression has ever been widened, so the gap is future rather
+   than live. What changes is that its trigger is a routine publication, not a mistake.
+9. **The comparison still quoted `+32/-3` for the engine option** after section 2 had been
+   corrected to two files. Fixed in section 6 and in the round 2 summary, not only where it was
+   flagged.
+10. **The enum option's blast radius missed the `advisories` array and the validator.** The walk
+    that produced "9 rules, 10 conditions" iterated `rules` only. It is 11 published objects and 12
+    conditions, adding `ADV-ALCOHOL-PUBLIC-001` and `ADV-NOISE-CODE-001`, plus two
+    `applicable("alcohol") === true` checks in `intake/validate.ts` (section 6).
+11. **That option is partial and was described as complete.** It reaches 5 of the 8 gates that
+    cannot carry `unknown`; `location_type`, `headcount` and `structure_types` are unpriced
+    (section 6).
+12. **The duplicate `IntakeValue` was budgeted as a coordination cost.** It is a defect against
+    `AGENTS.md:42`; the entry is now one declaration plus an import (section 4).
+13. **The attempt table needed its measurement basis stated** (section 2). Attempt 3's 6 is not
+    attempt 1's 15 minus the crashes: the branching change also settles 4 plans that previously
+    diverged. Re-measured on one tree so the rows compare.
+
+Finding 8 is the one that matters. Nine of the thirteen corrections in this document have run in
+the direction of its own conclusion, which is worth stating plainly given that its conclusion is
+"the measurement supports deferring".
