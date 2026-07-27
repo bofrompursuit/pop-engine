@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadEventStats } from "./dashboard-api";
 
 const jsonResponse = (status: number, body: unknown): Response =>
@@ -6,6 +6,11 @@ const jsonResponse = (status: number, body: unknown): Response =>
     status,
     headers: { "Content-Type": "application/json" },
   });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("loadEventStats", () => {
   it("parses the F-402 wire shape", async () => {
@@ -47,6 +52,27 @@ describe("loadEventStats", () => {
     await expect(loadEventStats("https://api.example.com", "event-1")).resolves.toEqual({
       ok: false,
       message: "The API returned stats this page cannot read.",
+    });
+  });
+
+  it("aborts a hung fetch after timeoutMs so callers can resume polling", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          }),
+      ),
+    );
+
+    await expect(
+      loadEventStats("https://api.example.com", "event-1", { timeoutMs: 20 }),
+    ).resolves.toEqual({
+      ok: false,
+      message: "The API could not be reached.",
     });
   });
 });

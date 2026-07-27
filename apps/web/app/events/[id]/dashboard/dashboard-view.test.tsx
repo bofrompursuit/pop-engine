@@ -21,6 +21,7 @@ afterEach(() => {
 });
 
 const EVENT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_EVENT_ID = "22222222-2222-4222-8222-222222222222";
 
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -37,6 +38,9 @@ const stats = (overrides: Partial<EventStats> = {}): EventStats => ({
   checkins_last_10min: 0,
   ...overrides,
 });
+
+const totalLabel = (node: HTMLElement | null): string =>
+  node?.textContent?.replace(/\s+/g, " ").trim() ?? "";
 
 describe("capacitySummary", () => {
   it("says capacity not set and invents no percentage when capacity is null", () => {
@@ -73,7 +77,9 @@ describe("DashboardView", () => {
     expect(screen.getByTestId("checkins-total").textContent).toContain("0");
     expect(screen.getByTestId("checkins-total").textContent).toContain("check-ins");
     expect(screen.getByTestId("capacity-gauge").textContent).toContain("capacity not set");
-    expect(screen.getByTestId("checkin-split").textContent).toBe("0 registered · 0 walk-ins");
+    expect(screen.getByTestId("checkin-split").textContent).toBe(
+      "0 registered check-ins · 0 walk-in check-ins",
+    );
   });
 
   it("shows capacity percentage, over-capacity warning, and the registered/walk-in split", async () => {
@@ -101,7 +107,9 @@ describe("DashboardView", () => {
     expect(screen.getByTestId("rsvp-compare").textContent).toBe(
       "20 RSVPs confirmed · 12 check-ins",
     );
-    expect(screen.getByTestId("checkin-split").textContent).toBe("7 registered · 5 walk-ins");
+    expect(screen.getByTestId("checkin-split").textContent).toBe(
+      "7 registered check-ins · 5 walk-in check-ins",
+    );
   });
 
   it("keeps the last totals and shows last-updated age when a poll fails", async () => {
@@ -143,7 +151,12 @@ describe("DashboardView", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={20} />,
+      <DashboardView
+        eventId={EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={20}
+        fetchTimeoutMs={60_000}
+      />,
     );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -151,13 +164,75 @@ describe("DashboardView", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     resolveFirst(jsonResponse(200, stats({ checkins_total: 4 })));
-    expect((await screen.findByTestId("checkins-total")).textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "4 check-ins",
+    expect(totalLabel(await screen.findByTestId("checkins-total"))).toBe("4 check-ins");
+  });
+
+  it("expires a hung poll so the next interval can recover", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          }),
+      )
+      .mockResolvedValue(jsonResponse(200, stats({ checkins_total: 2 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <DashboardView
+        eventId={EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={30}
+        fetchTimeoutMs={20}
+      />,
     );
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1), {
+      timeout: 2_000,
+    });
+    expect(totalLabel(await screen.findByTestId("checkins-total"))).toBe("2 check-ins");
+  });
+
+  it("clears the previous event's totals as soon as the event id changes", async () => {
+    let resolveSecond!: (value: Response) => void;
+    const second = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, stats({ checkins_total: 3 })))
+      .mockReturnValueOnce(second);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(
+      <DashboardView
+        eventId={EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={60_000}
+        fetchTimeoutMs={60_000}
+      />,
+    );
+    expect(totalLabel(await screen.findByTestId("checkins-total"))).toBe("3 check-ins");
+
+    rerender(
+      <DashboardView
+        eventId={OTHER_EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={60_000}
+        fetchTimeoutMs={60_000}
+      />,
+    );
+    expect(screen.queryByTestId("checkins-total")).toBeNull();
+    expect(screen.getByText("Loading check-ins…")).toBeDefined();
+
+    resolveSecond(jsonResponse(200, stats({ checkins_total: 9 })));
+    expect(totalLabel(await screen.findByTestId("checkins-total"))).toBe("9 check-ins");
   });
 
   it("discards an in-flight poll after the event id changes", async () => {
-    const otherEventId = "22222222-2222-4222-8222-222222222222";
     let resolveFirst!: (value: Response) => void;
     const first = new Promise<Response>((resolve) => {
       resolveFirst = resolve;
@@ -169,26 +244,55 @@ describe("DashboardView", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { rerender } = render(
-      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={60_000} />,
+      <DashboardView
+        eventId={EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={60_000}
+        fetchTimeoutMs={60_000}
+      />,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     rerender(
-      <DashboardView eventId={otherEventId} apiBaseUrl="https://api.example.com" pollMs={60_000} />,
+      <DashboardView
+        eventId={OTHER_EVENT_ID}
+        apiBaseUrl="https://api.example.com"
+        pollMs={60_000}
+        fetchTimeoutMs={60_000}
+      />,
     );
-    expect((await screen.findByTestId("checkins-total")).textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "9 check-ins",
-    );
+    expect(totalLabel(await screen.findByTestId("checkins-total"))).toBe("9 check-ins");
 
     resolveFirst(jsonResponse(200, stats({ checkins_total: 1 })));
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(screen.getByTestId("checkins-total").textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "9 check-ins",
-    );
+    expect(totalLabel(screen.getByTestId("checkins-total"))).toBe("9 check-ins");
   });
 
-  it("never uses forbidden arrival labels in dashboard UI source", () => {
+  it("labels every rendered check-in count as check-ins, never occupancy or foot traffic", async () => {
     // AC 3: honest telemetry — labels must say check-ins; presence claims need F-410.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          200,
+          stats({
+            checkins_total: 4,
+            checkins_registered: 3,
+            checkins_walk_in: 1,
+            checkins_last_10min: 2,
+          }),
+        ),
+      ),
+    );
+    render(<DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={60_000} />);
+
+    const split = (await screen.findByTestId("checkin-split")).textContent ?? "";
+    expect(split).toContain("registered check-ins");
+    expect(split).toContain("walk-in check-ins");
+    expect(screen.getByTestId("checkins-total").textContent).toContain("check-ins");
+    expect(screen.getByTestId("checkins-last-10min").textContent).toContain("check-ins");
+    expect(screen.getByTestId("rsvp-compare").textContent).toContain("check-ins");
+
     const viewSource = readFileSync(resolve(here, "dashboard-view.tsx"), "utf8");
     const pageSource = readFileSync(resolve(here, "page.tsx"), "utf8");
     const cssSource = readFileSync(resolve(here, "dashboard.css"), "utf8");

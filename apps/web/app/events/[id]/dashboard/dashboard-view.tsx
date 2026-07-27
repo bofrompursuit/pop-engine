@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   loadEventStats,
+  STATS_FETCH_TIMEOUT_MS,
   STATS_POLL_MS,
   type EventStats,
 } from "./dashboard-api";
@@ -19,6 +20,8 @@ export type DashboardViewProps = {
   now?: () => number;
   /** Injectable poll interval; production uses STATS_POLL_MS. */
   pollMs?: number;
+  /** Injectable fetch abort timeout; production uses STATS_FETCH_TIMEOUT_MS. */
+  fetchTimeoutMs?: number;
 };
 
 /**
@@ -53,6 +56,7 @@ export function DashboardView({
   apiBaseUrl,
   now = systemNow,
   pollMs = STATS_POLL_MS,
+  fetchTimeoutMs = STATS_FETCH_TIMEOUT_MS,
 }: DashboardViewProps) {
   const [stats, setStats] = useState<EventStats | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -62,6 +66,11 @@ export function DashboardView({
   nowRef.current = now;
 
   useEffect(() => {
+    // Drop the previous event's totals immediately so a slow/failed fetch cannot leave them up.
+    setStats(null);
+    setFailure(null);
+    setLastSuccessAt(null);
+
     if (!UUID.test(eventId)) {
       setFailure("That event link is not valid.");
       return;
@@ -69,14 +78,20 @@ export function DashboardView({
 
     let alive = true;
     let inFlight = false;
+    let activeAbort: AbortController | null = null;
 
     const refresh = async () => {
       // Serialize polls: if latency exceeds pollMs, overlapping requests would each
       // supersede the last and the dashboard would never leave "Loading check-ins…".
       if (inFlight) return;
       inFlight = true;
+      const abort = new AbortController();
+      activeAbort = abort;
       try {
-        const result = await loadEventStats(apiBaseUrl, eventId);
+        const result = await loadEventStats(apiBaseUrl, eventId, {
+          signal: abort.signal,
+          timeoutMs: fetchTimeoutMs,
+        });
         if (!alive) return;
         if (!result.ok) {
           setFailure(result.message);
@@ -86,6 +101,7 @@ export function DashboardView({
         setStats(result.stats);
         setLastSuccessAt(nowRef.current());
       } finally {
+        if (activeAbort === abort) activeAbort = null;
         inFlight = false;
       }
     };
@@ -100,10 +116,11 @@ export function DashboardView({
 
     return () => {
       alive = false;
+      activeAbort?.abort();
       window.clearInterval(poll);
       window.clearInterval(staleClock);
     };
-  }, [apiBaseUrl, eventId, pollMs]);
+  }, [apiBaseUrl, eventId, fetchTimeoutMs, pollMs]);
 
   if (failure !== null && stats === null) {
     return (
@@ -174,7 +191,7 @@ export function DashboardView({
         {stats.rsvps_total} RSVPs confirmed · {stats.checkins_total} check-ins
       </p>
       <p className="ops__split" data-testid="checkin-split">
-        {stats.checkins_registered} registered · {stats.checkins_walk_in} walk-ins
+        {stats.checkins_registered} registered check-ins · {stats.checkins_walk_in} walk-in check-ins
       </p>
 
       {showStale && lastSuccessAt !== null && (

@@ -16,6 +16,13 @@ export type EventStats = {
 
 export type StatsResult = { ok: true; stats: EventStats } | { ok: false; message: string };
 
+export type LoadEventStatsOptions = {
+  /** Abort when the caller unmounts or switches events. */
+  signal?: AbortSignal;
+  /** Bound a hung fetch so serialized polling can resume (default STATS_FETCH_TIMEOUT_MS). */
+  timeoutMs?: number;
+};
+
 const UNREACHABLE = "The API could not be reached.";
 
 async function readJson(response: Response): Promise<unknown> {
@@ -62,13 +69,36 @@ function parseStats(body: unknown): EventStats | null {
 export async function loadEventStats(
   apiBaseUrl: string,
   eventId: string,
+  options: LoadEventStatsOptions = {},
 ): Promise<StatsResult> {
+  const timeoutMs = options.timeoutMs ?? STATS_FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  const onExternalAbort = () => {
+    controller.abort();
+  };
+  if (options.signal !== undefined) {
+    if (options.signal.aborted) {
+      return { ok: false, message: UNREACHABLE };
+    }
+    options.signal.addEventListener("abort", onExternalAbort);
+  }
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/stats`, { ...CREDENTIALED });
+    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/stats`, {
+      ...CREDENTIALED,
+      signal: controller.signal,
+    });
   } catch {
     return { ok: false, message: UNREACHABLE };
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onExternalAbort);
   }
+
   const body = await readJson(response);
   if (!response.ok) {
     return {
@@ -90,3 +120,6 @@ export async function loadEventStats(
 
 /** Polling interval from the F-402 spec (~5 seconds; no websockets in MVP). */
 export const STATS_POLL_MS = 5_000;
+
+/** Expire a hung fetch so `inFlight` clears and the next poll tick can run. */
+export const STATS_FETCH_TIMEOUT_MS = 8_000;
