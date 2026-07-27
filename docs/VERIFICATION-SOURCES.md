@@ -258,6 +258,51 @@ The checklist's text extracts cleanly (2,141 characters, not a scanned image) an
 
 **What would unblock publication**, unchanged by this round: a source establishing, per agency, that that agency's published closure stops that agency's filing counter. Not a better list of dates.
 
+## Round 6 — 2026-07-27 (DOB-ASSEMBLY-001 one-off FDNY fee and DOB TPA fee row)
+
+**Purpose:** resolve the two `NOT ESTABLISHED` fee questions in `DOB-ASSEMBLY-001` without changing published ruleset `nyc.v2.8`. This is an evidence-only pass. It does not change a verification status, rule, fixture, or rendered amount. All URLs below were retrieved 2026-07-27.
+
+### Question A — which Appendix A line does FDNY bill for a one-off event?
+
+**Outcome: NOT ESTABLISHED. The current rendering stands:** “FDNY's charge for a one-off event is not published as an amount — confirm with FDNY.”
+
+The current City event guide adds a useful fact but does not name an Appendix A line or dollar amount:
+
+- `https://www.nyc.gov/assets/cecm/downloads/pdf/CECM-Comprehensive-Event-Permitting-Guide-2024_final.pdf` — the FDNY table names a “Temporary Public Assembly Permit” and states “Permit fees based on occupancy.” Its instructions say: “The promoter or sponsor of the event shall make an application for a Fire Department Permit thru the FDNY public portal.” This establishes that the event promoter or sponsor applies and that FDNY describes the fee as occupancy-based. It does **not** state A03.1(4), A03.1(68), `$415`, or `$210 per hour`.
+- `https://www.nyc.gov/site/fdny/business/all-certifications/per-assemblyoccupancy2.page` — “To maintain or operate a place of assembly”; “Fee varies based on the number of occupants”; “Not to exceed 1 year.” The page does not distinguish permanent from temporary public assembly fees and states no amount.
+- `https://www.nyc.gov/assets/fdny/downloads/pdf/about/appendix-a-2022.pdf` — A03.1 says: “All such fees are per year, except when based on frequency of inspection or hourly rate, as indicated.” Item (4) states “Assembly occupancies (places of assembly)” and “Fire safety inspection/permit (frequency of inspection as required by code or rule),” with “Occupancy 75 to 149” at `$415.00`. Item (68) states “Street fairs and other public gatherings or gathering places,” with “Review of site plan (per hour)” and “Fire safety inspection (per hour)” each at `$210.00`.
+- `https://www.nyc.gov/assets/fdny/downloads/pdf/about/chapter-1-2022.pdf` — FC 105.6 states: “A permit is required to establish and operate a place of assembly. The term of such permit shall be for a period not to exceed 1 year.”
+- `https://www.nyc.gov/site/buildings/dob/project-categories-paco.page` — DOB states: “The Fire Code has operational requirements for a TPA, also referred to in the Fire Code as a public gathering.”
+
+No retrieved source says that a one-off TPA inspection or permit is billed under A03.1(4), under A03.1(68), or under both. The City guide's “based on occupancy” wording cannot be converted into A03.1(4)'s dollar amount without supplying the missing cross-reference by inference. A03.1(68) remains textually applicable to public gatherings, while DOB expressly uses that term for a TPA. The exact line and amount therefore remain unpublished.
+
+### Question B — which Table 28-112.8 row does DOB NOW bill for a TPA?
+
+**Outcome: the current operational charge is established as `$250` per TPA application; the table-label reconciliation remains NOT ESTABLISHED.** No current source retrieved in this pass says that the same filing also draws the adjacent `$130` certificate charge.
+
+Current operational sources:
+
+- `https://nyc-business.nyc.gov/nycbusiness/description/temporary-place-of-assembly-certificate-of-operation` — “The fee for a TPA is $250.” It also states: “If the event is less than 10 business days away, you must pay an extra $100 per day” and “You pay the fee online through the DOB NOW system by credit card or e-check.”
+- `https://www.nyc.gov/assets/buildings/pdf/build_pa_presentation.pdf` — under “Temporary Place of Assembly Filing Fees”: “$250 Fee for each Temporary Place of Assembly application” and “A Late Fee of $100/day is charged for each day the TPA filing fee is late.” This presentation remains linked from DOB's current PA/TPA resources page at `https://www.nyc.gov/site/buildings/industry/dob-now-build-resources-pa.page`.
+- `https://www.nyc.gov/assets/cecm/downloads/pdf/CECM-Comprehensive-Event-Permitting-Guide-2024_final.pdf` — “Applicants for a TPA pay a fee of $250. If the event is less than 10 business days away, applicants must pay an additional $100 per day. ... The fee is paid online through the DOB NOW system by credit card or e-check.” Its fee summary separately states: “Temporary Place of Assembly Certificate of Operation carries a minimum fee of $250.”
+
+The statute still uses two labels:
+
+- `https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCadmin/0-0-0-156729` — Table 28-112.8 lists “Temporary place of assembly certificate of operation” at `$130` filing and `$130` renewal, then “Temporary use letter for place of assembly” at `$250`, with the comment: “Application shall be submitted at least ten work days prior to the event; late fees shall be imposed at $100 for each day following required submission date that the application is received by the department.”
+
+No current 1 RCNY bridge was located:
+
+- `https://www.nyc.gov/assets/buildings/rules/1_RCNY_101-03.pdf` — the current ten-page fee rule contains no “place of assembly,” “temporary place,” or `TPA` entry.
+- `https://www.nyc.gov/assets/buildings/rules/1_RCNY_14-04.pdf` — “§14-04 Fees Payable to the Department of Buildings. [REPEALED] Please see Title 28 of the Administrative Code for new provisions.”
+- `https://www.nyc.gov/site/buildings/codes/oppn0298.page` is historical only. It said: “When an applicant files for a Temporary Place of Assembly Permit for a Temporary Event, the Borough office will collect a $250.00 fee.” The page is marked “RESCINDED BY BUILDINGS BULLETIN 2017-007.”
+- `https://www.nyc.gov/assets/buildings/bldgs_bulletins/bb_2017-007.pdf` says OPPN 2/98 was among notices “no longer applicable under any Code” and that rescinded documents “will not be applicable to any projects after the issuance date of this Bulletin.”
+
+The operational question is therefore answered only to the amount DOB currently publishes and describes as the TPA application fee: `$250`, plus the published late fee when applicable. The retrieved sources do not name the Table 28-112.8 row DOB NOW maps that payment to, and none expressly says whether the `$130` certificate row can never be charged separately. Do not rewrite the statute's labels or claim that a rule reconciles them.
+
+### v2.9 follow-up flag — no v2.8 edit in this round
+
+`DOB-ASSEMBLY-001.output.deadline.qualification` currently cites Table 28-112.8's “at least ten work days prior to the event” comment as one source for the ten-day unit. That comment is on the “Temporary use letter for place of assembly” row, not the “Temporary place of assembly certificate of operation” row. The current operational pages independently publish ten business days for a TPA, but the table attribution should not be presented as belonging to the TPA certificate row unless a source reconciles the labels. Correcting that attribution requires a new immutable rules publication (`nyc.v2.9` or later); it is deliberately not attempted here.
+
 ## Suggested Dev 4 Workflow
 
 1. Triage the red flags (RF-1, RF-2 first: they touch Scenario E and the demo anchor). Anything that changes an expected scenario output is an answer-key change and needs a team decision, not a quiet edit.
