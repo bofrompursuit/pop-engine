@@ -217,17 +217,17 @@ A second fetch-confirmed pass run to verify the external (Codex) assessment of r
 
 ## Round 5 — 2026-07-26 (does a published agency closure stop that agency's filing counter? DOB and SLA — SPEC-CONFLICT #130)
 
-**Purpose:** `OPEN-QUESTIONS.md` §2 item R-10 (holiday-calendar source for `us-ny-business-days@2026`), and the prior question R-10 turns on — whether any published source defines "business day" for a DOB or SLA filing lead. Recorded so the reasoning in `apps/api/src/calendar.ts` rests on a dossier entry rather than on a doc comment alone. **Nothing here is a verification and nothing is promoted.** `PUBLISHED_HOLIDAY_CALENDARS` stays empty, the three business-day rules keep rendering NOT_CALCULABLE, and no holiday date is published by this round.
+**Purpose:** `OPEN-QUESTIONS.md` §2 item R-10 (holiday-calendar source for `us-ny-business-days@2026`), and the prior question R-10 turns on — whether any published source defines "business day" for a DOB or SLA filing lead. Recorded so the reasoning in `apps/api/src/calendar.ts` rests on a dossier entry rather than on a doc comment alone. **Nothing here is a verification and nothing is promoted.** `PUBLISHED_HOLIDAY_CALENDARS` stays empty, the four business-day rules keep rendering NOT_CALCULABLE, and no holiday date is published by this round.
 
 **Note on a gap this closes.** Neither pass below was in this dossier before 2026-07-26, though R-10 has been in scope since Round 1: the research lived only in the `calendar.ts` doc comment across PR #129 (`d692e24`, `8a5bd4a`, `44e25b8`) and PR #133. That was the pre-existing state, not something either PR introduced, and this entry is where it stops being true.
 
-**The question, unchanged since Round 4's successor pass:** does an agency's published closure stop that agency's _filing_ counter? Every candidate holiday list depends on it, and no source located in either pass answers it.
+**The question, unchanged since Round 4's successor pass:** does an agency's published closure stop that agency's _filing_ counter? Every candidate holiday list depends on it. The two passes below assessed DOB's TUP path and SLA's One-Day Alcohol Event and Catering Permit paths; neither assessed DOB's separate TPA path.
 
-**Outcome: NOT PUBLISHED, for both DOB and SLA, reached independently twice.**
+**Outcome for the assessed paths: NOT PUBLISHED, for both DOB and SLA, reached independently twice.**
 
 **Pass A** (PR #129) — the city Office of Payroll Administration holiday list, the state Civil Service pass-day treatment, DCAS PSB 440-2, the federal OPM schedule, General Construction Law §24 and §25-a, and Public Officers Law §62. Result: staff-holiday divergence established; the filing-counter link not established. Two leads left open (GCL §25-a, POL §62) and recorded as leads in `calendar.ts`, not as answers.
 
-**Pass B** (2026-07-26, this round) — an independent pass over the DOB TUP page, the DOB closure calendar, ABC Law §97 and §98, and 9 NYCRR Part 29. Same result: NOT PUBLISHED for both agencies. **Auditing caveat, stated because it bounds what this pass is worth:** pass B's own retrievals were reported to this round, not re-fetched here, and no quoted text or retrieval metadata was carried over for the closure calendar, ABC §97/§98 or 9 NYCRR Part 29. Those four are therefore an _uncorroborated concurring result_, not fetched evidence on file. Anyone promoting anything on the strength of pass B must fetch them first. They are named rather than omitted so that whoever retrieves them knows where to start, but under this dossier's own method rule above — "unfetched links were excluded" — they are not eligible to be cited as evidence, and this entry does not cite them as such. Pass B also treated POL §62 as a general lead; `calendar.ts` keeps the narrower statement, that §62 reaches state and county offices but not DOB, a city agency.
+**Pass B** (2026-07-26, this round) — an independent pass over the DOB TUP page, the DOB closure calendar, ABC Law §97 and §98, and 9 NYCRR Part 29. Same result for the assessed DOB TUP and SLA permit paths: NOT PUBLISHED. **Auditing caveat, stated because it bounds what this pass is worth:** pass B's own retrievals were reported to this round, not re-fetched here, and no quoted text or retrieval metadata was carried over for the closure calendar, ABC §97/§98 or 9 NYCRR Part 29. Those four are therefore an _uncorroborated concurring result_, not fetched evidence on file. Anyone promoting anything on the strength of pass B must fetch them first. They are named rather than omitted so that whoever retrieves them knows where to start, but under this dossier's own method rule above — "unfetched links were excluded" — they are not eligible to be cited as evidence, and this entry does not cite them as such. Pass B also treated POL §62 as a general lead; `calendar.ts` keeps the narrower statement, that §62 reaches state and county offices but not DOB, a city agency.
 
 **Fetched first-hand in this round (quote on file, URL retrieved 2026-07-26 with a browser user-agent):**
 
@@ -258,9 +258,9 @@ The checklist's text extracts cleanly (2,141 characters, not a scanned image) an
 
 ### Follow-up — 2026-07-27 (named leads and Pass B retrievals)
 
-**Question:** for a filing lead counted in business days, does a given agency's published closure stop that agency's filing counter? DOB and SLA are assessed separately. This follow-up did not collect or assess another holiday-date list.
+**Question:** for a filing lead counted in business days, does a given agency's published closure stop that agency's filing counter? DOB and SLA are assessed separately. This follow-up covers DOB's 15-business-day TUP path and SLA's 15-business-day One-Day Alcohol Event and Catering Permit paths. It does not assess DOB-ASSEMBLY-001's separate 10-business-day TPA path and did not collect or assess another holiday-date list.
 
-**Outcome: NOT PUBLISHED for DOB; NOT PUBLISHED for SLA.** The sources below establish office closures, filing leads, and rules for a terminal filing day. No fetched source states that every published agency closure is excluded when counting either agency's 15-business-day lead.
+**Outcome for the assessed paths: NOT PUBLISHED for DOB; NOT PUBLISHED for SLA.** The sources below establish office closures, filing leads, and rules for a terminal filing day. No fetched source states that every published agency closure is excluded when counting any of the three assessed 15-business-day leads.
 
 **GCL §25-a lead — fetched 2026-07-27:**
 
@@ -289,13 +289,11 @@ The checklist's text extracts cleanly (2,141 characters, not a scanned image) an
 
 **SLA result:** POL §62 establishes how holidays and Saturdays are treated for transacting business in state offices. It does not define SLA's 15-business-day unit or state that every SLA-published closure is excluded from the backward count. The permit page, ABC Law §§97–98, current Part 29, and Advisory 2022-36 do not supply that connection. **NOT PUBLISHED.**
 
-**Administrative-determination modality:** searches of SLA's published advisories and full-board materials and of DOB/OATH materials located no determination applying a published agency closure to either filing lead. That search result is recorded only as a search result, not as proof that no unpublished or unindexed determination exists. The fetched SLA advisory above addresses Part 29 but not the counter; the fetched DOB materials address the lead and closure separately.
-
 **Now established:** DOB publishes a TUP filing lead and a DOB closure page; SLA publishes two 15-business-day filing leads; POL §62 governs transaction of business in state offices on holidays and Saturdays; and §25-a has been applied to a terminal filing day in a backward-counted minimum-notice setting without thereby supplying a general rule that internal holidays are removed from the minimum period.
 
-**Not established:** the contents of either agency's filing calendar; a definition of "business day" for any of the three rules; that a DOB closure stops the DOB TUP counter; that an SLA closure stops either SLA permit counter; or that an agency's closure list supplies the holidays to which §25-a or POL §62 applies. No rule, calendar, verification status, or spec is promoted by this follow-up.
+**Not established:** the contents of either agency's filing calendar; a definition of "business day" for any of the three assessed rules; that a DOB closure stops the DOB TUP counter; that an SLA closure stops either SLA permit counter; or that an agency's closure list supplies the holidays to which §25-a or POL §62 applies. This follow-up also does not establish whether a DOB closure stops DOB-ASSEMBLY-001's separate TPA counter. No rule, calendar, verification status, or spec is promoted by this follow-up.
 
-**What would unblock publication**, unchanged by this round: a source establishing, per agency, that that agency's published closure stops that agency's filing counter. Not a better list of dates.
+**What would unblock the three assessed filing paths**, unchanged by this round: a source establishing, per path, that that agency's published closure stops that filing counter. Not a better list of dates. That would not by itself support publishing the shared calendar: DOB-ASSEMBLY-001's TPA path consumes the same calendar and remains outside this follow-up.
 
 ## Suggested Dev 4 Workflow
 
