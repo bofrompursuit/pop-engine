@@ -85,7 +85,7 @@ const alertPool = new Pool({
   connectionString: databaseUrl,
   max: ALERT_POLLER_CONNECTIONS,
 });
-const alertPoller = createAlertPoller({ database: alertPool, senders });
+const alertPoller = createAlertPoller({ database: alertPool, senders, jurisdiction: engineRuleset.jurisdiction });
 
 createApp({
   database: pool,

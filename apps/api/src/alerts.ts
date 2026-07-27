@@ -696,7 +696,26 @@ const slackWarningCopy = (
   evaluatedOn: string,
   planHasGatedFiling: boolean,
 ): { subject: string; body: string } => ({
-  subject: `At risk — apply within ${minSlackDays} days of ${evaluatedOn}`,
+  // THE SUBJECT BRANCHES TOO, and not branching it was a regression this file's own argument had
+  // already refuted. Anchoring "apply within N days" to a date is right when N is a countdown from
+  // that date, which is what ungated slack is. It is wrong when N is a WIDTH: `specs/F-102` fixes
+  // gated slack as `latest_apply − apply_after`, so anchoring it instructs the organizer to act by
+  // a day that may fall before the window opens at all. That is a filing date the sources do not
+  // publish, stated in the one line most organizers read and the only one the body's qualification
+  // cannot reach.
+  //
+  // A width needs no anchor, which is why the gated subject carries none: both dates come from the
+  // plan and neither moves, so unlike a countdown it does not decay and there is nothing to fix by
+  // dating it. It says what the number is instead, which is what F-102 calls it.
+  //
+  // Branched on `planHasGatedFiling`, the same coarse test the body uses, rather than on whether
+  // the CONTROLLING finding is gated. It is over-inclusive in one direction only: a plan with a
+  // gated requirement whose minimum happens to come from an ungated one loses the anchor it could
+  // have had. Losing an anchor costs a little precision; anchoring a width invents a deadline.
+  // One notion of "this plan has a gated filing", not two.
+  subject: planHasGatedFiling
+    ? `At risk — the narrowest filing window is ${minSlackDays} days wide`
+    : `At risk — apply within ${minSlackDays} days of ${evaluatedOn}`,
   body: [
     `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
       `${minSlackDays} days, measured from the plan's evaluation date ${evaluatedOn}.`,
@@ -738,6 +757,27 @@ async function plannedAlerts(
   // right answer for what the plan CALCULATED (it is what the slack figure was measured from, and
   // the copy says so); it is the wrong answer for what has happened since.
   const schedulingToday = todayInJurisdiction(settings.jurisdiction, now);
+  /**
+   * The moment an alert for `day` is actually due, which is never in the past.
+   *
+   * A checklist materialized INSIDE a reminder window persisted the original offset day as
+   * `send_at`, an instant that had already gone. AC 2 measures delivery from `send_at`, so such a
+   * row failed the two-minute bound by arithmetic before the poller had done anything wrong — an
+   * empty queue and a healthy provider still recorded it late. The spec's own edge case says that
+   * row should go out immediately, and "immediately" is what this makes it: due now rather than
+   * due at a time that has passed.
+   *
+   * IDENTITY IS UNAFFECTED, which is what makes this safe to move. A reminder is identified by
+   * `${checklist_item_id}:deadline_reminder:${daysBefore}:${sendOn}`, the INTENDED day, not by
+   * `send_at`; the unlock carries no date at all. So the intended slot is still what decides
+   * whether two alerts are the same alert, and moving the due instant cannot mint a duplicate.
+   * The copy is unaffected too: `late` is decided from `sendOn` against the scheduling day, so a
+   * catch-up reminder still says it is one.
+   */
+  const dueAt = (day: string): Date => {
+    const scheduled = instantAtLocalHour(settings.jurisdiction, day, SEND_HOUR_LOCAL);
+    return scheduled.getTime() < now.getTime() ? now : scheduled;
+  };
   const planned: PlannedAlert[] = [];
 
   for (const row of rows) {
@@ -774,8 +814,9 @@ async function plannedAlerts(
           alertType: "deadline_reminder",
           checklistItemId: row.checklist_item_id,
           // Already past at scheduling time — a checklist created inside the reminder window —
-          // sends on the next tick rather than being dropped (spec edge case).
-          sendAt: instantAtLocalHour(settings.jurisdiction, sendOn, SEND_HOUR_LOCAL),
+          // is due NOW rather than at a moment that has gone (spec edge case, and AC 2's bound is
+          // measured from this field).
+          sendAt: dueAt(sendOn),
           subject,
           body,
           // THE OFFSET IS PART OF WHICH REMINDER THIS IS, and the send day alone does not carry
@@ -816,7 +857,10 @@ async function plannedAlerts(
       planned.push({
         alertType: "dependency_unlocked",
         checklistItemId: row.checklist_item_id,
-        sendAt: instantAtLocalHour(settings.jurisdiction, openOn, SEND_HOUR_LOCAL),
+        // Same treatment as a reminder, and for the same reason: an unlock whose gate opened
+        // before the plan was materialized is due now, not at a past instant that would score it
+        // late against AC 2 the moment it was written.
+        sendAt: dueAt(openOn),
         subject,
         body,
         // NO DATE IN THIS ONE, and that is the difference between it and a reminder. A reminder is
@@ -1388,11 +1432,20 @@ export type AlertPoller = {
 export function createAlertPoller(dependencies: {
   readonly database: Pool;
   readonly senders: AlertSenders;
+  /**
+   * The jurisdiction whose calendar day decides whether a filing window has shut.
+   *
+   * Required rather than defaulted, because there is no honest default: a wrong jurisdiction here
+   * cancels alerts on the wrong day, and a made-up one would be exactly the invented fact this
+   * file refuses everywhere else. `index.ts` already computes `today` from
+   * `engineRuleset.jurisdiction` two lines above where the poller is built.
+   */
+  readonly jurisdiction: string;
   readonly intervalMs?: number;
   /** Injected so a test can drive the tick budget without spending it in real time. */
   readonly clock?: () => number;
 }): AlertPoller {
-  const { database, senders } = dependencies;
+  const { database, senders, jurisdiction } = dependencies;
   const clock = dependencies.clock ?? (() => Date.now());
   let timer: NodeJS.Timeout | null = null;
   let runningTick: Promise<AlertTickSummary> | null = null;
@@ -1484,12 +1537,20 @@ export function createAlertPoller(dependencies: {
     // something else, destroying both the type's meaning and the record of what was intended. The
     // checklist is where a missed requirement is already reported, and it says so on every visit.
     //
-    // THE DATE COMPARISON IS DELIBERATELY CONSERVATIVE. The poller has no jurisdiction setting —
-    // `todayInJurisdiction` belongs to the scheduler — so this compares against UTC yesterday
-    // rather than today. It can therefore leave a row deliverable for up to a day longer than the
-    // scheduler would, and can never cancel one on a day it is still valid. That asymmetry is the
-    // right way round: delivering a reminder a day late is a nuisance, cancelling a live one is a
-    // missed filing.
+    // THE SAME CLOCK THE SCHEDULER READS, which round 19 got wrong. That version compared against
+    // UTC yesterday, reasoning that the poller had no jurisdiction and it was safer to be a day
+    // late than a day early. The instinct was right and the mechanism was not: being conservative
+    // should not mean knowingly shipping a stale filing date for a day, which is exactly what a
+    // grace period on this comparison buys. `todayInJurisdiction` is the function `index.ts`
+    // already uses for `today`, the jurisdiction is in scope where the poller is constructed, and
+    // passing it removes the trade rather than picking a side of it.
+    //
+    // STALE-PLAN ROWS ARE EXCLUDED, or this sweep would undo the hold round 14 exists to apply.
+    // Those rows are held precisely because their plan's dates belong to the OLD event, so
+    // cancelling them on the strength of one of those dates decides the alert was withdrawn before
+    // regeneration has established whether its replacement is still required, and takes the
+    // failure evidence off the organizer's screen on the way. Regeneration cancels or revives
+    // them, which is what the review is for.
     await database.query(
       `UPDATE alerts SET status = 'cancelled'
         WHERE status IN ('pending', 'failed')
@@ -1502,8 +1563,10 @@ export function createAlertPoller(dependencies: {
                 ON closed_item.id = closed_checklist.plan_item_id
              WHERE closed_checklist.id = alerts.checklist_item_id
                AND closed_item.latest_apply_date IS NOT NULL
-               AND closed_item.latest_apply_date < (current_date - 1)
-          )`,
+               AND closed_item.latest_apply_date < $1::date
+          )
+          AND ${NOT_FROM_A_STALE_PLAN}`,
+      [todayInJurisdiction(jurisdiction, new Date())],
     );
 
     let sent = 0;
