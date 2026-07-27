@@ -174,8 +174,9 @@ export class MissingHolidayCalendarError extends Error {
  * FOLLOW-UP EVIDENCE IS ON FILE. On 2026-07-27 the named leads were run and the DOB TUP page, DOB
  * closure page, ABC Law §97 and §98, 9 NYCRR Part 29 and SLA permit materials were fetched with
  * quotes, URLs and retrieval dates. docs/VERIFICATION-SOURCES.md Round 5 records what each source
- * states and does not state. The earlier reported-only pass remains an uncorroborated concurring
- * result, but the listed sources are now fetched evidence independently of that report.
+ * states and does not state. The earlier reported-only Pass B remains history, not independent
+ * corroboration; the listed sources are now fetched evidence instead of relying on that report.
+ * Pass A compared staff schedules and statutes and did not fetch a DOB or SLA closure source.
  *
  * What would unblock DOB-TENT-001 is not a better list of dates, but a source establishing that
  * DOB's published closure stops the TUP filing counter. The SLA paths first need an applicable
