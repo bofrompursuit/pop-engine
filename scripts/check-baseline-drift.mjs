@@ -309,9 +309,14 @@ const RULESET_FILENAME = /nyc-rules\.[\w.-]+\.json/g;
  * The file with its comments replaced by spaces, so offsets and line numbers still line up.
  *
  * Quote state is tracked while scanning, so a `//` inside a string — a URL, most often — is not
- * mistaken for the start of a comment. It is a scanner rather than a parser and does not need to be
- * more: over-blanking would only make the check see less, and the failure mode of that is a missed
- * reference rather than a false accusation.
+ * mistaken for the start of a comment. It is a scanner rather than a parser, which is proportionate
+ * to the job, but it is also the one place in this check where a bug of MINE would degrade to
+ * silence: over-blanking makes the scan see less, and seeing less looks exactly like passing.
+ *
+ * So the one invariant a correct blanking must hold is asserted by the caller — every comment
+ * character becomes a space and every newline is kept, so the output is the same length as the
+ * input. A scanner that loses or gains a character has a bug, and this fails on it rather than
+ * quietly scanning a corrupted copy.
  */
 function withoutComments(source) {
   let out = "";
@@ -358,7 +363,18 @@ const danglingReferences = [];
 
 for (const file of scanned) {
   const relative = file.slice(repoRoot.length + 1);
-  const lines = withoutComments(readFileSync(file, "utf8")).split(/\r?\n/);
+  const source = readFileSync(file, "utf8");
+  const scannable = withoutComments(source);
+  if (scannable.length !== source.length) {
+    console.error(
+      `The comment scanner corrupted ${relative}: ${source.length} characters in, ` +
+        `${scannable.length} out. That is a bug in this check, not in the file — and left ` +
+        "unreported it would make the scan see less than the file contains, which is " +
+        "indistinguishable from passing.",
+    );
+    process.exit(1);
+  }
+  const lines = scannable.split(/\r?\n/);
   lines.forEach((line, index) => {
     for (const literal of line.match(STRING_LITERAL) ?? []) {
       for (const named of literal.match(RULESET_FILENAME) ?? []) {
@@ -387,6 +403,7 @@ if (danglingReferences.length > 0) {
 
 // The single constant allowed to name a version, checked against the artifact rather than banned.
 // If the file bumps and the pin does not, the api refuses to boot; this fails first and says why.
+// Read before the count is validated, so a repo holding two rulesets can be told which to keep.
 const pinFile = "apps/api/src/ruleset.ts";
 const pinSource = readFileSync(join(repoRoot, pinFile), "utf8");
 const pinned = /EXPECTED_RULESET_VERSION\s*=\s*"([^"]+)"/.exec(pinSource);
@@ -397,18 +414,41 @@ if (pinned === null) {
   );
   process.exit(1);
 }
-if (publishedRulesets.length === 1) {
-  const publishedVersion = JSON.parse(
-    readFileSync(join(repoRoot, "rules", publishedRulesets[0]), "utf8"),
-  ).ruleset_version;
-  if (pinned[1] !== publishedVersion) {
-    console.error(
-      `${pinFile} pins EXPECTED_RULESET_VERSION ${pinned[1]}, but ${publishedRulesets[0]} ` +
-        `publishes ${publishedVersion}.\n\nThe api refuses to boot on that mismatch. Bump the pin ` +
-        "with the artifact, in the same PR.",
-    );
-    process.exit(1);
-  }
+// EXACTLY ONE published ruleset is the invariant, and anything else is an ERROR here rather than
+// a reason to stand down.
+//
+// An earlier draft ran the pin check only when the count was one and said nothing otherwise, which
+// put a silent-failure path inside the guard written to remove one: in the single state where the
+// invariant is already broken, the check that would say so went quiet. And that state is not
+// exotic — it is precisely mid-bump, a new version added and the old one not yet deleted, which is
+// when someone most needs this working. A validator that stands down on ambiguous input looks
+// exactly like a validator that passed.
+if (publishedRulesets.length !== 1) {
+  console.error(
+    publishedRulesets.length === 0
+      ? `No published ruleset in rules/. The api loads one at boot and every plan pins its ` +
+          `version, so there is nothing for this check — or the product — to be right about.`
+      : `rules/ holds ${publishedRulesets.length} published rulesets, and exactly one is the ` +
+          `invariant:\n\n` +
+          publishedRulesets.map((entry) => `  • ${entry}`).join("\n") +
+          `\n\n${pinFile} pins ${pinned[1]}, so that is the one to keep. A superseded ruleset is ` +
+          `DELETED from the tree, not left beside its replacement: BASELINE.md records each one as ` +
+          `a lineage row naming its git commit, which is how it stays recoverable. If you are ` +
+          `mid-bump, this is the step between adding the new file and removing the old one.`,
+  );
+  process.exit(1);
+}
+
+const publishedVersion = JSON.parse(
+  readFileSync(join(repoRoot, "rules", publishedRulesets[0]), "utf8"),
+).ruleset_version;
+if (pinned[1] !== publishedVersion) {
+  console.error(
+    `${pinFile} pins EXPECTED_RULESET_VERSION ${pinned[1]}, but ${publishedRulesets[0]} ` +
+      `publishes ${publishedVersion}.\n\nThe api refuses to boot on that mismatch. Bump the pin ` +
+      "with the artifact, in the same PR.",
+  );
+  process.exit(1);
 }
 
 if (failures.length > 0) {
