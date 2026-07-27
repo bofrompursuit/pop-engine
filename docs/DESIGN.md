@@ -1,6 +1,6 @@
 # PopEngine — Delivery Design (Canonical)
 
-**Status:** APPROVED (2026-07-22; F-109's concept renamed from "coverage states"/"coverage envelope" to "scope support states" 2026-07-26, product-owner approved, resolving a three-way overload of "coverage"; see `docs/BASELINE.md`). Companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
+**Status:** APPROVED (2026-07-22; F-109's concept renamed from "coverage states"/"coverage envelope" to "scope support states" 2026-07-26, product-owner approved, resolving a three-way overload of "coverage"; see `docs/BASELINE.md` · COVERAGE_GAP copy amendment 2026-07-27, correcting a lower-authority artifact against the published legend per `docs/DOCUMENTATION-GOVERNANCE.md` §2: the source-less COVERAGE_GAP line must state that the combination is not covered by this ruleset version, not that a source is missing, which is RESEARCH_REQUIRED's meaning). Companion to `ROADMAP.md`. Covers how the team builds: lifecycle model, ID policy, quality gates, lanes, dependencies, and the demo plan. Technical design (schema, rules engine, API) lives in `ARCHITECTURE.md`.
 
 ## Decisions of 2026-07-22 (baseline correction)
 
@@ -46,7 +46,7 @@ AI may draft and extract; it may never make the authoritative permit determinati
 ## Definition of Iron-Clad (Phase 1 quality bar)
 
 - Deterministic engine output: same event + same ruleset + same date → same plan, every time.
-- Every plan line shows its verification status. Source-bearing lines cite an official source; a source-less COVERAGE_GAP visibly says "source not yet established" and never invents one.
+- Every plan line shows its verification status. Source-bearing lines cite an official source; a source-less COVERAGE_GAP visibly states that the combination is not covered by this ruleset version, and never invents a citation or implies a source is merely missing (that is RESEARCH_REQUIRED's meaning; the published legend calls COVERAGE_GAP "combination not modeled by this ruleset version").
 - The full fixture suite passes (6 scenarios + boundary fixtures, `test-scenario-answer-key.md` v4): 100% of expected findings, zero false omissions, zero false additions, correct verdicts.
 - Zero fabricated permit facts; RESEARCH_REQUIRED renders "confirm with agency"; OFFICIAL_CONFLICT renders both readings.
 - The ruleset's SOURCE_CONFIRMED facts are signed off by the verification owner and `BASELINE.md` flips nyc.v2.8 to APPROVED before the demo.

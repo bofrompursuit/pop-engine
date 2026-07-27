@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
+import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import type { ConsumedFinding } from "./plan-api";
 
 // F-206 AC 2 and AC 3: every plan line carries its citation and its verification status, both
@@ -194,8 +195,11 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         </p>
       ))}
 
+      {/* COVERAGE_GAP means this ruleset version does not model the combination, not that a
+          source is missing (published legend, rules/nyc-rules.v2.8.json). Saying "no source" here
+          would state RESEARCH_REQUIRED's meaning, which renders CONFIRM_WITH_AGENCY above. */}
       {finding.verificationStatus === "COVERAGE_GAP" && finding.sources.length === 0 && (
-        <p className="line__source-missing">source not yet established</p>
+        <p className="line__not-covered">{NOT_COVERED_BY_RULESET}</p>
       )}
       {finding.sources.length > 0 && (
         <ul className="line__citations">

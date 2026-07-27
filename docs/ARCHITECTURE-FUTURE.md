@@ -18,23 +18,23 @@ PopEngine must:
 
 ## 2. Architecture decisions
 
-| ID | Decision | Consequence |
-|---|---|---|
-| AD-01 | Use a TypeScript monorepo with a Next.js web app, Express API, and a worker process. | Web, API, worker, and pure packages share versioned contracts but deploy independently. Exact Node, pnpm, Next.js, and TypeScript versions are pinned in-repo. |
-| AD-02 | Build a modular monolith, not microservices. | Domain modules have explicit APIs and table ownership, but one repository and one PostgreSQL database. Extract a service only after measured operational need. |
-| AD-03 | Keep the rules engine pure: no database, HTTP, environment reads, random values, or system clock. | Evaluation receives event revision, ruleset, `today`, timezone, engine version, and calendar data as explicit inputs. |
-| AD-04 | Treat published rulesets as immutable artifacts. | Git is the publication workflow through Phase 3. The rules admin system in Phase 4 publishes the same immutable artifact format; it does not create a second runtime truth. |
-| AD-05 | Separate stable Event identity from immutable Event Revisions. | Editing intake answers creates a new revision. A plan always references one exact revision; staleness is computed server-side. |
-| AD-06 | Treat plans as immutable evaluations and findings as immutable snapshots. | Regeneration creates a new plan, preserves the old plan, and produces a diff. Active workflow data is never silently rewritten. |
-| AD-07 | Use a layered status model. | After its consuming migration, result completeness (§7.1), finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
-| AD-08 | Represent conditions and calculations with validated typed data. | No `eval`, dynamic code, natural-language formulas, or jurisdiction-specific executable extensions. Rules use approved condition and calculation AST primitives; a missing primitive requires a separate reviewed schema/engine change. |
-| AD-09 | Use PostgreSQL as the system of record and S3-compatible object storage for file bytes. | File metadata and authorization stay in PostgreSQL; downloads use short-lived signed URLs. |
-| AD-10 | Use a durable PostgreSQL-backed jobs/outbox model. | Phase 1 alerts may share the API deployment, but job claiming and delivery are durable. Phase 2 runs the same code as a separate worker. Redis is not required. |
-| AD-11 | Introduce authentication before any real-user beta. | A no-account capstone demo is permitted only behind an environment access gate with synthetic data. CORS is never treated as authorization. |
-| AD-12 | Make workspace tenancy the authorization boundary. | Once F-701/F-702/F-703 ship, every user-owned aggregate carries `workspace_id`; membership and role authorization are enforced server-side in one policy layer. |
-| AD-13 | Put every external service behind an adapter. | Email, SMS, storage, geocoding, AI, ticketing, calendar, and POS providers cannot leak provider-specific shapes into domain code. |
-| AD-14 | Route all AI work through an AI gateway with proposal semantics. | AI may draft or extract. Material extracted values require confirmation; AI cannot publish a rule or authoritatively determine a permit. |
-| AD-15 | Make OpenAPI, JSON Schema, migrations, and executable fixtures first-class contracts. | Prose explains behavior; machines enforce the contract. Shared contract changes require coordinated review before feature branches consume them. |
+| ID    | Decision                                                                                          | Consequence                                                                                                                                                                                                                             |
+| ----- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AD-01 | Use a TypeScript monorepo with a Next.js web app, Express API, and a worker process.              | Web, API, worker, and pure packages share versioned contracts but deploy independently. Exact Node, pnpm, Next.js, and TypeScript versions are pinned in-repo.                                                                          |
+| AD-02 | Build a modular monolith, not microservices.                                                      | Domain modules have explicit APIs and table ownership, but one repository and one PostgreSQL database. Extract a service only after measured operational need.                                                                          |
+| AD-03 | Keep the rules engine pure: no database, HTTP, environment reads, random values, or system clock. | Evaluation receives event revision, ruleset, `today`, timezone, engine version, and calendar data as explicit inputs.                                                                                                                   |
+| AD-04 | Treat published rulesets as immutable artifacts.                                                  | Git is the publication workflow through Phase 3. The rules admin system in Phase 4 publishes the same immutable artifact format; it does not create a second runtime truth.                                                             |
+| AD-05 | Separate stable Event identity from immutable Event Revisions.                                    | Editing intake answers creates a new revision. A plan always references one exact revision; staleness is computed server-side.                                                                                                          |
+| AD-06 | Treat plans as immutable evaluations and findings as immutable snapshots.                         | Regeneration creates a new plan, preserves the old plan, and produces a diff. Active workflow data is never silently rewritten.                                                                                                         |
+| AD-07 | Use a layered status model.                                                                       | After its consuming migration, result completeness (§7.1), finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
+| AD-08 | Represent conditions and calculations with validated typed data.                                  | No `eval`, dynamic code, natural-language formulas, or jurisdiction-specific executable extensions. Rules use approved condition and calculation AST primitives; a missing primitive requires a separate reviewed schema/engine change. |
+| AD-09 | Use PostgreSQL as the system of record and S3-compatible object storage for file bytes.           | File metadata and authorization stay in PostgreSQL; downloads use short-lived signed URLs.                                                                                                                                              |
+| AD-10 | Use a durable PostgreSQL-backed jobs/outbox model.                                                | Phase 1 alerts may share the API deployment, but job claiming and delivery are durable. Phase 2 runs the same code as a separate worker. Redis is not required.                                                                         |
+| AD-11 | Introduce authentication before any real-user beta.                                               | A no-account capstone demo is permitted only behind an environment access gate with synthetic data. CORS is never treated as authorization.                                                                                             |
+| AD-12 | Make workspace tenancy the authorization boundary.                                                | Once F-701/F-702/F-703 ship, every user-owned aggregate carries `workspace_id`; membership and role authorization are enforced server-side in one policy layer.                                                                         |
+| AD-13 | Put every external service behind an adapter.                                                     | Email, SMS, storage, geocoding, AI, ticketing, calendar, and POS providers cannot leak provider-specific shapes into domain code.                                                                                                       |
+| AD-14 | Route all AI work through an AI gateway with proposal semantics.                                  | AI may draft or extract. Material extracted values require confirmation; AI cannot publish a rule or authoritatively determine a permit.                                                                                                |
+| AD-15 | Make OpenAPI, JSON Schema, migrations, and executable fixtures first-class contracts.             | Prose explains behavior; machines enforce the contract. Shared contract changes require coordinated review before feature branches consume them.                                                                                        |
 
 ## 3. System context
 
@@ -89,14 +89,14 @@ Type authority changes once, through the approved OpenAPI/JSON Schema code-gener
 
 ## 5. Authoritative machine contracts
 
-| Contract | Authority | Change rule |
-|---|---|---|
-| Event input | `contracts/event-input.v2.schema.json` | Breaking changes require a new schema version and migration/compatibility plan. |
-| Rules artifact | `rules/schemas/ruleset.v2.schema.json` | A rules file cannot publish or boot unless schema validation succeeds. |
+| Contract            | Authority                                                  | Change rule                                                                                                                |
+| ------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Event input         | `contracts/event-input.v2.schema.json`                     | Breaking changes require a new schema version and migration/compatibility plan.                                            |
+| Rules artifact      | `rules/schemas/ruleset.v2.schema.json`                     | A rules file cannot publish or boot unless schema validation succeeds.                                                     |
 | Regulatory behavior | Approved fixtures under `rules/fixtures/<ruleset_version>` | Fixtures cite an approved rule/source. A lower-authority expected result changes when the approved source or rule changes. |
-| HTTP | `contracts/openapi.yaml` | API implementation and generated client must pass contract tests. |
-| Database | Ordered migrations | Existing migrations are immutable after merge. New changes use a forward migration and tested rollback/repair path. |
-| Feature behavior | Approved `specs/F-xxx-*.md` | The implementation may not add behavior outside the scheduled spec. |
+| HTTP                | `contracts/openapi.yaml`                                   | API implementation and generated client must pass contract tests.                                                          |
+| Database            | Ordered migrations                                         | Existing migrations are immutable after merge. New changes use a forward migration and tested rollback/repair path.        |
+| Feature behavior    | Approved `specs/F-xxx-*.md`                                | The implementation may not add behavior outside the scheduled spec.                                                        |
 
 Through Phase 3, `docs/BASELINE.md` is the authoritative current-version pointer and each deployment's `RULES_FILE` selects that exact version-bearing artifact path. Advancing either pointer never overwrites a published file. Phase 4 replaces deployment selection with the jurisdiction current pointer in PostgreSQL while preserving the same immutable artifacts.
 
@@ -108,18 +108,18 @@ The current baseline is listed in `docs/BASELINE.md` with status and checksum. A
 
 `events` is a stable container, not the complete questionnaire.
 
-| Column | Purpose |
-|---|---|
-| `id` | UUID primary key. |
-| `workspace_id` | Nullable only in the gated capstone mode; required before any authenticated user-owned aggregate is persisted. F-701 may establish identity first, but production activation waits for F-702 workspaces/memberships and F-703 roles. |
-| `jurisdiction_code` | Initial value `US-NY-NYC`; never inferred from display text. |
-| `title` | Organizer-facing event name. |
-| `timezone` | IANA timezone, initially `America/New_York`. |
-| `starts_at`, `ends_at` | Public/operational timestamps; nullable during draft intake. |
-| `current_revision_id` | Latest saved event revision. |
-| `current_plan_id` | Latest accepted plan, not merely latest generated candidate. |
-| `lifecycle_status` | `draft`, `planning`, `published`, `live`, `completed`, `cancelled`, `archived`. |
-| timestamps | Creation and update audit metadata. |
+| Column                 | Purpose                                                                                                                                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                   | UUID primary key.                                                                                                                                                                                                                    |
+| `workspace_id`         | Nullable only in the gated capstone mode; required before any authenticated user-owned aggregate is persisted. F-701 may establish identity first, but production activation waits for F-702 workspaces/memberships and F-703 roles. |
+| `jurisdiction_code`    | Initial value `US-NY-NYC`; never inferred from display text.                                                                                                                                                                         |
+| `title`                | Organizer-facing event name.                                                                                                                                                                                                         |
+| `timezone`             | IANA timezone, initially `America/New_York`.                                                                                                                                                                                         |
+| `starts_at`, `ends_at` | Public/operational timestamps; nullable during draft intake.                                                                                                                                                                         |
+| `current_revision_id`  | Latest saved event revision.                                                                                                                                                                                                         |
+| `current_plan_id`      | Latest accepted plan, not merely latest generated candidate.                                                                                                                                                                         |
+| `lifecycle_status`     | `draft`, `planning`, `published`, `live`, `completed`, `cancelled`, `archived`.                                                                                                                                                      |
+| timestamps             | Creation and update audit metadata.                                                                                                                                                                                                  |
 
 Regulatory `event_date` is derived as the local calendar date of `starts_at`, or collected directly while the event is an early draft. Date-only regulatory math never relies on a UTC conversion.
 
@@ -150,24 +150,24 @@ Do not compress all meaning into one verdict.
 
 ### 7.1 Result completeness
 
-Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule — "combination not modeled by this ruleset version; advisory asserts nothing", the published legend at `rules/nyc-rules.v2.8.json`; shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the *result* sense; F-109 keeps the *scope* sense under its own name, **scope support states**.
+Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule — "combination not modeled by this ruleset version; advisory asserts nothing", the published legend at `rules/nyc-rules.v2.8.json`; shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the _result_ sense; F-109 keeps the _scope_ sense under its own name, **scope support states**.
 
-`COVERAGE_GAP` keeps its name — but **not for the reason first recorded here, and the difference matters more than the conclusion does.** The original framing called it the most literal use of "coverage", which rested on reading it as a missing *source*. That reading was wrong: the published legend makes "no primary source located" `RESEARCH_REQUIRED`, and `COVERAGE_GAP` is about what this ruleset version **models** — its scope, not its sources. The conclusion is unchanged and stands on the other ground given at the time: the value is shipped and live, and renaming a production value to settle a documentation conflict is the wrong trade. What changes is where `COVERAGE_GAP` sits relative to everything else on this page. Being a *scope* statement, it is not tidily outside this rename; it belongs to the open question below.
+`COVERAGE_GAP` keeps its name — but **not for the reason first recorded here, and the difference matters more than the conclusion does.** The original framing called it the most literal use of "coverage", which rested on reading it as a missing _source_. That reading was wrong: the published legend makes "no primary source located" `RESEARCH_REQUIRED`, and `COVERAGE_GAP` is about what this ruleset version **models** — its scope, not its sources. The conclusion is unchanged and stands on the other ground given at the time: the value is shipped and live, and renaming a production value to settle a documentation conflict is the wrong trade. What changes is where `COVERAGE_GAP` sits relative to everything else on this page. Being a _scope_ statement, it is not tidily outside this rename; it belongs to the open question below.
 
-| Value | Meaning |
-|---|---|
-| `COMPLETE_WITHIN_VALIDATED_COVERAGE` | Every material declared element is supported and sufficiently known for the published ruleset. |
-| `OPEN_FACTS_MAY_CHANGE_OUTCOME` | One or more identified facts can change the requirement or deadline outcome. |
-| `CANNOT_DETERMINE` | Authority/classification or another prerequisite cannot be resolved. |
-| `OUTSIDE_VALIDATED_COVERAGE` | A material event element is unsupported. Supported findings may be shown, but the plan is labeled incomplete. |
+| Value                                | Meaning                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `COMPLETE_WITHIN_VALIDATED_COVERAGE` | Every material declared element is supported and sufficiently known for the published ruleset.                |
+| `OPEN_FACTS_MAY_CHANGE_OUTCOME`      | One or more identified facts can change the requirement or deadline outcome.                                  |
+| `CANNOT_DETERMINE`                   | Authority/classification or another prerequisite cannot be resolved.                                          |
+| `OUTSIDE_VALIDATED_COVERAGE`         | A material event element is unsupported. Supported findings may be shown, but the plan is labeled incomplete. |
 
 `OPEN_FACTS_MAY_CHANGE_OUTCOME` was `CONDITIONAL` until 2026-07-26. That token is `Verdict`'s (`packages/engine/src/types.ts:128`, shipped), where it means something else. The two coexist only through the transition AD-07 describes — the flat verdict is retired once these layered fields land, so this is a replacement and not a permanent second axis — but the transition is exactly when both tokens are readable in one repository and a reader has to tell them apart. Spelling them differently is not enough when the failure being fixed is a reader conflating two axes, so the replacement differs in meaning and not only in token. No code changes: these four values are not implemented anywhere, and every `CONDITIONAL` in `packages/` and `apps/` is `Verdict`.
 
-`VALIDATED_COVERAGE` survives inside two value names, but **the reason first given for keeping it does not survive, and its collapse is informative.** That reason was that "validated coverage" names the *ruleset's validated scope* while `COVERAGE_GAP` names a per-rule *source* gap — two different senses, so no confusion. Where it came from is worth recording, because it did not merely sit in a draft: it was the ground on which this PR's original "no two of the three share a term" constraint was relaxed, and the ground on which that relaxation was put to the product owner. The argument that did not survive is the one that shaped the decision. The published legend says otherwise: `COVERAGE_GAP` is "combination not modeled by this ruleset version", which is a **scope** claim too. These are not two senses of "coverage". They are the same kind of claim at two levels — `COVERAGE_GAP` per rule, about a combination this ruleset version does not model; `VALIDATED_COVERAGE` per result, about an event element outside what the ruleset validly covers.
+`VALIDATED_COVERAGE` survives inside two value names, but **the reason first given for keeping it does not survive, and its collapse is informative.** That reason was that "validated coverage" names the _ruleset's validated scope_ while `COVERAGE_GAP` names a per-rule _source_ gap — two different senses, so no confusion. Where it came from is worth recording, because it did not merely sit in a draft: it was the ground on which this PR's original "no two of the three share a term" constraint was relaxed, and the ground on which that relaxation was put to the product owner. The argument that did not survive is the one that shaped the decision. The published legend says otherwise: `COVERAGE_GAP` is "combination not modeled by this ruleset version", which is a **scope** claim too. These are not two senses of "coverage". They are the same kind of claim at two levels — `COVERAGE_GAP` per rule, about a combination this ruleset version does not model; `VALIDATED_COVERAGE` per result, about an event element outside what the ruleset validly covers.
 
 Keeping the compound is still right, on the ground that survives: the two levels are genuinely distinct, a reader needs both, and one is shipped. But "they mean different things" was the wrong defence, and anyone who repeats it will conclude these axes are further apart than the published text supports.
 
-**Known downstream inconsistency, tracked and not resolved here.** What ships today describes `COVERAGE_GAP` as a missing *source* rather than an unmodeled *combination*: `specs/F-206` AC 2 requires that "a source-less `COVERAGE_GAP` line visibly says no source is published", its edge-case row specifies the copy "source not yet established", and `apps/web/app/plan/plan-line.tsx:198` renders exactly that. So the UI faithfully implements an approved criterion, and the criterion and the published legend do not agree. **This section does not decide which is right.** The legend is published and F-206 is approved, and choosing between two approved artifacts is the product owner's call, pending as of 2026-07-26. Recorded here so that a reader who checks §7.1 against the running product finds the discrepancy already known rather than newly discovered.
+**Resolved 2026-07-27, recorded because this section tracked it while it was open.** Until then, four approved artifacts described `COVERAGE_GAP` as a missing _source_ rather than an unmodelled _combination_, and the shipped UI rendered copy saying so: `specs/F-206` (Outputs, AC 2 and its edge case), `docs/PRD.md`, `docs/DESIGN.md` and `specs/F-201` AC 2, with `apps/web/app/plan/plan-line.tsx` and `apps/web/app/checklist/checklist-item.tsx` implementing them faithfully. The published legend outranks all of them under `DOCUMENTATION-GOVERNANCE.md` §2, so each was corrected to state the published meaning rather than the legend being changed. Filed and resolved as SPEC-CONFLICT #145, which carries the root cause: `apps/api/src/ruleset.ts:381` lets only a `COVERAGE_GAP` rule omit a source, so "source-less" became a synonym for the status and the copy went on to describe the absence of the source rather than the absence of the rule. The superseded wording is deliberately not reproduced here; a guard test now asserts it appears nowhere in the repository.
 
 **Left open deliberately, so a future reader knows it was seen and not missed.** `OUTSIDE_VALIDATED_COVERAGE`'s own gloss above is written in F-109's vocabulary — "a material event element is **unsupported**. **Supported** findings may be shown". If that is not a coincidence, then these values and F-109's `unsupported` are one axis measured at two points in the pipeline, before and after evaluation, rather than two axes. This pass disambiguated the **names**; it did not decide whether the two vocabularies describe one thing or two. Anyone proposing to merge them should start here.
 
@@ -291,21 +291,21 @@ A ruleset snapshot date means “published on,” not “all facts verified on.�
 
 ### 9.1 Phase 2+ target tables
 
-| Table | Purpose and critical invariants |
-|---|---|
-| `events` | Stable identity and current pointers. |
-| `event_revisions` | Immutable validated questionnaire versions. Unique `(event_id, revision_number)`. |
-| `rulesets` | Immutable metadata: jurisdiction, version, schema version, checksum, snapshot date, status, artifact location. |
-| `rules` | Read model keyed by `(ruleset_id, rule_id)`; never hand-edited. |
-| `permit_plans` | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes result-completeness (§7.1) and deadline summary. |
-| `plan_findings` | Generic immutable finding snapshot with kind, disposition, deadline status, source facets, trigger trace, and `payload_json`. |
-| `plan_diffs` | Added, removed, and materially changed findings between two plans. |
-| `checklist_items` | Workflow item linked to a plan finding; plan evidence remains immutable. |
-| `applications` | Added when F-208 ships; application number, agency state, decisions, inspections, and conditions. |
-| `documents` | Metadata, checksum, classification, storage key, scan state, retention state, and owner aggregate. |
-| `notification_endpoints` | Verified organizer email/phone destination and channel status. |
-| `message_jobs` / `message_attempts` | Scheduled delivery, idempotency, retries, provider result, cancellation, and failure. |
-| `activity_log` | Append-only significant actions; initially system actor, later user/workspace actor. |
+| Table                               | Purpose and critical invariants                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `events`                            | Stable identity and current pointers.                                                                                                            |
+| `event_revisions`                   | Immutable validated questionnaire versions. Unique `(event_id, revision_number)`.                                                                |
+| `rulesets`                          | Immutable metadata: jurisdiction, version, schema version, checksum, snapshot date, status, artifact location.                                   |
+| `rules`                             | Read model keyed by `(ruleset_id, rule_id)`; never hand-edited.                                                                                  |
+| `permit_plans`                      | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes result-completeness (§7.1) and deadline summary. |
+| `plan_findings`                     | Generic immutable finding snapshot with kind, disposition, deadline status, source facets, trigger trace, and `payload_json`.                    |
+| `plan_diffs`                        | Added, removed, and materially changed findings between two plans.                                                                               |
+| `checklist_items`                   | Workflow item linked to a plan finding; plan evidence remains immutable.                                                                         |
+| `applications`                      | Added when F-208 ships; application number, agency state, decisions, inspections, and conditions.                                                |
+| `documents`                         | Metadata, checksum, classification, storage key, scan state, retention state, and owner aggregate.                                               |
+| `notification_endpoints`            | Verified organizer email/phone destination and channel status.                                                                                   |
+| `message_jobs` / `message_attempts` | Scheduled delivery, idempotency, retries, provider result, cancellation, and failure.                                                            |
+| `activity_log`                      | Append-only significant actions; initially system actor, later user/workspace actor.                                                             |
 
 The merged Phase 0–1.5 `permit_rules` and `events` schema remains authoritative for current work. Scheduled Phase 2 migrations evolve it toward this model without editing merged migrations or requiring current lanes to build ahead.
 
@@ -322,18 +322,18 @@ The merged Phase 0–1.5 `permit_rules` and `events` schema remains authoritativ
 
 ### 9.3 Full-roadmap domain tables
 
-| Module | Roadmap | Core entities |
-|---|---|---|
-| Identity and tenancy | F-701–F-704 | users, identities, workspaces, memberships, role grants, sessions, activity log |
-| Application execution | F-208–F-214 | applications, application events, fees, document requirements, insurance certificates, site-plan versions, tasks, vendors, vendor compliance |
-| Public event and registration | F-301–F-309 | public pages, slugs, registration forms, RSVPs, waitlist entries, campaign schedules, brand settings |
-| Contacts and consent | F-305, F-403, F-404, F-413 | contacts, contact points, consent records, suppression records, message jobs/attempts |
-| Event operations | F-401–F-413 | check-in events, entry/exit events, sync operations, staff assignments, credentials, incidents, runbooks, inventory |
-| Budget and outcomes | F-104, F-406, F-407 | budgets, budget lines, ledger entries, revenue, post-mortems, metric snapshots |
-| Reuse and intelligence | F-501–F-503 | derived metric snapshots, comparison definitions, event templates referencing revision inputs rather than copied findings |
-| AI assistance | F-304, F-601–F-606 | AI runs, prompt versions, source objects, extraction proposals, confirmations, reconciliation proposals |
-| Rules administration | F-710–F-715 | rule drafts, source records, reviews, test runs, publish records, ruleset artifacts, rollback events, issue reports |
-| External integrations | F-108, F-212, F-308, F-408 | connections, encrypted credentials, sync cursors, webhook events, provider mappings, replay/dead-letter state |
+| Module                        | Roadmap                    | Core entities                                                                                                                                |
+| ----------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and tenancy          | F-701–F-704                | users, identities, workspaces, memberships, role grants, sessions, activity log                                                              |
+| Application execution         | F-208–F-214                | applications, application events, fees, document requirements, insurance certificates, site-plan versions, tasks, vendors, vendor compliance |
+| Public event and registration | F-301–F-309                | public pages, slugs, registration forms, RSVPs, waitlist entries, campaign schedules, brand settings                                         |
+| Contacts and consent          | F-305, F-403, F-404, F-413 | contacts, contact points, consent records, suppression records, message jobs/attempts                                                        |
+| Event operations              | F-401–F-413                | check-in events, entry/exit events, sync operations, staff assignments, credentials, incidents, runbooks, inventory                          |
+| Budget and outcomes           | F-104, F-406, F-407        | budgets, budget lines, ledger entries, revenue, post-mortems, metric snapshots                                                               |
+| Reuse and intelligence        | F-501–F-503                | derived metric snapshots, comparison definitions, event templates referencing revision inputs rather than copied findings                    |
+| AI assistance                 | F-304, F-601–F-606         | AI runs, prompt versions, source objects, extraction proposals, confirmations, reconciliation proposals                                      |
+| Rules administration          | F-710–F-715                | rule drafts, source records, reviews, test runs, publish records, ruleset artifacts, rollback events, issue reports                          |
+| External integrations         | F-108, F-212, F-308, F-408 | connections, encrypted credentials, sync cursors, webhook events, provider mappings, replay/dead-letter state                                |
 
 ## 10. API design
 
@@ -350,22 +350,22 @@ The resources below are the Phase 2+ target. Current Phase 0–1.5 `/api` routes
 
 ### 10.2 Phase 2+ target resources
 
-| Method and path | Purpose |
-|---|---|
-| `POST /api/v1/events` | Create stable Event container. |
-| `POST /api/v1/events/{eventId}/revisions` | Validate and save an Event Revision; returns conflicts and required follow-ups. |
-| `GET /api/v1/events/{eventId}` | Fetch Event and current pointers. |
-| `GET /api/v1/events/{eventId}/revisions/{revisionId}` | Fetch exact revision. |
-| `POST /api/v1/events/{eventId}/plans` | Evaluate a specified revision against an allowed published ruleset. |
-| `GET /api/v1/plans/{planId}` | Fetch immutable plan, findings, traces safe for the current actor, and snapshot metadata. |
-| `GET /api/v1/plans/{planId}/diff?against={planId}` | Fetch deterministic plan diff. |
-| `POST /api/v1/events/{eventId}/current-plan` | Accept a candidate plan and materialize/reconcile workflow transactionally. |
-| `GET/POST /api/v1/events/{eventId}/checklist` | Read/materialize checklist from accepted plan. |
-| `PATCH /api/v1/checklist-items/{itemId}` | Update workflow status/notes with optimistic concurrency. |
-| `POST /api/v1/checklist-items/{itemId}/documents` | Request/complete controlled upload. |
-| `GET /api/v1/documents/{documentId}/download` | Authorize and return short-lived download. |
-| `GET /api/v1/rulesets/current?jurisdiction=US-NY-NYC` | Published ruleset metadata and coverage summary. |
-| `POST /api/v1/events/{eventId}/message-tests` | Explicit demo/test delivery; disabled in normal production roles. |
+| Method and path                                       | Purpose                                                                                   |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `POST /api/v1/events`                                 | Create stable Event container.                                                            |
+| `POST /api/v1/events/{eventId}/revisions`             | Validate and save an Event Revision; returns conflicts and required follow-ups.           |
+| `GET /api/v1/events/{eventId}`                        | Fetch Event and current pointers.                                                         |
+| `GET /api/v1/events/{eventId}/revisions/{revisionId}` | Fetch exact revision.                                                                     |
+| `POST /api/v1/events/{eventId}/plans`                 | Evaluate a specified revision against an allowed published ruleset.                       |
+| `GET /api/v1/plans/{planId}`                          | Fetch immutable plan, findings, traces safe for the current actor, and snapshot metadata. |
+| `GET /api/v1/plans/{planId}/diff?against={planId}`    | Fetch deterministic plan diff.                                                            |
+| `POST /api/v1/events/{eventId}/current-plan`          | Accept a candidate plan and materialize/reconcile workflow transactionally.               |
+| `GET/POST /api/v1/events/{eventId}/checklist`         | Read/materialize checklist from accepted plan.                                            |
+| `PATCH /api/v1/checklist-items/{itemId}`              | Update workflow status/notes with optimistic concurrency.                                 |
+| `POST /api/v1/checklist-items/{itemId}/documents`     | Request/complete controlled upload.                                                       |
+| `GET /api/v1/documents/{documentId}/download`         | Authorize and return short-lived download.                                                |
+| `GET /api/v1/rulesets/current?jurisdiction=US-NY-NYC` | Published ruleset metadata and coverage summary.                                          |
+| `POST /api/v1/events/{eventId}/message-tests`         | Explicit demo/test delivery; disabled in normal production roles.                         |
 
 File upload should use a two-step signed upload for production-size files; the API verifies completion, checksum, type, size, and scan state before exposing a download.
 
