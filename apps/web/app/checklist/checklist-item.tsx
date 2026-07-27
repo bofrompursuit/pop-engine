@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
+import { PortalBlock } from "../portal-block";
 import { formatSnapshotDate } from "../plan/snapshot-banner";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import {
@@ -158,20 +159,14 @@ export function PlanContextBody({
 
       {context.feeDisplay !== null && <p className="check-item__text">{context.feeDisplay}</p>}
 
-      {/* Some rules publish no portal URL at all: NYPD-SOUND-001 names the precinct and the form
-          number instead, and that text is the entire filing route for the row. */}
-      {context.portalUrl !== null ? (
-        <p className="check-item__text">
-          <a href={context.portalUrl} target="_blank" rel="noreferrer noopener">
-            {context.portalName ?? context.portalUrl}
-          </a>
-        </p>
-      ) : (
-        context.portalName !== null && <p className="check-item__text">{context.portalName}</p>
-      )}
-      {context.portalInstructions !== null && (
-        <p className="check-item__text">{context.portalInstructions}</p>
-      )}
+      {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
+      <PortalBlock
+        portalName={context.portalName}
+        portalUrl={context.portalUrl}
+        portalInstructions={context.portalInstructions}
+        className="check-item__text"
+        instructionsClassName="check-item__text"
+      />
 
       {context.publishedNotes.map((note) => (
         <p className="check-item__text" key={note}>

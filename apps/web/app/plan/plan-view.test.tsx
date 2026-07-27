@@ -21,7 +21,12 @@ const publishedRuleset: {
   snapshot_date: string;
   rules: {
     id: string;
-    output: Record<string, string>;
+    output: {
+      permit_name?: string;
+      note_text?: string;
+      portal?: { name?: string; url?: string | null; instructions?: string };
+      [key: string]: unknown;
+    };
     source?: { citation: string; urls: string[] };
     verification: { status: string; qualification?: string };
   }[];
@@ -453,13 +458,20 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
 
   it("renders the filing route for a rule that publishes instructions instead of a URL", async () => {
     // NYPD-SOUND-001 publishes the precinct and form PD 656-041A and no portal URL; that text is
-    // the entire filing route for the line.
+    // the entire filing route for the line (F-204 AC 1).
     const instructions = "File at the precinct where the device will be used; form PD 656-041A.";
     const line = await lineFor(
-      finding({ ruleIds: ["NYPD-SOUND-001"], portalUrl: null, portalInstructions: instructions }),
+      finding({
+        ruleIds: ["NYPD-SOUND-001"],
+        portalName: "Local NYPD precinct (in person)",
+        portalUrl: null,
+        portalInstructions: instructions,
+      }),
     );
 
+    expect(line.getByText(/apply at Local NYPD precinct \(in person\)/)).toBeDefined();
     expect(line.getByText(instructions)).toBeDefined();
+    expect(line.queryByRole("link", { name: "Local NYPD precinct (in person)" })).toBeNull();
   });
 
   it("links the portal when the rule publishes one, and names it plainly when it has no URL", async () => {
@@ -470,16 +482,78 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
         feeDisplay: "$105 filing fee",
       }),
     );
+    expect(linked.getByText(/apply at/)).toBeDefined();
     expect(linked.getByRole("link", { name: "FDNY Business" }).getAttribute("href")).toBe(
       "https://fires.fdnycloud.org/CitizenAccess/Default.aspx",
+    );
+    expect(linked.getByRole("link", { name: "FDNY Business" }).getAttribute("target")).toBe(
+      "_blank",
     );
     expect(linked.getByText("$105 filing fee")).toBeDefined();
     cleanup();
 
     // A portal named but not yet resolved to a URL renders as text rather than a dead link.
     const unlinked = await lineFor(finding({ portalUrl: null, portalName: "Borough office" }));
-    expect(unlinked.getByText("Borough office")).toBeDefined();
+    expect(unlinked.getByText(/apply at Borough office/)).toBeDefined();
     expect(unlinked.queryByRole("link", { name: "Borough office" })).toBeNull();
+  });
+
+  it("renders distinct application paths for Scenario A SAPO and Scenario C Parks (F-204 AC 5)", async () => {
+    const sapo = publishedRule("SAPO-STREET-LARGE-001");
+    const parks = publishedRule("PARKS-EVENT-001");
+    const sound = publishedRule("NYPD-SOUND-001");
+    const sapoPortal = sapo.output.portal as { name: string; url: string };
+    const parksPortal = parks.output.portal as { name: string; url: string };
+    const soundPortal = sound.output.portal as {
+      name: string;
+      url: null;
+      instructions: string;
+    };
+
+    const sapoLine = await lineFor(
+      finding({
+        ruleIds: [sapo.id],
+        portalName: sapoPortal.name,
+        portalUrl: sapoPortal.url,
+        portalInstructions: null,
+      }),
+    );
+    expect(sapoLine.getByRole("link", { name: "E-Apply" }).getAttribute("href")).toBe(
+      "https://nyceventpermits.nyc.gov/cems/Login",
+    );
+    cleanup();
+
+    const parksLine = await lineFor(
+      finding({
+        ruleIds: [parks.id],
+        portalName: parksPortal.name,
+        portalUrl: parksPortal.url,
+        portalInstructions: null,
+      }),
+    );
+    expect(
+      parksLine.getByRole("link", { name: "NYC Parks event permits" }).getAttribute("href"),
+    ).toBe("https://nyceventpermits.nyc.gov/parks");
+    cleanup();
+
+    const soundLine = await lineFor(
+      finding({
+        ruleIds: [sound.id],
+        portalName: soundPortal.name,
+        portalUrl: null,
+        portalInstructions: soundPortal.instructions,
+      }),
+    );
+    expect(soundLine.queryByRole("link", { name: soundPortal.name })).toBeNull();
+    expect(soundLine.getByText(/apply at Local NYPD precinct \(in person\)/)).toBeDefined();
+    expect(soundLine.getByText(soundPortal.instructions)).toBeDefined();
+  });
+
+  it("omits the portal block when the finding carries no portal fields", async () => {
+    const line = await lineFor(
+      finding({ portalName: null, portalUrl: null, portalInstructions: null }),
+    );
+    expect(line.queryByText(/apply at/)).toBeNull();
   });
 
   it("renders every published note on the line", async () => {
