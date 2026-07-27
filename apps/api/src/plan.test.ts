@@ -89,7 +89,7 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     `THIS IS AN EXPECTED RESOLUTION OF SPEC-CONFLICT #130, NOT A REGRESSION:`,
     `F-201 AC 10 and ARCHITECTURE AD-11 both require business-day math against this calendar, and`,
     `neither is satisfiable in production while no list exists. This assertion is a notification,`,
-    `so that publishing lands in one visible place instead of silently moving three plan dates.`,
+    `so that publishing lands in one visible place instead of silently moving four plan dates.`,
     `Before deleting it, read the doc comment on PUBLISHED_HOLIDAY_CALENDARS in`,
     `apps/api/src/calendar.ts: it records what blocked publication — no source consulted defines`,
     `"business day" for a filing lead, which is the independent reason, and one calendar id spans`,
@@ -358,7 +358,7 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     // SPEC-CONFLICT #130 records, so this failing means the conflict was resolved.
     //
     // It exists because that change would otherwise be silent. Every other test in this file now
-    // states its own calendar, so publication moves three production plan dates and breaks nothing
+    // states its own calendar, so publication moves four production plan dates and breaks nothing
     // — one visible failure carrying an explanation beats none, and it beats the two bare
     // NOT_CALCULABLE failures the old arrangement would have produced.
     expect(pinnedCalendar(ruleset.calendarId).holidays, PUBLICATION_IS_A_RESOLUTION).toBeNull();

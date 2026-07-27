@@ -108,11 +108,13 @@ export class MissingHolidayCalendarError extends Error {
  *     SLA's business-day unit or state that every SLA-published closure is excluded from a backward
  *     count. It does not reach DOB, which is a city agency.
  *
- * SCOPE OF THAT FOLLOW-UP: DOB-TENT-001, SLA-ONEDAY-001 and SLA-CATERING-001 were assessed.
- * DOB-ASSEMBLY-001 is a fourth business-day rule using this shared calendar, but its TPA filing
- * path was not assessed in that follow-up. Nothing in the TUP result establishes what a DOB closure
- * does to the TPA counter. Publication of this shared calendar therefore remains unsupported for
- * that independent reason too.
+ * SCOPE OF THAT FOLLOW-UP: DOB-TENT-001 was assessed against a fetched DOB closure source. For
+ * SLA-ONEDAY-001 and SLA-CATERING-001, the permit leads and state-office holiday treatment were
+ * fetched, but no SLA-published closure source was fetched; the agency-closure question therefore
+ * remains unassessed for those paths. DOB-ASSEMBLY-001 is a fourth business-day rule using this
+ * shared calendar, but its TPA filing path was also not assessed. Nothing in the TUP result
+ * establishes what a DOB closure does to the TPA counter. Publication of this shared calendar
+ * therefore remains unsupported for those independent reasons too.
  *
  * WHAT DOB PUBLISHES ELSEWHERE, AND WHAT IT DOES NOT PUBLISH FOR TUP. This is not a third lead. The
  * two leads above are candidate authorities that might answer the question; this is not one of them,
@@ -175,8 +177,9 @@ export class MissingHolidayCalendarError extends Error {
  * states and does not state. The earlier reported-only pass remains an uncorroborated concurring
  * result, but the listed sources are now fetched evidence independently of that report.
  *
- * What would unblock the three assessed paths is not a better list of dates. It is a source
- * establishing, per path, that the agency's published closure stops that filing counter. Publishing
+ * What would unblock DOB-TENT-001 is not a better list of dates, but a source establishing that
+ * DOB's published closure stops the TUP filing counter. The SLA paths first need an applicable
+ * SLA-published closure source, then a source establishing its effect on those counters. Publishing
  * this shared calendar also requires a supported answer for DOB-ASSEMBLY-001's separate TPA path.
  *
  * MEANWHILE, AN APPROVED CRITERION CANNOT BE MET: F-201 AC 10 requires Scenario F's business-day
