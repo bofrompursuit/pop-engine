@@ -1872,13 +1872,22 @@ export function createAlertPoller(dependencies: {
         -- WITHIN a channel the order is untouched: oldest first, exactly as before. This changes
         -- which channel is served next, never which alert within one.
         --
+        -- PARTITIONED BY failure_count TOO, or the rank undoes the priority it sits inside. The
+        -- outer key puts every untried alert ahead of every retried one; a rank counted over the
+        -- whole channel gave a NEW email sitting behind a hundred retryable failures rank 101, so
+        -- inside the untried band it lost to twenty-four rank-one rows of another channel and was
+        -- excluded from the scan entirely while its own provider was healthy. Restarting the rank
+        -- per attempt count means a first attempt stays a first attempt within its channel as well
+        -- as across them, and the rank is only ever compared between rows the outer key has
+        -- already put in the same band.
+        --
         -- WHAT I DID NOT DO, because it trades against the bound it protects: give the first retry
         -- a real delay. RETRY_BACKOFF makes it immediate on purpose, one failure is usually a
         -- blip, and an alert that has already spent up to a polling interval waiting cannot also
         -- absorb a backoff step before its first retry and stay inside AC 2. Demoting the channel
         -- costs nothing an alert is owed.
         ORDER BY failure_count,
-                 row_number() OVER (PARTITION BY channel ORDER BY send_at, id),
+                 row_number() OVER (PARTITION BY channel, failure_count ORDER BY send_at, id),
                  send_at,
                  CASE alert_type WHEN 'dependency_unlocked' THEN 0 ELSE 1 END, id
         LIMIT ${MAX_ALERTS_PER_TICK}`,

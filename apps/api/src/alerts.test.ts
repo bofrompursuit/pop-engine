@@ -3914,6 +3914,60 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(summary.drained).toBe(false);
     });
 
+    it("keeps a first attempt first inside its channel as well as across channels", async () => {
+      // The rank undid the priority it sits inside. The outer key puts every untried alert ahead of
+      // every retried one, and a rank counted over the WHOLE channel gave a new email sitting
+      // behind a backlog of retryable failures a rank in the hundreds — so inside the untried band
+      // it lost to rank-one rows of another channel and was excluded from the scan altogether,
+      // while its own provider was healthy.
+      const eventId = await createEvent(scenario("C"));
+      // A backlog of already-failed emails, older than everything else and eligible now.
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, failure_count, payload)
+         SELECT gen_random_uuid(), $1, 'slack_warning', 'email', 'dead@example.test',
+                $2 || ':old:' || step, current_timestamp - interval '30 minutes', 'failed', 1,
+                '{"subject":"s","body":"b"}'::jsonb
+           FROM generate_series(1, 30) AS step`,
+        [eventId, `${eventId}`],
+      );
+      // Enough untried SMS to fill the cap on their own.
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         SELECT gen_random_uuid(), $1, 'slack_warning', 'sms', '+15550000000',
+                $2 || ':sms:' || step, current_timestamp - interval '20 minutes', 'pending',
+                '{"subject":"s","body":"b"}'::jsonb
+           FROM generate_series(1, $3) AS step`,
+        [eventId, `${eventId}`, MAX_ALERTS_PER_TICK],
+      );
+      // And the new email, newest of all, which is the row the rank was burying.
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         VALUES (gen_random_uuid(), $1, 'slack_warning', 'email', 'organizer@example.test',
+                 $2 || ':new', current_timestamp - interval '1 minute', 'pending',
+                 '{"subject":"s","body":"b"}'::jsonb)`,
+        [eventId, `${eventId}`],
+      );
+      const provider = fakeProvider();
+
+      await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      // ONE tick. Under the old rank the new email was not even selected, so it could not be sent.
+      expect(provider.delivered.some((sent) => sent.recipient === "organizer@example.test")).toBe(
+        true,
+      );
+      // Not vacuous: the untried SMS really did fill the cap alongside it, which is the crowding
+      // that made this reachable.
+      expect(provider.delivered.filter((sent) => sent.recipient === "+15550000000").length)
+        .toBeGreaterThan(0);
+    });
+
     it("keeps retrying through a provider outage without losing an alert", async () => {
       const eventId = await createEvent(scenario("C"));
       await schedulePastDue(eventId);
