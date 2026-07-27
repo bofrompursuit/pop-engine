@@ -1301,7 +1301,7 @@ describe("the fixture suite and the published ruleset agree", () => {
       // was calling the same finding "Street Event Permit (Large)" on its own finding line and
       // "SAPO Street Event (Large)" on its verdict line, and the alias declared the two equivalent
       // instead of surfacing it. The key's verdict line is corrected in the same commit, because the
-      // published rule outranks the fixture (DOCUMENTATION-GOVERNANCE §27-35, and the key says so
+      // published rule outranks the fixture (DOCUMENTATION-GOVERNANCE §2 "Regulatory authority hierarchy", and the key says so
       // itself at its own line 5). Checked across all six scenarios before correcting: A is the only
       // verdict line that names a blocking finding at all, so there was no naming convention to
       // defend.
