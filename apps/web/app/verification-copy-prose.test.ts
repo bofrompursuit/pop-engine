@@ -5,14 +5,29 @@ import { describe, expect, it } from "vitest";
 
 // Prose guard for SPEC-CONFLICT #145: prose must not describe COVERAGE_GAP as an absent source.
 //
-// ROUND 3 REBUILD, and the reason is measured rather than argued. The first version denied one
-// phrase, the second denied two, and the defect then turned up in SIX places in wordings neither
-// list reached: a hyphenated run-together of "source", "not" and "established" five times, one of
-// them a test name, and a hyphenated "no"+"source" compound modifying "state" once. Both are spelled
-// out only in the fragment-assembled probes at the bottom of this file, never in prose here, because
-// this file is inside layer 2's own scope and a literal would make the guard fail on itself.
-// Enumerating wrong phrasings loses to a writer with a thesaurus, so this file no longer rests on
-// that alone.
+// FOUR EVASIONS, AND THE SHAPE OF THEM IS THE ARGUMENT FOR THIS DESIGN. In order: a hyphen, a
+// compound noun, six instances at the PRD root that nobody had scanned for, and a line break. Three
+// of the four were purely mechanical, and each was closed by normalising one more axis. Round 4 stops
+// bolting axes on: the unit of matching is now the WHOLE ARTIFACT, so anything that only changes how
+// the words are laid out cannot help. Hyphens, underscores, runs of spaces and newlines all normalise
+// to the same single space before any pattern runs.
+//
+// The wordings themselves are spelled out only in the fragment-assembled probes at the bottom of this
+// file, never in prose here, because this file is inside layer 2's own scope and a literal would make
+// the guard fail on itself.
+//
+// WHAT WHOLE-FILE NORMALISATION BUYS: the mechanical family is closed, four for four. A writer cannot
+// evade it by reflowing, hyphenating, or breaking a phrase across a paragraph.
+//
+// WHAT IT DOES NOT BUY, and this has not changed: it still cannot decide meaning. "The ruleset has
+// not identified an authority" says the same wrong thing in words no pattern here matches, and it
+// passes. Every layer below is a bound on how this defect has actually travelled, not a semantic
+// check, and a reviewer remains the only thing between a novel formulation and an approved artifact.
+//
+// It also costs something, stated because the cost is real: matching across the whole file means two
+// unrelated sentences either side of a paragraph break are now adjacent to the matcher. That was
+// measured rather than assumed before this landed, and the probe below pins the sentences that must
+// keep passing.
 //
 // THREE LAYERS, AND EACH ONE'S GUARANTEE IS STATED EXACTLY. None of them decides meaning; no string
 // match can. What they do is bound the ways this defect has actually travelled.
@@ -100,12 +115,22 @@ function git(args: string[]): string {
   }
 }
 
-// `git grep` rather than a filesystem walk: it respects .gitignore for free, so node_modules, build
-// output and the coverage report cannot produce phantom hits, and it only sees committed files.
-function trackedOccurrences(phrase: string): string[] {
-  return git(["grep", "-rniI", "--", phrase])
+// The file list comes from git, not a filesystem walk: it respects .gitignore for free, so
+// node_modules, build output and the coverage report cannot produce phantom hits, and it only ever
+// sees files that are actually tracked.
+function trackedTextFiles(): string[] {
+  return git(["ls-files"])
     .split("\n")
-    .filter((line) => line.length > 0);
+    .filter(Boolean)
+    .filter((file) => {
+      // Skip anything with a NUL byte, which is what `git grep -I` did for us before. Reading a
+      // binary as UTF-8 would otherwise produce garbage that could match anything.
+      try {
+        return !readTracked(file).includes("\0");
+      } catch {
+        return false;
+      }
+    });
 }
 
 function scopedFiles(): string[] {
@@ -113,49 +138,124 @@ function scopedFiles(): string[] {
   return [...MEANING_ARTIFACTS, ...web];
 }
 
-// The working-tree copy, not `git show HEAD:`. `git grep` above reads the working tree by default,
-// and a guard that only saw committed content would pass on a broken edit and fail on a fixed one
-// until it was committed, which inverts the edit-and-rerun loop it exists to support.
+// The working-tree copy, not `git show HEAD:`. A guard that only saw committed content would pass on
+// a broken edit and fail on a fixed one until it was committed, which inverts the edit-and-rerun
+// loop it exists to support.
 function readTracked(file: string): string {
   return readFileSync(resolve(process.cwd(), file), "utf8");
 }
 
-/** Hyphens and underscores to spaces, runs of whitespace to one. Defeats both observed evasions. */
-function normalise(line: string): string {
-  return line.replace(/[-_]/g, " ").replace(/\s+/g, " ");
+/**
+ * Normalisation over a WHOLE artifact, carrying an index back to the original text.
+ *
+ * Round 4 exists because the previous version split on newlines and normalised each line, so a
+ * phrase wrapped by ordinary Markdown reflow matched nothing: "source is not" ending one line and
+ * "published" starting the next. Normalising per line can only ever see inside a line, so no
+ * additional pattern fixes it; the unit of matching has to be the artifact.
+ *
+ * `origin[k]` is the offset in `raw` of the k-th normalised character, which is what lets a match
+ * report a real line number. Line splitting was only ever there for the diagnostic, and a line
+ * number is recoverable from an offset.
+ *
+ * `separators` decides what collapses. FAMILY runs with hyphens and underscores treated as
+ * separators, so a hyphenated run-together and a line break normalise to the same thing. COMPOUND
+ * runs with whitespace only, because its hyphen is the thing it is looking for.
+ */
+type Normalised = { text: string; origin: number[] };
+
+function normaliseWhole(raw: string, separators: RegExp): Normalised {
+  let text = "";
+  const origin: number[] = [];
+  let index = 0;
+  while (index < raw.length) {
+    const character = raw.charAt(index);
+    if (separators.test(character)) {
+      text += " ";
+      origin.push(index);
+      while (index < raw.length && separators.test(raw.charAt(index))) index += 1;
+    } else {
+      text += character;
+      origin.push(index);
+      index += 1;
+    }
+  }
+  return { text, origin };
+}
+
+const FAMILY_SEPARATORS = /[-_\s]/;
+const COMPOUND_SEPARATORS = /\s/;
+
+/** Kept for the single-string probes below, where there is nothing to map back to. */
+function normalise(text: string): string {
+  return normaliseWhole(text, FAMILY_SEPARATORS).text;
+}
+
+function lineOf(raw: string, offset: number): number {
+  let line = 1;
+  for (let index = 0; index < offset && index < raw.length; index += 1) {
+    if (raw.charAt(index) === "\n") line += 1;
+  }
+  return line;
 }
 
 type Hit = { file: string; line: number; why: string };
 
-function familyHits(files: readonly string[]): Hit[] {
+function firstMatch(
+  raw: string,
+  normalised: Normalised,
+  pattern: RegExp,
+): { line: number } | undefined {
+  const found = pattern.exec(normalised.text);
+  if (found === null) return undefined;
+  const offset = normalised.origin[found.index] ?? 0;
+  return { line: lineOf(raw, offset) };
+}
+
+function hitsIn(file: string, raw: string): Hit[] {
+  const forFamily = normaliseWhole(raw, FAMILY_SEPARATORS);
+  const forCompound = normaliseWhole(raw, COMPOUND_SEPARATORS);
   const hits: Hit[] = [];
-  for (const file of files) {
-    readTracked(file)
-      .split("\n")
-      .forEach((line, index) => {
-        const matched =
-          FAMILY.find((entry) => entry.pattern.test(normalise(line))) ??
-          (COMPOUND.pattern.test(line) ? COMPOUND : undefined);
-        if (matched !== undefined) {
-          hits.push({ file, line: index + 1, why: matched.why });
-        }
-      });
+  for (const entry of FAMILY) {
+    const found = firstMatch(raw, forFamily, entry.pattern);
+    if (found !== undefined) hits.push({ file, line: found.line, why: entry.why });
   }
+  const compound = firstMatch(raw, forCompound, COMPOUND.pattern);
+  if (compound !== undefined) hits.push({ file, line: compound.line, why: COMPOUND.why });
   return hits;
 }
 
+function familyHits(files: readonly string[]): Hit[] {
+  return files.flatMap((file) => hitsIn(file, readTracked(file)));
+}
+
+/**
+ * Layer 1, over whole artifacts for the same reason. `git grep` matches line by line, so the wrapped
+ * form that defeated layer 2 defeated this too: the shipped literal split across a newline scored
+ * zero files. Measured, not assumed, before this was rewritten.
+ */
+function shippedPhrasingHits(phrase: string): Hit[] {
+  // Matched against normalised text, where every separator run is already one space, so the phrase
+  // needs no escaping beyond its own words.
+  const wanted = new RegExp(normalise(phrase), "i");
+  return trackedTextFiles().flatMap((file) => {
+    const raw = readTracked(file);
+    const found = firstMatch(raw, normaliseWhole(raw, FAMILY_SEPARATORS), wanted);
+    return found === undefined ? [] : [{ file, line: found.line, why: phrase }];
+  });
+}
+
+// Runs the probes through the real matcher rather than a parallel reimplementation of it. A probe
+// that tested its own copy of the logic would have kept passing through all four evasions.
 function caughtByFamily(wording: string): boolean {
-  return (
-    FAMILY.some((entry) => entry.pattern.test(normalise(wording))) ||
-    COMPOUND.pattern.test(wording)
-  );
+  return hitsIn("probe", wording).length > 0;
 }
 
 describe("COVERAGE_GAP prose cannot describe an absent source", () => {
   it.each(SHIPPED_PHRASINGS)("has no tracked file saying $phrase", ({ phrase, why }) => {
     // Fails with the offending file:line and the reason, so whoever reintroduces it is told where
     // and why rather than being handed a bare boolean.
-    expect(trackedOccurrences(phrase), why).toEqual([]);
+    const hits = shippedPhrasingHits(phrase).map((hit) => `${hit.file}:${hit.line}`);
+    expect(hits, why).toEqual([]);
   });
 
   it("has no source-absence wording in the artifacts that define the status", () => {
@@ -188,9 +288,18 @@ describe("COVERAGE_GAP prose cannot describe an absent source", () => {
       `the explicit ${sourceNot} state`,
       `its explicit ${["no", "source"].join("-")} state`,
       ...SHIPPED_PHRASINGS.map((entry) => entry.phrase),
+      // Round 4's evasion: the same claim broken by ordinary Markdown reflow. Every wording above
+      // also gets a wrapped variant below, because the wrap is orthogonal to the wording and the
+      // previous version of this guard passed on all of them.
+      ...SHIPPED_PHRASINGS.map((entry) => entry.phrase.replace(" ", "\n")),
+      // Assembled, not written out, for the same reason as everything else here: whole-file
+      // normalisation now joins this file's own lines too, so a wrapped literal in a probe would be
+      // indistinguishable from the defect and would fail the layer it exists to test.
+      `an explicit state in which ${["no", "source", "is"].join(" ")}\n${"published"}`,
+      `a state where the\n${["source", "is", "not", "established"].join(" ")}`,
     ];
     for (const wording of historical) {
-      expect(caughtByFamily(wording), `should be caught: ${wording}`).toBe(true);
+      expect(caughtByFamily(wording), `should be caught: ${JSON.stringify(wording)}`).toBe(true);
     }
   });
 
@@ -209,11 +318,21 @@ describe("COVERAGE_GAP prose cannot describe an absent source", () => {
     }
   });
 
-  it("would notice if the grep helper stopped working", () => {
-    // A helper that silently returned nothing would let every assertion above pass forever, which is
-    // the failure mode that makes a regression test worthless.
-    expect(trackedOccurrences("COVERAGE_GAP").length).toBeGreaterThan(0);
+  it("would notice if the file scan stopped working", () => {
+    // A scan that silently saw nothing would let every assertion above pass forever, which is the
+    // failure mode that makes a regression test worthless.
+    expect(trackedTextFiles().length).toBeGreaterThan(MEANING_ARTIFACTS.length);
     expect(scopedFiles().length).toBeGreaterThan(MEANING_ARTIFACTS.length);
     expect(readTracked("docs/PRD.md").length).toBeGreaterThan(0);
+  });
+
+  it("reports the line a whole-file match came from, not the offset", () => {
+    // Line splitting existed only for this diagnostic, so replacing it has to keep it. Third line of
+    // the sample, and the claim is wrapped across lines two and three to prove the mapping survives
+    // normalisation rather than pointing at the start of the file.
+    const sample = ["first", "a state in which no", "source is published"].join("\n");
+    const hits = hitsIn("sample.md", sample);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]?.line).toBe(2);
   });
 });
