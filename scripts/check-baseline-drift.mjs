@@ -465,7 +465,28 @@ function resolves(named, text, at) {
 // The cost, stated: a string or a config line whose prose ends with the filename and a full stop
 // fails. Nothing in the repo does that today. If it becomes a nuisance the answer is to narrow what
 // is scanned, not to go back to accepting typos quietly.
-const RULESET_FILENAME = /nyc-rules\.[\w.-]*/g;
+//
+// THE RUN HAS TO RUN FAR ENOUGH FOR ANY OF THAT TO HOLD, which is what `[\w.-]*` did not do. It
+// stopped at the first character outside word/dot/hyphen, so `rules/nyc-rules.v2.8.json?backup`
+// yielded the published name, matched it exactly, and passed — while `readFileSync` opens the whole
+// token and gets ENOENT. Same family as `.bak` and `.jsonx` above: a prefix of a bad name is a good
+// name. Taking the whole run is only a fix if the run ends where the FILENAME ends, and `?`, `#`,
+// `%`, `:` and the rest of that set are legal in one.
+//
+// So the class is stated as what a filename cannot contain here, not as a shortlist of what it can:
+//
+//   • `/` ends the segment — the directory is read separately, by `resolves`;
+//   • whitespace ends the token in every format scanned;
+//   • `'`, `"`, backtick and `\` are the delimiters and escape lead-in of the RAW literal text this
+//     runs over, so a name at the end of a literal must stop before its closing quote;
+//   • `{` and `}` bound a template span, so a name ending a `${`-terminated TemplateHead stops
+//     before the boundary rather than swallowing it.
+//
+// The residual gap, named rather than left to be found: a backslash INSIDE a filename truncates the
+// token, so `"nyc-rules.v2.8.json\\backup"` still reads as the published name. That is the Windows
+// separator and a character no path in this repo contains, and excluding it is what keeps a real
+// `\n` after a real path from being read as part of it.
+const RULESET_FILENAME = /nyc-rules\.[^\s/'"`\\{}]*/g;
 
 /** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
 function danglingIn(text) {
@@ -662,6 +683,11 @@ function parseSource(relative, source) {
  * WHAT IS AND IS NOT CLAIMED, and the claim is deliberately smaller than the two before it made.
  * This reads the same binding the api's module-level `validateRuleset` resolves, and `const`
  * forbids reassignment, so the value checked against the artifact is the value that code compares.
+ * THE `const` IS REQUIRED HERE RATHER THAN ASSUMED, because the sentence before this one is the
+ * whole argument and it is only true if the declaration is checked: a module-scope
+ * `let EXPECTED_RULESET_VERSION = "nyc.v2.8"` reassigned lower down would satisfy a shape test,
+ * confirm the initial value against the artifact, and leave `validateRuleset` comparing the
+ * reassigned one. A non-const declaration is rejected outright, which reads as "no pin" and says so.
  * That is the whole claim. It is NOT "final": the gap that remains is a rename, or a second
  * module-scope declaration of the same name, and neither is closed by scope. Both are visible in a
  * diff, which is the difference between this and the earlier fixes — those were beaten by things
@@ -672,6 +698,7 @@ function pinnedVersion(sourceFile) {
   let pinned = null;
   const atModuleScope = (declaration) =>
     ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
     ts.isVariableStatement(declaration.parent.parent) &&
     declaration.parent.parent.parent === sourceFile;
   const visit = (node) => {
@@ -761,8 +788,11 @@ const pinTree =
 const pinned = pinnedVersion(pinTree);
 if (pinned === null) {
   console.error(
-    `${pinFile} no longer declares EXPECTED_RULESET_VERSION, which this check reads as the one\n` +
-      "place allowed to pin a ruleset version. If it moved, point this check at its new home.",
+    `${pinFile} no longer declares EXPECTED_RULESET_VERSION as a module-scope const, which this\n` +
+      "check reads as the one place allowed to pin a ruleset version. A `let` or `var` pin is\n" +
+      "rejected on purpose: it can be reassigned after this check reads it, so the value confirmed\n" +
+      "here would not be the value validateRuleset compares. If it moved, point this check at its\n" +
+      "new home.",
   );
   process.exit(1);
 }

@@ -159,6 +159,24 @@ describe("ruleset names in executable code", () => {
     expect(output).toContain(`apps/web/app/reader.ts:1 names ${named}`);
   });
 
+  // Round 2 took the whole run and compared it exactly, which closed `.bak` and `.jsonx`. The run
+  // then stopped at the first character outside word/dot/hyphen, so a suffix built from any other
+  // legal filename character left the published name as the token and passed — while the runtime
+  // opens the whole thing and gets ENOENT. These are the characters the class used to end on.
+  it.each([
+    ["a query suffix", `${FIXTURE_RULESET}?backup`],
+    ["a fragment suffix", `${FIXTURE_RULESET}#old`],
+    ["a percent escape", `${FIXTURE_RULESET}%20`],
+    ["a stream suffix", `${FIXTURE_RULESET}:2`],
+  ])("fails on a published name with %s, which names no file", (_label, named) => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const path = "rules/${named}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${named}`);
+  });
+
   // Trailing punctuation is no longer trimmed, in either rule. Both branches of that trade are
   // pinned here: the typo it now catches, and the prose it now costs. An accepted typo is silent
   // and breaks at runtime; a false positive on prose is loud and fixed in a minute.
@@ -441,6 +459,23 @@ describe("the version, which is spelled in three places", () => {
     expect(status).toBe(1);
     expect(output).toContain(`${FIXTURE_RULESET} is named for ${FIXTURE_VERSION}`);
     expect(output).toContain("pins nyc.v9.9");
+  });
+
+  // The module-scope restriction is argued from `const` forbidding reassignment, so `const` has to
+  // be the thing that is checked. The pin below is initialised to the RIGHT version and reassigned
+  // afterwards: a check reading only the declaration's position confirms the initial value against
+  // the artifact and passes, while `validateRuleset` compares the reassigned one and rejects the
+  // published ruleset at boot.
+  it.each([["let"], ["var"]])("refuses a %s pin, which the const argument does not cover", (kind) => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts":
+        `${kind} EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
+        `EXPECTED_RULESET_VERSION = "nyc.v9.9";\n` +
+        `export { EXPECTED_RULESET_VERSION };\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("no longer declares EXPECTED_RULESET_VERSION");
   });
 
   it("fails when the one constant allowed to name a version is gone", () => {
