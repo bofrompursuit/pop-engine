@@ -1176,6 +1176,81 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
   });
 });
 
+describe("F-203 · a channel that failed to deliver is reported to the organizer", () => {
+  it("says how many failed, on which channel, and what the organizer can do", async () => {
+    // F-203 exists so a filing deadline does not pass unnoticed. An alert failing silently is
+    // exactly that failure, and until this nothing on any surface said so.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2 }],
+        alertContacts: { email: "typo@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/failed to send/);
+    expect(notice.textContent).toBe(
+      "2 email alerts for this event have failed to send. PopEngine keeps retrying them. If the " +
+        "email address below is wrong, correcting it will redirect the alerts that have not gone " +
+        "out.",
+    );
+    expect(notice.getAttribute("role")).toBe("alert");
+    // The action it points at is really there, because contacts stay editable on a current
+    // checklist.
+    expect(screen.getByLabelText("Email for deadline reminders")).toBeDefined();
+  });
+
+  it("agrees with itself on one failure", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 1 }],
+      }),
+    });
+
+    await renderView();
+
+    expect(screen.getByText(/failed to send/).textContent).toContain(
+      "1 email alert for this event has failed to send.",
+    );
+  });
+
+  it("says nothing at all when no failure was observed", async () => {
+    // An empty count is not evidence the channel works: nothing may have been attempted. This is
+    // the same overclaim as the "email is fine" line that was removed, so it must not come back
+    // as a positive rendered from an absence.
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: true, failedAlertDeliveries: [] }) });
+
+    await renderView();
+
+    expect(screen.queryByText(/failed to send/)).toBeNull();
+    expect(screen.queryByText(/working|delivering|sent normally/)).toBeNull();
+  });
+
+  it("keeps a switched-off channel and a failing channel as separate statements", async () => {
+    // "Not switched on yet" and "tried and did not arrive" are different facts. Collapsing them
+    // would misreport both.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        simulatedAlertDeliveries: [{ channel: "sms", sentCount: 1 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 3 }],
+      }),
+    });
+
+    await renderView();
+
+    const simulated = screen.getByText(/No text messages have been sent\./);
+    const failed = screen.getByText(/failed to send/);
+    expect(simulated).not.toBe(failed);
+    // Neither sentence borrows the other's claim.
+    expect(simulated.textContent).not.toContain("failed to send");
+    expect(failed.textContent).not.toContain("not switched on yet");
+  });
+});
+
 describe("F-203 AC 5 · a simulated alert is labelled where the organizer reads it", () => {
   it("says no text messages were sent and how many did not arrive", async () => {
     stubApi({

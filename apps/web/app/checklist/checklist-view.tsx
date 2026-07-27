@@ -99,6 +99,30 @@ export function simulatedDeliveryNotice(delivery: { channel: string; sentCount: 
   return `${lead} ${detail}`;
 }
 
+/**
+ * A channel whose alerts were attempted and failed, which is a different fact from the one above.
+ *
+ * The simulation notice says "this channel is switched off by design". This one says "this channel
+ * tried and did not get through". Collapsing them would tell an organizer the wrong thing about
+ * both, so they are separate fields, separate sentences and separate blocks on the page.
+ *
+ * Every word here is backed by a counted row. It does not say why — provider error text is
+ * operator detail that can name an address — and it does not say anything about the channels that
+ * are NOT listed, because an absent failure count can equally mean nothing was attempted. What it
+ * does say is the one thing that is both true and actionable: the address can be corrected below,
+ * and correcting it redirects the alerts that have not gone out yet.
+ */
+export function failedDeliveryNotice(failure: { channel: string; failedCount: number }): string {
+  const name = CHANNEL_NAMES[failure.channel] ?? failure.channel;
+  const alerts = failure.failedCount === 1 ? "alert" : "alerts";
+  const have = failure.failedCount === 1 ? "has" : "have";
+  return (
+    `${failure.failedCount} ${name} ${alerts} for this event ${have} failed to send. ` +
+    `PopEngine keeps retrying them. If the ${name} address below is wrong, correcting it will ` +
+    `redirect the alerts that have not gone out.`
+  );
+}
+
 export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
   const [state, setState] = useState<ChecklistState>({ status: "loading" });
   const [creating, setCreating] = useState(false);
@@ -423,6 +447,18 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
       {checklist.simulatedAlertDeliveries.map((delivery) => (
         <p className="checklist__flag" role="alert" key={delivery.channel}>
           {simulatedDeliveryNotice(delivery)}
+        </p>
+      ))}
+
+      {/* A channel that tried to send and failed. Its own block rather than folded into the one
+          above: "switched off by design" and "attempted and did not arrive" are different facts,
+          and an organizer needs to tell them apart. F-203 exists so a filing deadline does not
+          pass unnoticed, and an alert failing silently is precisely that — until this, nothing on
+          any surface said so. Nothing renders when no failure was observed, because an empty
+          count is not evidence the channel works. */}
+      {checklist.failedAlertDeliveries.map((failure) => (
+        <p className="checklist__flag" role="alert" key={`failed-${failure.channel}`}>
+          {failedDeliveryNotice(failure)}
         </p>
       ))}
 

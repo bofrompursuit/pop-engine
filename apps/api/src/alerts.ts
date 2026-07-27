@@ -1290,6 +1290,51 @@ export async function simulatedDeliveries(
   return rows.map((row) => ({ channel: row.channel, label: row.label, sentCount: row.count }));
 }
 
+/**
+ * A channel whose alerts tried to send and did not, counted from what the rows observed.
+ *
+ * F-203 exists so a filing deadline does not pass unnoticed, and an alert that silently fails to
+ * deliver is exactly that failure. Nothing an organizer can see reported it: the simulation notice
+ * is an SMS fact and says nothing about email, and inferring email health from it was the overclaim
+ * that notice had to have removed.
+ *
+ * WHAT THIS COUNTS, AND WHAT IT REFUSES TO SAY. Only `status = 'failed'`: an alert that was
+ * attempted and whose latest attempt failed. It does not count `pending` rows, because "not
+ * attempted yet" is not a failure — most pending alerts are simply not due. And an empty result is
+ * reported as empty, never as "the channel is working": zero failures can equally mean nothing has
+ * been attempted, and turning that silence into a reassurance would be the same error one field
+ * over. The absence of evidence is not rendered at all.
+ *
+ * NO CAUSE, ONLY COUNT AND CHANNEL. `payload.last_error` carries provider text that can name a
+ * recipient or expose internals, so it stays in the row for an operator and never reaches a page.
+ *
+ * Test sends are excluded. A demo alert fired at a deliberately bogus address is an operator
+ * action against no deadline, and counting it would tell an organizer their own reminders are
+ * failing when they are not. Same predicate the reconciler already uses to leave test rows alone.
+ */
+export type FailedDelivery = {
+  readonly channel: AlertChannel;
+  /** Alerts on this channel whose most recent attempt failed. Never zero: absent instead. */
+  readonly failedCount: number;
+};
+
+export async function failedDeliveries(
+  database: Queryable,
+  eventId: string,
+): Promise<FailedDelivery[]> {
+  const { rows } = await database.query<{ channel: AlertChannel; count: number }>(
+    `SELECT channel, count(*)::int AS count
+       FROM alerts
+      WHERE event_id = $1
+        AND status = 'failed'
+        AND coalesce(payload->>'test', 'false') <> 'true'
+      GROUP BY channel
+      ORDER BY channel`,
+    [eventId],
+  );
+  return rows.map((row) => ({ channel: row.channel, failedCount: row.count }));
+}
+
 export type AlertView = {
   id: string;
   alertType: AlertType;

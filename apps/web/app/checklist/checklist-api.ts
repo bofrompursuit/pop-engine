@@ -142,6 +142,18 @@ export type SimulatedAlertDelivery = {
  * correct it. It is not read off a sent alert — that records where one message went, which is a
  * different fact that must not change once it is true.
  */
+/**
+ * A channel whose alerts tried to send and did not (F-203).
+ *
+ * Observed, not inferred: the api counts rows whose latest attempt failed. An absent entry means
+ * no failures were observed, which is NOT the same as the channel working — nothing may have been
+ * attempted — so nothing is rendered from an absence.
+ */
+export type FailedAlertDelivery = {
+  readonly channel: string;
+  readonly failedCount: number;
+};
+
 export type AlertContacts = {
   readonly email: string | null;
   readonly phone: string | null;
@@ -169,6 +181,8 @@ export type ChecklistResponse = {
   readonly contextItems: readonly PlanContext[];
   /** Empty in every configuration where every alert that reported sent was actually delivered. */
   readonly simulatedAlertDeliveries: readonly SimulatedAlertDelivery[];
+  /** Empty when no alert for this event has an attempt behind it that failed. */
+  readonly failedAlertDeliveries: readonly FailedAlertDelivery[];
   readonly alertContacts: AlertContacts;
 };
 
@@ -339,6 +353,11 @@ const SIMULATED_DELIVERY_CHECKS: FieldChecks<SimulatedAlertDelivery> = {
   sentCount: isNumber,
 };
 
+const FAILED_DELIVERY_CHECKS: FieldChecks<FailedAlertDelivery> = {
+  channel: isString,
+  failedCount: isNumber,
+};
+
 const ALERT_CONTACTS_CHECKS: FieldChecks<AlertContacts> = {
   email: nullOr(isString),
   phone: nullOr(isString),
@@ -355,6 +374,7 @@ const CHECKLIST_CHECKS: FieldChecks<ChecklistResponse> = {
   items: arrayOf(shapedLike(ITEM_CHECKS)),
   contextItems: arrayOf(shapedLike(PLAN_CONTEXT_CHECKS)),
   simulatedAlertDeliveries: arrayOf(shapedLike(SIMULATED_DELIVERY_CHECKS)),
+  failedAlertDeliveries: arrayOf(shapedLike(FAILED_DELIVERY_CHECKS)),
   alertContacts: shapedLike(ALERT_CONTACTS_CHECKS),
 };
 

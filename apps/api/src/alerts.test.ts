@@ -29,7 +29,12 @@ import {
   type AlertMessage,
   type AlertSenders,
 } from "./alert-delivery";
-import { createAlertPoller, createAlertScheduler, type AlertScheduler } from "./alerts";
+import {
+  createAlertPoller,
+  createAlertScheduler,
+  failedDeliveries,
+  type AlertScheduler,
+} from "./alerts";
 import { createApp } from "./app";
 import { instantAtLocalHour, todayInJurisdiction } from "./calendar";
 import { createPlanService } from "./plan";
@@ -1794,6 +1799,63 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         (await request(app).post(`/api/events/${eventId}/alerts/test`).send("[]").type("json"))
           .status,
       ).toBe(400);
+    });
+  });
+
+  describe("a channel that tried to send and failed is reported as such", () => {
+    it("counts alerts whose attempt failed, per channel, and says nothing about why", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [7, 1]);
+      const provider = fakeProvider();
+      provider.fail = "email provider rejected the send with status 550";
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      const failures = await failedDeliveries(pool, eventId);
+      expect(failures).toEqual([{ channel: "email", failedCount: 2 }]);
+      // The provider's words stay on the row for an operator; they can name a recipient.
+      expect(JSON.stringify(failures)).not.toContain("550");
+    });
+
+    it("reports nothing when alerts exist but none has been attempted", async () => {
+      // The distinction the rows DO support: pending is "not due yet", not "failed". Reporting a
+      // zero here, or anything at all, would be inventing evidence out of an absence.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      expect((await alertsOf(eventId)).every((row) => row.status === "pending")).toBe(true);
+
+      expect(await failedDeliveries(pool, eventId)).toEqual([]);
+    });
+
+    it("stops reporting a failure once the alert gets through", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [1]);
+      const provider = fakeProvider();
+      provider.fail = "email provider unreachable: ECONNREFUSED";
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+      await poller.tick();
+      expect(await failedDeliveries(pool, eventId)).toEqual([{ channel: "email", failedCount: 1 }]);
+
+      provider.fail = null;
+      await poller.tick();
+
+      // Delivered on the retry, so it is no longer a failure to report — the count follows the
+      // rows rather than remembering a state they have left.
+      expect(await failedDeliveries(pool, eventId)).toEqual([]);
+    });
+
+    it("does not count a demo test send against the organizer's own alerts", async () => {
+      // A test fired at a deliberately bogus address is an operator action against no deadline.
+      // Counting it would tell an organizer their reminders are failing when they are not.
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      provider.fail = "email provider rejected the send with status 422";
+      const response = await request(appWith(provider))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "tester@example.test" });
+      expect(response.status).toBe(502);
+
+      expect(await failedDeliveries(pool, eventId)).toEqual([]);
     });
   });
 

@@ -30,7 +30,13 @@ import type {
   FindingKind,
   VerificationStatus,
 } from "@pop-engine/engine";
-import { alertContacts, parseContacts, simulatedDeliveries, type AlertScheduler } from "./alerts";
+import {
+  alertContacts,
+  failedDeliveries,
+  parseContacts,
+  simulatedDeliveries,
+  type AlertScheduler,
+} from "./alerts";
 import { calendarDateFrom, renderingKey, PlanIntegrityError, type FindingRendering } from "./plan";
 import { DocumentStorageError, type DocumentStorage } from "./storage";
 
@@ -596,6 +602,10 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     // contact store rather than off an alert row — an alert records where one message went, which
     // is a different fact with a different lifetime, and is why nothing was ever scheduled through
     // the product before the store existed.
+    // F-203: channels whose alerts tried to send and did not, counted from the rows rather than
+    // inferred. Kept separate from the simulation above on purpose — "switched off by design" and
+    // "tried and failed" are different facts, and collapsing them would misreport both.
+    failedAlertDeliveries: await failedDeliveries(database, eventId),
     alertContacts: await alertContacts(database, eventId),
     items: view,
     // Advisories, notifications, prohibitions and notes: shown for context, not tracked.
