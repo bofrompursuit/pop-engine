@@ -25,6 +25,7 @@ import {
   createSimulatedSmsSender,
   sendersFromEnv,
   unconfiguredEmailSender,
+  PROVIDER_TIMEOUT_MS,
   SIMULATED_SMS_LABEL,
   type AlertMessage,
   type AlertSenders,
@@ -34,7 +35,9 @@ import {
   createAlertPoller,
   createAlertScheduler,
   failedDeliveries,
+  ALERT_POLLER_CONNECTIONS,
   DELIVERY_BOUND_MS,
+  MAX_ALERTS_PER_TICK,
   POLL_INTERVAL_MS,
   type AlertScheduler,
 } from "./alerts";
@@ -126,6 +129,7 @@ type AlertRow = {
     delivery?: { simulated: boolean; label: string | null };
     last_error?: string;
     test?: boolean;
+    controlling_apply_by?: string;
   };
 };
 
@@ -3189,6 +3193,120 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(summary.abandoned).toBe(0);
       // Everything it claimed succeeded, and it still did not reach the end.
       expect(summary.drained).toBe(false);
+    });
+
+    it("sizes a first pass to the budget left after the polling delay", async () => {
+      // THE BOUND, IN TIME, not the formula restated. AC 2 runs from `send_at`; the tick's clock
+      // starts at the tick. An alert that fell due just after a scan has already spent a whole
+      // polling interval before anything looks at it, so a pass sized against the FULL bound hands
+      // the provider a budget the alert no longer has. Ninety-five email sends timing out at ten
+      // seconds each is eleven waves, and the healthy one behind them started about 170 seconds
+      // from its own send_at with every counter reporting health.
+      //
+      // What must hold is that a full first pass, at the provider's worst case, fits inside what
+      // REMAINS of the bound. This is that sentence in milliseconds, and it fails for any cap that
+      // breaks it rather than for one particular arithmetic.
+      const concurrency = ALERT_POLLER_CONNECTIONS - 1;
+      const worstCaseFirstPassMs = Math.ceil(MAX_ALERTS_PER_TICK / concurrency) * PROVIDER_TIMEOUT_MS;
+
+      expect(worstCaseFirstPassMs).toBeLessThanOrEqual(DELIVERY_BOUND_MS - POLL_INTERVAL_MS);
+      // And it is not trivially small: a cap of nothing would satisfy the line above.
+      expect(MAX_ALERTS_PER_TICK).toBeGreaterThanOrEqual(concurrency);
+    });
+
+    it("delivers more than one pass worth without waiting an interval", async () => {
+      // The smaller cap costs no throughput, because a scan that comes back at its limit reports
+      // not-drained and the rescan is immediate. Passes before and after the cap change and is
+      // here to catch a cap reduction that quietly halves delivery rate, not as evidence for it.
+      const eventId = await createEvent(scenario("C"));
+      const overflow = MAX_ALERTS_PER_TICK + 5;
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, payload)
+         SELECT gen_random_uuid(), $1, 'slack_warning', 'email', 'organizer@example.test',
+                $2 || ':budget:' || step, current_timestamp - interval '1 minute', 'pending',
+                '{"subject":"s","body":"b"}'::jsonb
+           FROM generate_series(1, $3) AS step`,
+        [eventId, `${eventId}`, overflow],
+      );
+      const provider = fakeProvider();
+      const poller = createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      });
+      const startedAt = Date.now();
+
+      poller.start();
+      try {
+        await vi.waitFor(
+          async () => {
+            const { rows } = await pool.query<{ pending: string }>(
+              "SELECT count(*)::text AS pending FROM alerts WHERE event_id = $1 AND status <> 'sent'",
+              [eventId],
+            );
+            expect(rows[0]?.pending).toBe("0");
+          },
+          { timeout: 20_000, interval: 250 },
+        );
+      } finally {
+        poller.stop();
+      }
+
+      expect(Date.now() - startedAt).toBeLessThan(POLL_INTERVAL_MS);
+      expect(provider.delivered.length).toBe(overflow);
+    }, 30_000);
+
+    it("reports an empty scan as drained, so the rescan cannot spin", async () => {
+      // The interaction to confirm rather than assume: a smaller cap fills more scans, and a full
+      // scan respawns immediately. An empty one must not, or the poller would chase itself.
+      const provider = fakeProvider();
+
+      const summary = await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      expect(summary.sent + summary.failed).toBe(0);
+      expect(summary.abandoned).toBe(0);
+      expect(summary.drained).toBe(true);
+    });
+
+    it("keeps a tied slack warning alive until every controlling window has closed", async () => {
+      // The same tie as the copy's, resolved the OTHER way, and both are the same rule: break it in
+      // the direction that cannot harm the organizer. For copy that means never asserting a
+      // deadline the sources do not publish. Here it means never silencing a warning that is still
+      // true. Taking the earliest tied date cancelled the warning the moment the first requirement
+      // expired, while another controlling window was still open — and the next scheduling pass
+      // would recreate exactly what had just been cancelled, so after a long outage the at-risk
+      // alert simply disappeared.
+      //
+      // BOTH must be open when the warning is written, or there is no tie to break: a requirement
+      // that has already closed is not a controlling candidate at all.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(1),
+        laterDated: { latestApplyDate: dayFromToday(20), slackDays: 9 },
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(warning).toBeDefined();
+      // The LAST of the tied dates, which is the day the number stops being true of anything. With
+      // the earliest, tomorrow's expiry would cancel a warning whose other controlling window has
+      // nineteen days left.
+      expect(warning?.payload.controlling_apply_by).toBe(dayFromToday(20));
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

@@ -235,8 +235,29 @@ const TICK_BUDGET_MS = 30_000;
  * together means the number cannot drift from what it can deliver again: raise the concurrency or
  * shorten the timeout and this rises with them.
  */
-const MAX_ALERTS_PER_TICK = Math.floor(
-  (SEND_CONCURRENCY * DELIVERY_BOUND_MS) / PROVIDER_TIMEOUT_MS,
+/**
+ * How many alerts one pass may claim, sized to the budget that is actually LEFT when it starts.
+ *
+ * The bound this protects runs from `send_at`, and the tick's clock starts when the tick starts.
+ * Those differ by up to a whole polling interval: an alert that falls due just after a scan has
+ * already spent that interval waiting before anything looks at it. Sizing the batch against the
+ * full `DELIVERY_BOUND_MS` therefore handed the provider a budget the alert no longer had, and a
+ * pass of timing-out sends could run past the bound with every counter reporting health — 95 email
+ * sends timing out at ten seconds each is eleven waves, and the healthy one behind them started at
+ * about 170 seconds from its own `send_at`.
+ *
+ * Subtracting the maximum polling delay is what makes the arithmetic honest: a full first pass, at
+ * the provider's worst case, now fits inside what remains of the bound rather than inside all of
+ * it. The alert that waited the longest is the one the cap has to hold for.
+ *
+ * IT INTERACTS WITH `drained` AND THAT IS THE FIX WORKING. A smaller cap means more scans come back
+ * at their limit, which reports not-drained and triggers the immediate rescan. Throughput is
+ * unchanged because the rescan is immediate; what changes is that a wave of failures can be
+ * demoted by `next_attempt_at` before the alerts behind them are attempted. It cannot spin: an
+ * empty scan is not full and abandons nothing, so it reports drained and the timer takes over.
+ */
+export const MAX_ALERTS_PER_TICK = Math.floor(
+  (SEND_CONCURRENCY * (DELIVERY_BOUND_MS - POLL_INTERVAL_MS)) / PROVIDER_TIMEOUT_MS,
 );
 
 /** What the poller's own pool has to hold: every concurrent send, plus the scan that feeds them. */
@@ -943,14 +964,37 @@ async function plannedAlerts(
     openDated.length > 0 && Math.min(...openDated.map((dated) => dated.slack)) === minSlackDays;
   /** Every still-open requirement whose slack IS the number the copy quotes. */
   const controlling = openDated.filter((dated) => dated.slack === minSlackDays);
-  // Gated if ANY tied candidate is, which is the safe side of a tie: calling a width a countdown
-  // invents a deadline, while calling a countdown a width only loses an anchor.
+  // ONE RULE, TWO OPPOSITE TIE-BREAKS, and they are written here together because apart they look
+  // like a contradiction and someone will eventually "unify" them.
+  //
+  // The rule is: break the tie in the direction that cannot harm the organizer. The two harms point
+  // opposite ways, so the two tie-breaks do too.
+  //
+  //   COPY, below: gated if ANY tied candidate is gated. The harm to avoid is asserting a filing
+  //   deadline the sources do not publish, which is what calling a width a countdown does. Calling
+  //   a countdown a width only loses an anchor, so that is the direction to fall.
+  //
+  //   EXPIRY, below that: the LAST of the tied dates, not the first. The harm to avoid is silencing
+  //   a warning that is still true. Taking the earliest cancels a failed warning the moment the
+  //   first tied requirement expires, while another controlling window is still open — and a fresh
+  //   scheduling pass would then recreate the very warning that was just cancelled, so after a long
+  //   outage the at-risk alert simply disappears.
+  //
+  // Same rule, and the reason it produces opposite answers is that one side risks saying too much
+  // and the other risks saying nothing at all.
   const controllingIsGated = controlling.some((dated) => dated.row.apply_after_date !== null);
-  /** The day the number counts down to, for the poller to compare once the window shuts. */
+  /**
+   * The day the LAST of the controlling requirements closes, for the poller to compare.
+   *
+   * Ties differ in date even when they agree on slack, because ungated slack is measured from the
+   * evaluation date and gated slack is a window width. So the number stays true until every tied
+   * requirement has expired, and this is the day that happens.
+   */
   const controllingApplyBy = controlling
     .map((dated) => isoDate(dated.row.latest_apply_date))
     .filter((day): day is string => day !== null)
-    .sort()[0];
+    .sort()
+    .at(-1);
   if (
     plan.verdict === "feasible_at_risk" &&
     typeof minSlackDays === "number" &&
