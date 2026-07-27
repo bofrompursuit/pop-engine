@@ -172,6 +172,7 @@ export function PromoteView({ eventId, apiBaseUrl, webOrigin }: PromoteViewProps
         </button>
         <a href={state.public_path}>Open public page</a>
         <a href={`/events/${eventId}/guests`}>Guest list</a>
+        <a href={`/events/${eventId}/dashboard`}>Live ops</a>
         <a href={`/intake/${eventId}`}>Edit intake</a>
       </div>
 
