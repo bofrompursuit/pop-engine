@@ -1,6 +1,6 @@
 # Pricing brief: issue #107, named confirmations
 
-**Status:** NOT APPROVED, and not a decision. Issue #107 says the line it proposes "is a proposal, not
+**Status:** `PROPOSED`, which is one of governance section 3's five states. This document decides nothing; that is prose here rather than a status. Issue #107 says the line it proposes "is a proposal, not
 a decision, and it is a rules-owner call", it needs a ruleset bump, and it moves approved answer-key
 output. This document decides none of that. It prices it.
 
@@ -16,12 +16,47 @@ fields cannot boot without an approved regulatory source, which is a verificatio
 than an engineering one. All three are reasons to revisit the framing before deciding, and they are in
 sections 1, 3 and 5.
 
-**Second revision.** Six review findings were applied, two of which corrected headline claims. The
-overlap is one and not zero, and the near-empty suppression is a pre-existing AC 4 defect rather than a
-cost of this proposal. Each correction is marked "Corrected in review" at the point it applies, so a
-reader who saw the first version can find what moved.
+**Third revision.** Fifteen review findings across two rounds have been applied and each is marked
+"Corrected in review" at the point it applies, so a reader who saw an earlier version can find what
+moved. Two changed what the brief concludes: the overlap is one and not zero, and the near-empty
+suppression is a pre-existing AC 4 defect rather than a cost of this proposal. This round adds section 0,
+a defect in the proposed shape that outranks the costs, and it records a method change in section 3
+after a verification failed the same way twice.
+
+Counts that were guessed in earlier versions are now derived rather than spotted: the field inventory by
+exhaustive enumeration over all 33 declared intake fields, and the answer-key item numbers by counting
+each scenario's numbered findings. Both derivations are stated so they can be rerun.
 
 ---
+
+## 0. A defect in the proposed shape, which outranks every cost below
+
+**The mechanism can tell an organizer an absence was established when they answered that they did not
+know.** Not a cost line: it is the invented-claim class, produced by the shape this brief is pricing,
+and it is first because no cost matters if the shape states false things.
+
+For an enum gate, `"unknown"` makes an `eq "no"` condition evaluate tri-state UNKNOWN,
+`resolveFindings` emits every result other than false, and a classification rule carries a STATIC
+`note_text`, so the sentence cannot hedge. Demonstrated with a synthetic confirmation rule keyed on
+`event_open_to_public`, driven through `validateIntake` and then `evaluate`:
+
+| answer | intake valid | confirmation emitted |
+|---|---|---|
+| `"no"` | yes | yes, correctly |
+| `"unknown"` | yes | **yes**, stating "You told us this event is not open to the public" |
+| `"yes"` | yes | no, correctly |
+
+**Not hypothetical for the approved suite.** Three fields in the corrected inventory are answered
+`"unknown"` by the fixtures: `structure_over_10ft_tall` in Scenario E, and
+`sound_audible_from_public_way` and `venue_license_covers_event_area` in Scenario F. A confirmation
+rule on any of them would state a false absence in those two approved scenarios today.
+
+Options, unpriced and listed rather than recommended: an engine change so a classification emits only
+on a TRUE trigger, which touches `resolveFindings` for every rule kind and needs the engine owner; a
+rule-shape change carrying separate true and unknown text, which is a schema change needing its own
+approved spec; restricting confirmations to boolean gates, which drops five of the fourteen fields and
+two of the issue's four named candidates; or accepting that the proposal does not work for enum gates
+as shaped.
 
 ## 1. The proposed line, applied
 
@@ -31,11 +66,23 @@ stay silent when the absence follows from something they never mentioned.
 ### The issue's four candidates are not the complete set under that test
 
 Read as "a declared intake field the organizer is asked, whose negative answer establishes an
-absence", the ruleset has **eleven** such fields, not four.
+absence", the ruleset has **fourteen** such fields, not four.
 
-Corrected in review: an earlier version of this brief listed nine and missed two, which understated
-exactly the noise it went on to measure. `has_amusement_ride` and `event_open_to_public` are added
-below, and the per-scenario counts are re-derived.
+**Corrected in review for the third time, so this one is DERIVED rather than spotted, and here is the
+method.** For all 33 declared intake fields, take each field's negative values from its DECLARED domain
+only (`false` for a boolean, `["none"]` for a multi_enum that declares `none`, `"no"` for an enum that
+declares it). Then for every condition in every rule trigger that reads that field, decide
+mechanically whether the negative makes the condition false, which rules the rule out, or true, which
+triggers it. That is exhaustive over the field list rather than over the fields anyone happened to
+notice, and it is why this pass found `venue_license_covers_event_area`, which neither the earlier
+versions nor the review named.
+
+The result is 11 fields whose negative rules out at least one rule, plus 3 that establish an absence
+while ruling out nothing because no trigger reads them (`obstructs_public_way`, whose `"no"` TRIGGERS
+SAPO-SCOPE-001 rather than ruling anything out, and `generator_present` and `battery_present`).
+Fourteen in total. Four are MIXED, ruling one thing out while triggering another:
+`event_open_to_public`, `sound_audible_from_public_way`, `venue_license_covers_event_area`, and
+`obstructs_public_way` in the pure-trigger direction.
 
 | Field | Negative value | In the issue? | Rules whose trigger reads it |
 |---|---|---|---|
@@ -50,6 +97,9 @@ below, and the per-scenario counts are re-derived.
 | `open_flame_or_cooking` | `["none"]` | **no** | 3: FDNY-FUEL-001, FDNY-OPENFLAME-001, PARKS-PROPANE-001 |
 | `has_amusement_ride` | `false` | **no** | 1: SAPO-INSURANCE-BLOCK-PARTY-RIDE-001 |
 | `event_open_to_public` | `"no"` | **no** | 2 ruled out of 3 that read it: DOHMH-VENDOR-PERMIT-001 and DOHMH-ORGANIZER-NOTIFY-001 both require `"yes"`; DOHMH-EXEMPTION-001 fires ON `"no"` |
+| `sound_audible_from_public_way` | `"no"` | **no** | 1: NYPD-SOUND-001's private-venue branch. MIXED: also triggers ADV-NOISE-CODE-001 |
+| `structure_over_10ft_tall` | `"no"` | **no** | 1: DOB-TALL-STRUCTURE-001, when its structure condition holds |
+| `venue_license_covers_event_area` | `"no"` | **no** | 1: SLA-VENUE-LICENSE-001. MIXED: also triggers SLA-CATERING-001 and SLA-ONEDAY-001 |
 
 Three observations, each verified rather than inferred:
 
@@ -91,6 +141,14 @@ Under the **eleven-field** reading:
 
 Mean 6.0, range 4 to 7. Scenario D is a block party with `has_amusement_ride: false`, so that
 question is in scope and answered; Scenario F answers `event_open_to_public = "no"`.
+
+**The three fields added in this round do not change those counts, and that is the point of separating
+two numbers.** The fixtures answer `structure_over_10ft_tall`, `sound_audible_from_public_way` and
+`venue_license_covers_event_area` as `"unknown"`, so they contribute no confirmation in any scenario.
+The count an implementation must carry is therefore FOURTEEN rules, while the count a fixture displays
+is 4 to 7. The gap matters twice: it is unmeasured noise for any real organizer who answers those three
+negatively, and under section 0 it is exactly where a false confirmation would be stated in Scenarios E
+and F.
 
 Under the issue's **four-field** reading:
 
@@ -137,13 +195,35 @@ aggregated form:
 
 - **A:** `6. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
 - **B:** `5. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
-- **C:** `7. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
-- **D:** `9. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
+- **C:** `5. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
+- **D:** `6. Confirmations: no alcohol, no generator, no battery system stated in your answers.`
 - **E:** `9. Confirmations: no alcohol, no battery system stated in your answers.`
 - **F:** `6. Confirmations: no generator, no battery system stated in your answers.`
 
 Under the eleven-field reading the same line carries 4 to 7 items instead of 2 to 3, or 4 to 7
 separate plan lines in the shape that exists today.
+
+### It contradicts an APPROVED artifact, which is a SPEC-CONFLICT rather than answer-key movement
+
+`docs/DESIGN.md`'s demo plan requires Scenario B to render "no new city event requirement identified
+from your answers" plus **exactly two confirmations**. The four-field interpretation produces three for
+Scenario B; the fourteen-field reading produces seven. Both contradict an approved document, and under
+governance section 5 that is filed and resolved rather than priced as movement.
+
+**One ambiguity has to be resolved first, and it may be the whole of it.** DESIGN's sentence continues
+"The system that says 'almost nothing, and here's what to confirm' is the system you trust", which reads
+as the two things Scenario B tells the organizer to CONFIRM, its occupancy question and its DOHMH
+question, and not as two named absences. F-201 AC 4 uses "named confirmations" for the absences. Neither
+document defines the term, and nothing else in PRD, DESIGN or F-201 uses it. So there are three branches,
+all decisions:
+
+- the two uses mean the same thing, and DESIGN's "exactly two" contradicts the proposal directly;
+- they mean different things, and two approved artifacts use one word for two concepts, which is the
+  same defect shape #136 resolved for "coverage";
+- the term is defined, which settles both.
+
+Recorded as a conflict either way, because on the first reading the count is wrong and on the second the
+vocabulary is.
 
 Two consequences for the key that are not optional:
 
@@ -155,13 +235,31 @@ Two consequences for the key that are not optional:
   `fixture-ruleset-agreement.test.ts` checks that in **both** directions, with named cases for
   "claims-scenario-it-cannot-reach" and "reaches-scenario-it-omits". A confirmation rule firing in all
   six must list all six.
+- **Corrected in review: that metadata is not sufficient.** The guard's
+  "Scenario %s reaches nothing the answer key omits" case extracts rule IDs from each scenario's
+  expected-findings block and fails on any rule `reachedIn(scenario)` returns that the block does not
+  NAME. The illustrated `Confirmations:` lines carry no rule IDs, so every confirmation rule fails that
+  case even with perfect coverage metadata. So the key must name each confirmation rule by ID, which
+  makes the added text longer than illustrated and multiplies the answer-key movement by the rule count,
+  or the comparison itself needs an approved change. Both are costs and neither was priced.
 
 ---
 
 ## 3. Is the shape followable? Yes, and one thing is registered by name
 
-Verified by evaluating a real intake against the published ruleset, with Scenario A's answers and
-`obstructs_public_way` flipped to `"no"` so SAPO-SCOPE-001's trigger is satisfied. It reaches the plan:
+**Corrected in review: the earlier verification here was invalid, and this is the SECOND time the same
+method failed.** Flipping Scenario A's `obstructs_public_way` to `"no"` leaves `sapo_event_type` and
+`street_event_size` in the submission, but the registry stops asking them once obstruction is no, so
+`validateIntake` rejects it. Rerun through the guarded path, that intake produces two errors:
+
+```
+sapo_event_type      not_applicable: only asked when obstructs_public_way != no
+street_event_size    not_applicable: only asked when sapo_event_type = street_event
+```
+
+So "verified by evaluating a real intake" was not established. Removing the two now-unasked answers
+gives an intake `validateIntake` accepts with zero errors, and on THAT intake the shape does reach the
+plan:
 
 ```
 findings total = 4
@@ -176,7 +274,24 @@ SAPO-SCOPE-001 present as a finding = true
 ```
 
 So a new rule of that shape validates, evaluates, becomes `kind: note`, carries its message, and
-arrives as a finding with a source. Nothing about the path is special-cased.
+arrives as a finding with a source. Nothing about the path is special-cased. The conclusion survives the
+corrected experiment; the earlier evidence for it did not.
+
+### The method that keeps proving less than it appears to, and what I am changing
+
+Twice now a verification here has used an engine-level call in place of a path the API guards. Round 2
+found the first instance, `parseEngineRuleset` exercising the laxer of two parsers and hiding the source
+requirement. Round 3 found the second, a direct `evaluate` call hiding `validateIntake`. Same shape both
+times, and a method that fails the same way twice deserves more attention than any number it produced.
+
+What changes, stated so it can be held against me: **any claim in this brief about what the product does
+is driven through the guards the product uses, in order, and the claim names which guards it passed.**
+For a ruleset claim that is the API's `validateRuleset` rather than the engine's parser. For an intake
+claim it is `parseIntakeContract` plus `validateIntake` before `evaluate`, and an intake that fails
+validation is reported as a failure rather than worked around. Where a claim is genuinely about engine
+behaviour alone, as section 0's tri-state demonstration is, it says so and says why the guard does not
+apply. Every experiment in this revision was rerun on that basis, which is how the intake in section 0
+turned out to need `food_affinity_private_exception_claimed` supplied before it would validate at all.
 
 Four costs are registered rather than automatic, and each is a deliberate guard:
 
@@ -214,8 +329,28 @@ recording: the SAPO experiment in this section used `parseEngineRuleset`, and th
 API, so the experiment exercised the path that cannot fail and proved less than it appeared to. The
 refusal is at API boot.
 
-One presentational consequence: `name` is set to the whole `note_text`, so a plan line's title is the
-sentence. SAPO-SCOPE-001's is two sentences and reads as a paragraph in the title position. Short
+**Corrected in review: each confirmation renders its sentence TWICE.** The parser sets both `name` and
+`noteText` from `output.note_text`, verified on the corrected experiment above where `name === noteText`
+was true, and `PlanLine` renders `name` in the heading and `noteText` again in the note paragraph, gated
+only on `noteText !== null && noteText !== conflictText`. So the volume is double what the earlier
+measurement reported:
+
+| Scenario | confirmations | rendered sentences |
+|---|---|---|
+| A | 5 | 10 |
+| B | 7 | 14 |
+| C | 7 | 14 |
+| D | 7 | 14 |
+| E | 4 | 8 |
+| F | 6 | 12 |
+
+Scenario B therefore carries **14 rendered absence sentences beside 3 substantive findings** unless the
+rule shape or the renderer changes, which compounds rather than qualifies the noise finding in section 5.
+Avoiding it means either a rule shape that separates a short title from the sentence, or a renderer that
+suppresses `noteText` when it equals `name`. Both are unpriced.
+
+One further presentational consequence of the same mapping: the heading is the whole sentence, so the
+line has no short title at all. SAPO-SCOPE-001's is two sentences and reads as a paragraph in the title position. Short
 confirmation text is therefore a UI requirement, not a style preference.
 
 ---
@@ -331,9 +466,10 @@ Two specifics worth having:
   seven prose strings. A structured table of `dependencyRuleId` / `upstreamRuleId` / `gatedRuleId`
   needs either a new root key, `config.dependency_sequencing` being the obvious shape, or a schema
   change to `engine_conventions`. Which of those it is changes whether the move is publication-only.
-- **The TPA re-attribution should land after PR #163.** It edits `deadline.qualification`, which was
-  one of the two lines `specs/F-202` cited by number; #163 replaces that with field paths precisely so
-  this edit cannot silently falsify the spec. #163 is open and green.
+- **The TPA re-attribution's ordering dependency is already satisfied.** It edits
+  `deadline.qualification`, which was one of the two lines `specs/F-202` cited by number. PR #163 has
+  MERGED, so F-202 now cites the field paths and this edit can no longer silently falsify the spec.
+  Corrected in review; the earlier version described #163 as open.
 
 ---
 
