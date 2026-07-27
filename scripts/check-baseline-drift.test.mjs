@@ -1316,15 +1316,37 @@ describe.concurrent("round 13: each format decodes by its own rules", () => {
     expect(output).toContain("apps/api/.env.example:1 names");
   });
 
-  // The one escape `--env-file` really does honour, pinned so a future simplification cannot quietly
-  // drop it. The newline splits the value, so the name that remains is the published one.
-  it("honours the one escape --env-file defines, and only inside double quotes", async () => {
+  // ROUND 14 CORRECTED THIS CASE. It asserted that the decoded newline SPLIT the value, leaving the
+  // published name behind, and Node says otherwise: `RULES_FILE="rules/nyc-rules.v0.0.json\nx"` is
+  // ONE value of 32 characters containing a newline, with the text after it retained. So it names a
+  // path that is not there, and the case pinned the behaviour finding :580 identifies as wrong.
+  it("fails a .env value whose decoded newline is part of the path", async () => {
     const { status, output } = await runOn({
       "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET}\\nTRAILING=x"\n`,
     });
 
-    expect(status).toBe(0);
-    expect(output).toContain("check passed");
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env.example:1 names ${FIXTURE_RULESET}`);
+  });
+
+  // The other direction, and what the case above used to be for: `\n` really is decoded, and the
+  // decoding is the ONLY difference between these two. Single quotes decode nothing, so the value
+  // keeps a literal backslash-n and is a different, equally absent path. If a simplification ever
+  // stopped decoding, the double-quoted value would become the single-quoted one and this pair
+  // would stop distinguishing them.
+  it("decodes the one escape --env-file defines, and only inside double quotes", async () => {
+    const doubled = await runOn({
+      "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET}\\nx"\n`,
+    });
+    const singled = await runOn({
+      "apps/api/.env.example": `RULES_FILE='rules/${FIXTURE_RULESET}\\nx'\n`,
+    });
+
+    expect(doubled.status).toBe(1);
+    expect(singled.status).toBe(1);
+    // The decoded one reports a name ending at the newline; the literal one carries the `\n` on.
+    expect(doubled.output).not.toContain(`${FIXTURE_RULESET}\\nx`);
+    expect(singled.output).toContain(`${FIXTURE_RULESET}\\nx`);
   });
 
   // The same bytes in single quotes decode to nothing at all, in either format's rules.
@@ -1346,5 +1368,133 @@ describe.concurrent("round 13: each format decodes by its own rules", () => {
 
     expect(status).toBe(1);
     expect(output).toContain(`apps/api/.env.example:2 names ${MISSING}`);
+  });
+});
+
+describe.concurrent("round 14: shell operators, one boundary, and escaped YAML quotes", () => {
+  // A guard that fails `pnpm check:baseline` on a correct script is the version-bump blocker from
+  // round 11 wearing different clothes. Splitting on whitespace alone welded the operator onto the
+  // filename and reported the PUBLISHED, EXISTING artifact as missing.
+  it.each([
+    ["a semicolon", `cat rules/${FIXTURE_RULESET}; echo ok`],
+    ["no space before it", `cat rules/${FIXTURE_RULESET};echo ok`],
+    ["an and-list", `cat rules/${FIXTURE_RULESET}&&echo ok`],
+    ["a pipe", `cat rules/${FIXTURE_RULESET}|wc -l`],
+    ["a redirect", `cat <rules/${FIXTURE_RULESET}>out.txt`],
+    ["a subshell", `(cat rules/${FIXTURE_RULESET})`],
+    ["a background job", `cat rules/${FIXTURE_RULESET}&`],
+  ])("accepts a package script using %s", async (_label, command) => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // The pair. An operator must separate words, not make the check stop reading them: a dangling
+  // name on either side of one is still a dangling name.
+  it.each([
+    ["before an operator", `cat rules/${MISSING}; echo ok`],
+    ["after an operator", `echo ok && cat rules/${MISSING}`],
+  ])("still fails a dangling name %s", async (_label, command) => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${MISSING}`);
+  });
+
+  // A QUOTED operator is literal, so it stays inside the word and the name runs on through it.
+  // This is what stops the operator split from being "ignore these characters everywhere".
+  it("keeps a quoted operator inside the filename, where it names no file", async () => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `cat 'rules/${FIXTURE_RULESET};backup'` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${FIXTURE_RULESET};backup`);
+  });
+
+  // ONE BOUNDARY FOR EVERY KNOWN-EXTENT VALUE. A newline can be inside a single-line value in every
+  // format here, because the escape decodes to a real one, so a token stopping at it validated the
+  // published prefix of a path that is not there. Both formats, same defect, same fix.
+  it.each([
+    [
+      "a JS literal",
+      "apps/web/app/reader.ts",
+      (name) => `const p = readFileSync("rules/${name}\\nbackup");\n`,
+    ],
+    ["a .env override", "apps/api/.env.example", (name) => `RULES_FILE="rules/${name}\\nbackup"\n`],
+  ])("fails a decoded newline inside %s", async (_label, file, shape) => {
+    const { status, output } = await runOn({ [file]: shape(FIXTURE_RULESET) });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`names ${FIXTURE_RULESET}`);
+  });
+
+  // The pair for that boundary: the artifact named cleanly, with nothing after it, still passes in
+  // both formats. Without this the fix above could be satisfied by reporting every value.
+  it.each([
+    ["a JS literal", "apps/web/app/reader.ts", (name) => `const p = readFileSync("rules/${name}");\n`],
+    ["a .env override", "apps/api/.env.example", (name) => `RULES_FILE="rules/${name}"\n`],
+  ])("still accepts the published artifact named cleanly in %s", async (_label, file, shape) => {
+    const { status, output } = await runOn({ [file]: shape(FIXTURE_RULESET) });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // YAML's double-quoted scalar defines `\"`, and a regex that stops at the first quote cuts the
+  // scalar there, hands the remainder to the raw pass, and neither pass sees the cooked path.
+  it("fails an escaped quote hiding a ruleset path in a YAML scalar", async () => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "archive\\"/nyc\\x2drules.v9.9.json"\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`.github/workflows/ci.yml:4 names ${MISSING}`);
+  });
+
+  // The pair. The same shape resolving to the artifact that IS there must stay quiet, so the
+  // escape-aware scalar has to end in the right place rather than merely later.
+  it("still accepts an escaped quote in a YAML scalar naming the published artifact", async () => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "archive\\"/rules/${FIXTURE_RULESET}"\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A single-quoted YAML scalar escapes a quote by DOUBLING it and has no backslash escapes at all,
+  // so it needs its own pattern rather than the double-quoted one with a backslash bolted on.
+  it("reads a doubled quote inside a single-quoted YAML scalar", async () => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: 'archive''/rules/${MISSING}'\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`.github/workflows/ci.yml:4 names ${MISSING}`);
+  });
+
+  // THE SAME SHAPE IN .env IS NOT A BUG, which is why the segmenters are per-format too. Verified on
+  // Node v24.18.0: `\"` does not escape, so the value really does end at that quote and the
+  // backslash stays in it. Making this escape-aware to match YAML would introduce the YAML bug in
+  // reverse, so the difference is pinned rather than left to look like an oversight.
+  it("ends a .env value at an escaped quote, because --env-file does", async () => {
+    const { status, output } = await runOn({
+      "apps/api/.env.example": `RULES_FILE="archive\\"/rules/${MISSING}"\n`,
+    });
+
+    // The value is `archive\`, naming nothing; the remainder is unquoted text where the raw
+    // tokenizer sees the dangling name.
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env.example:1 names ${MISSING}`);
   });
 });
