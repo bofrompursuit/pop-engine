@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { parseIntakeContract } from "@pop-engine/engine";
+import { publishedRulesFileIn } from "../rules-file";
 import { IntakeForm } from "./intake-form";
 
 // Component tests for the questionnaire. The contract is parsed from the published
@@ -16,7 +17,7 @@ import { IntakeForm } from "./intake-form";
 // Resolved from the repo root, which is vitest's working directory: under jsdom
 // `import.meta.url` is the document's http URL, not a file one.
 const contract = parseIntakeContract(
-  JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.8.json"), "utf8")),
+  JSON.parse(readFileSync(resolve(publishedRulesFileIn("rules")), "utf8")),
 );
 
 const jsonResponse = (status: number, body: unknown): Response =>

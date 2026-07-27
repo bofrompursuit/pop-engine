@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,9 +32,47 @@ const EXPECTED_SCHEMA = "popengine-rules/v2";
 const EXPECTED_RULESET_VERSION = "nyc.v2.8";
 const EXPECTED_RULE_COUNT = 33;
 const EXPECTED_ADVISORY_COUNT = 4;
-const DEFAULT_RULES_FILE = fileURLToPath(
-  new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url),
-);
+/** Published rulesets are `nyc-rules.v<version>.json`; `rules/proposals/` is drafts and excluded. */
+const PUBLISHED_RULESET = /^nyc-rules\.v.+\.json$/;
+
+const RULES_DIRECTORY = fileURLToPath(new URL("../../../rules/", import.meta.url));
+
+/**
+ * The published ruleset, FOUND rather than named.
+ *
+ * This used to spell the version — `rules/nyc-rules.v2.8.json` — and that is a landmine a bump
+ * cannot see: publishing the next version deletes the file this points at, and the api then fails
+ * to boot on a path nobody remembered to update. Reading the directory means a bump changes one
+ * artifact and nothing else has to be swept.
+ *
+ * Exactly one is expected. Zero and two both throw naming what was found, because booting against
+ * an arbitrary one of two rulesets is the failure this whole file exists to prevent — every permit
+ * fact the product states would come from an artifact nobody chose.
+ *
+ * NOTE ON `EXPECTED_RULESET_VERSION` ABOVE, which deliberately still names nyc.v2.8: the two are
+ * not redundant and this change does not weaken it. The PATH says which file to read; the VERSION
+ * says which content is approved to boot on, and a mismatch is a hard boot failure on purpose
+ * (AD-2, and the check further down this file). Finding the file does not decide whether its
+ * contents are the ratified ones, so a bump that publishes v2.9 without updating that constant
+ * still fails loudly at boot — which is the intended behaviour, not a gap.
+ */
+function publishedRulesFile(): string {
+  const published = readdirSync(RULES_DIRECTORY).filter((entry) => PUBLISHED_RULESET.test(entry));
+  if (published.length !== 1) {
+    throw new Error(
+      `expected exactly one published ruleset in ${RULES_DIRECTORY}, found ${published.length}` +
+        (published.length === 0 ? "" : `: ${published.join(", ")}`),
+    );
+  }
+  return `${RULES_DIRECTORY}${published[0] as string}`;
+}
+
+/**
+ * The published artifact itself, ignoring any `RULES_FILE` override. Exported so the suites that
+ * assert against the real ruleset read the same one the api boots from rather than spelling their
+ * own path to it.
+ */
+export const PUBLISHED_RULES_FILE = publishedRulesFile();
 
 export const RULE_KINDS = new Set([
   "permit",
@@ -463,7 +502,7 @@ export function validateRuleset(value: unknown): PublishedRuleset {
 
 /** The published ruleset path the api boots from; the engine parses the same file (AD-2). */
 export function rulesFilePath(): string {
-  return process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : DEFAULT_RULES_FILE;
+  return process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : PUBLISHED_RULES_FILE;
 }
 
 export async function loadRuleset(filePath = rulesFilePath()): Promise<PublishedRuleset> {

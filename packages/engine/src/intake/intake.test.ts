@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PUBLISHED_RULES_FILE } from "../__fixtures__/published-ruleset";
 import { parseIntakeContract } from "./registry";
 import { askedFields, askedFieldNames as askedNamesIn } from "./visibility";
 import { isIntakeUnchanged, mergeIntakeEdit, validateIntake } from "./validate";
@@ -15,10 +15,7 @@ import {
 // contract itself. Structural error branches use minimal synthetic rulesets.
 
 const publishedRuleset: Record<string, unknown> = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../../../../rules/nyc-rules.v2.8.json", import.meta.url)),
-    "utf8",
-  ),
+  readFileSync(PUBLISHED_RULES_FILE, "utf8"),
 );
 const contract = parseIntakeContract(publishedRuleset);
 const fieldNamed = (name: string) => {

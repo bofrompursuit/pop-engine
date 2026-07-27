@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CONFIRM_WITH_AGENCY, type Finding } from "@pop-engine/engine";
+import { publishedRulesFileIn } from "../rules-file";
 import PlanPage from "../events/[id]/plan/page";
 import { PlanView } from "./plan-view";
 import { SnapshotBanner, compareToPinned, formatSnapshotDate } from "./snapshot-banner";
@@ -23,7 +24,7 @@ const publishedRuleset: {
     source?: { citation: string; urls: string[] };
     verification: { status: string; qualification?: string };
   }[];
-} = JSON.parse(readFileSync(resolve("rules/nyc-rules.v2.8.json"), "utf8"));
+} = JSON.parse(readFileSync(resolve(publishedRulesFileIn("rules")), "utf8"));
 
 const publishedRule = (id: string) => {
   const rule = publishedRuleset.rules.find((candidate) => candidate.id === id);

@@ -7,6 +7,7 @@ import { addCalendarDays, differenceInCalendarDays, EvaluationError } from "@pop
 import {
   loadRuleset,
   MAX_PRODUCT_DAYS_BEFORE,
+  PUBLISHED_RULES_FILE,
   MAX_REPRESENTABLE_DAYS_BEFORE,
   syncPermitRules,
   validateRuleset,
@@ -15,7 +16,7 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-const rulesFile = fileURLToPath(new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url));
+const rulesFile = PUBLISHED_RULES_FILE;
 const packageFile = fileURLToPath(new URL("../../../package.json", import.meta.url));
 const originalRulesFile = process.env.RULES_FILE;
 
