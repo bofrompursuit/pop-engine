@@ -93,7 +93,7 @@ createApp({
   today,
   planService,
   checklist: { database: pool, storage: documentStorage, scheduleAlerts },
-  alerts: { database: pool, senders },
+  alerts: { jurisdiction: engineRuleset.jurisdiction, database: pool, senders },
   rulesMeta: { rulesetVersion: ruleset.rulesetVersion, snapshotDate: ruleset.snapshotDate },
 }).listen(PORT, () => {
   console.log(`pop-engine-api listening on :${PORT}`);

@@ -171,7 +171,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         storage,
         scheduleAlerts: schedulerWith(() => new Date(`${today}T13:00:00Z`)),
       },
-      alerts: { database: pool, senders: provider.senders },
+      alerts: { jurisdiction: ruleset.jurisdiction, database: pool, senders: provider.senders },
     });
 
   const createEvent = async (submission: Record<string, unknown>): Promise<string> => {
@@ -2329,7 +2329,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          alerts: { database: racing, senders: provider.senders },
+          alerts: { jurisdiction: ruleset.jurisdiction, database: racing, senders: provider.senders },
         }),
       )
         .post(`/api/events/${eventId}/alerts/test`)
@@ -2372,7 +2372,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          alerts: { database: claiming, senders: fakeProvider().senders },
+          alerts: { jurisdiction: ruleset.jurisdiction, database: claiming, senders: fakeProvider().senders },
         }),
       )
         .post(`/api/events/${eventId}/alerts/test`)
@@ -2414,7 +2414,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
             database: pool,
             intakeContract,
             today: () => FIXTURE_TODAY,
-            alerts: { database: inserting, senders: fakeProvider().senders },
+            alerts: { jurisdiction: ruleset.jurisdiction, database: inserting, senders: fakeProvider().senders },
           }),
         )
           .post(`/api/events/${eventId}/alerts/test`)
@@ -2461,7 +2461,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          alerts: { database: claiming, senders: fakeProvider().senders },
+          alerts: { jurisdiction: ruleset.jurisdiction, database: claiming, senders: fakeProvider().senders },
         }),
       )
         .post(`/api/events/${eventId}/alerts/test`)
@@ -2497,6 +2497,57 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         simulated: true,
         label: SIMULATED_SMS_LABEL,
       });
+    });
+
+    it("does not overwrite a delivery the poller won while the cancel was in flight", async () => {
+      // THE OTHER SIDE OF ROUND 27'S CHOICE. Cancelling from the endpoint was right, and the cancel
+      // was an unguarded UPDATE by id outside the delivery transaction. The retired row is
+      // immediately eligible, because the first retry's backoff is zero, so the poller could claim
+      // it after the endpoint read it and before the cancel ran: the retry SUCCEEDS, the cancel
+      // then waits on that claim and writes cancelled over sent, and the caller keeps a 502 for a
+      // message that was delivered.
+      //
+      // THE INTERLEAVING IS FORCED, not hoped for. The router's pool is proxied so that when it
+      // sees the retiring UPDATE it first runs a full poller tick to completion — which claims the
+      // failed row and delivers it — and only then lets the UPDATE through. That is exactly the
+      // reported ordering, every time.
+      const eventId = await createEvent(scenario("C"));
+      const failing = fakeProvider();
+      failing.fail = "provider down";
+      const recovered = fakeProvider();
+
+      const racing = Object.create(pool) as Pool;
+      racing.connect = pool.connect.bind(pool) as Pool["connect"];
+      racing.query = (async (text: string, values?: unknown[]) => {
+        if (typeof text === "string" && text.includes("SET status = 'cancelled' WHERE id")) {
+          await createAlertPoller({
+            database: pool,
+            senders: recovered.senders,
+            jurisdiction: ruleset.jurisdiction,
+          }).tick();
+        }
+        return pool.query(text as never, values as never);
+      }) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { jurisdiction: ruleset.jurisdiction, database: racing, senders: failing.senders },
+        }),
+      )
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      // The poller really did deliver it, which is what makes this a race rather than a no-op.
+      expect(recovered.delivered).toHaveLength(1);
+      const test = (await alertsOf(eventId)).find((row) => row.payload.test === true);
+      // Not overwritten.
+      expect(test?.status).toBe("sent");
+      // And the caller is told what happened rather than a 502 that was true a moment earlier.
+      expect(response.status).toBe(201);
+      expect(response.body.alert.status).toBe("sent");
     });
 
     it("does not let the poller deliver a test the endpoint already called failed", async () => {
@@ -2558,7 +2609,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          alerts: { database: failing, senders: fakeProvider().senders },
+          alerts: { jurisdiction: ruleset.jurisdiction, database: failing, senders: fakeProvider().senders },
         }),
       )
         .post(`/api/events/${randomUUID()}/alerts/test`)
@@ -2657,7 +2708,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          alerts: { database: pool, senders: provider.senders },
+          alerts: { jurisdiction: ruleset.jurisdiction, database: pool, senders: provider.senders },
         }),
       )
         .post(`/api/events/${eventId}/alerts/test`)
@@ -3724,6 +3775,47 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       // The one healthy channel went out in the first scan rather than queueing behind 40 emails.
       const sms = (await alertsOf(eventId)).find((row) => row.channel === "sms");
       expect(sms?.status).toBe("sent");
+    });
+
+    it("does not deliver a filing date that expired while the queue was draining", async () => {
+      // The sweep validates the window at tick start and the queue then runs for up to the whole
+      // budget, so a tick that swept just before local midnight could begin sending copy whose
+      // filing date had become yesterday. The claim rechecked status, backoff and plan staleness
+      // and not the window.
+      //
+      // THE INTERLEAVING IS FORCED: the pool is proxied so that the moment the sweep's UPDATE has
+      // run, the filing date is moved into the past. Every later claim in that same tick therefore
+      // meets a window that shut after the sweep passed it, which is the reported ordering exactly.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const [row] = await alertsOf(eventId);
+      const provider = fakeProvider();
+
+      let closed = false;
+      const closing = Object.create(pool) as Pool;
+      closing.connect = pool.connect.bind(pool) as Pool["connect"];
+      closing.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (!closed && typeof text === "string" && text.includes("SET status = 'cancelled'")) {
+          closed = true;
+          await pool.query(
+            `UPDATE permit_plan_items SET latest_apply_date = current_date - 5
+              WHERE id IN (SELECT plan_item_id FROM checklist_items WHERE id = $1)`,
+            [row?.checklist_item_id],
+          );
+        }
+        return result;
+      }) as Pool["query"];
+
+      await createAlertPoller({
+        database: closing,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      // The sweep passed it and the claim caught it.
+      expect(provider.attempts).toHaveLength(0);
+      expect((await alertsOf(eventId))[0]?.status).toBe("pending");
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

@@ -179,6 +179,42 @@ const RETRY_BACKOFF = `CASE
  * Test sends carry no checklist item and no revision, so they are deliberately unaffected: a demo
  * alert is an operator action against no deadline.
  */
+/**
+ * Whether this alert's filing window has shut, as of the day passed in.
+ *
+ * WRITTEN ONCE AND ASKED TWICE, which is the point. The tick sweeps closed windows before it builds
+ * its queue, and that queue then runs for up to `TICK_BUDGET_MS`, so a tick that sweeps just before
+ * local midnight could start sending copy whose filing date had become yesterday while the queue
+ * drained. The sweep was correct and the claim never re-asked.
+ *
+ * THE GENERAL RULE, because this is the third instance and a fourth is otherwise a matter of time:
+ * A DECISION MADE ABOUT AN ALERT MUST BE REVALIDATED WHEREVER THE ALERT IS ACTED ON. Round 16 had
+ * the tick treating a skipped alert as finished work while the alert itself knew better. Round 24
+ * had scheduling refusing to CREATE an alert for a closed window while delivery never asked the
+ * same question. This is sweep-versus-claim. Every one of them is a check that was right at one
+ * layer and absent at the next, and the fix each time was to ask it again at the point of action
+ * rather than to make the earlier check stronger.
+ *
+ * The claim is the point of action, and it is also the only safe point: it runs under the event
+ * lock, so what it reads is a state no review is midway through changing.
+ */
+const FILING_WINDOW_HAS_SHUT = (day: string): string => `(
+       EXISTS (
+         SELECT 1
+           FROM checklist_items AS closed_checklist
+           JOIN permit_plan_items AS closed_item
+             ON closed_item.id = closed_checklist.plan_item_id
+          WHERE closed_checklist.id = alerts.checklist_item_id
+            AND closed_item.latest_apply_date IS NOT NULL
+            AND closed_item.latest_apply_date < ${day}::date
+       )
+       -- coalesce, because this expression is now NEGATED at the claim as well as asserted at the
+       -- sweep. Without it a row carrying no controlling date yields NULL rather than false, the
+       -- sweep harmlessly does not match it, and NOT NULL makes it permanently unclaimable. A
+       -- predicate that is only ever asserted can be three-valued; one that is also negated cannot.
+       OR coalesce((alerts.payload->>'controlling_apply_by')::date < ${day}::date, false)
+     )`;
+
 const NOT_FROM_A_STALE_PLAN = `NOT EXISTS (
        SELECT 1
          FROM checklist_items AS stale_checklist
@@ -1565,6 +1601,7 @@ async function sendOne(
   database: Pool,
   alertId: string,
   senders: AlertSenders,
+  jurisdiction: string,
 ): Promise<SendOutcome | null> {
   const client = await database.connect();
   try {
@@ -1633,8 +1670,14 @@ async function sendOne(
         WHERE id = $1 AND status IN ('pending', 'failed') AND send_at <= current_timestamp
           AND (next_attempt_at IS NULL OR next_attempt_at <= current_timestamp)
           AND ${NOT_FROM_A_STALE_PLAN}
+          -- RE-ASKED HERE, not inherited from the sweep at the top of the tick. See
+          -- FILING_WINDOW_HAS_SHUT: the queue this row came from can run for the whole budget,
+          -- so a tick that swept before local midnight could deliver a filing date that had since
+          -- become yesterday. Read under the event lock, which is what makes it a safe point
+          -- rather than another race.
+          AND NOT ${FILING_WINDOW_HAS_SHUT("$2")}
         FOR UPDATE SKIP LOCKED`,
-      [alertId],
+      [alertId, todayInJurisdiction(jurisdiction, new Date())],
     );
     const row = rows[0];
     if (row === undefined) {
@@ -1841,18 +1884,7 @@ export function createAlertPoller(dependencies: {
       `UPDATE alerts SET status = 'cancelled'
         WHERE status IN ('pending', 'failed')
           AND coalesce(payload->>'test', 'false') <> 'true'
-          AND (
-            EXISTS (
-              SELECT 1
-                FROM checklist_items AS closed_checklist
-                JOIN permit_plan_items AS closed_item
-                  ON closed_item.id = closed_checklist.plan_item_id
-               WHERE closed_checklist.id = alerts.checklist_item_id
-                 AND closed_item.latest_apply_date IS NOT NULL
-                 AND closed_item.latest_apply_date < $1::date
-            )
-            OR (alerts.payload->>'controlling_apply_by')::date < $1::date
-          )
+          AND ${FILING_WINDOW_HAS_SHUT("$1")}
           AND ${NOT_FROM_A_STALE_PLAN}`,
       [todayInJurisdiction(jurisdiction, new Date())],
     );
@@ -1888,7 +1920,7 @@ export function createAlertPoller(dependencies: {
         // A row whose own transaction could not even record an outcome — the database went away
         // mid-send — must not take the rest of the batch down with it. It stays as it was, which
         // means it is still due on the next tick.
-        const outcome = await sendOne(database, id, senders).catch((error: unknown) => {
+        const outcome = await sendOne(database, id, senders, jurisdiction).catch((error: unknown) => {
           console.error(`alert ${id} could not be recorded`, error);
           return null;
         });
@@ -2037,6 +2069,15 @@ export function createAlertPoller(dependencies: {
 export type AlertsDependencies = {
   readonly database: Pool;
   readonly senders: AlertSenders;
+  /**
+   * The jurisdiction whose calendar day decides whether a filing window has shut.
+   *
+   * The test endpoint delivers through the same claim the poller uses, and that claim now
+   * revalidates the window. Required rather than defaulted for the reason the poller's copy is: a
+   * wrong jurisdiction rejects on the wrong day, and a made-up one is the invented fact this file
+   * refuses everywhere else.
+   */
+  readonly jurisdiction: string;
 };
 
 /**
@@ -2058,9 +2099,10 @@ async function deliverTestAlert(
   database: Pool,
   alertId: string,
   senders: AlertSenders,
+  jurisdiction: string,
 ): Promise<AlertView | null> {
   for (let attempt = 0; attempt < TEST_ALERT_CLAIM_ATTEMPTS; attempt += 1) {
-    const outcome = await sendOne(database, alertId, senders);
+    const outcome = await sendOne(database, alertId, senders, jurisdiction);
     const view = await alertView(database, alertId);
     // A SKIP IS NOT A RESULT, here for the same reason it is not one in the poller. `sendOne`
     // returns `skipped` when a checklist review or an intake edit holds the event row, which is an
@@ -2098,9 +2140,26 @@ async function deliverTestAlert(
  * caller asked for. The row says cancelled, because that is PopEngine's intent afterwards. Those
  * are different questions.
  */
-async function retireFailedTestAlert(database: Pool, view: AlertView | null): Promise<void> {
-  if (view === null || view.status !== "failed") return;
-  await database.query("UPDATE alerts SET status = 'cancelled' WHERE id = $1", [view.id]);
+async function retireFailedTestAlert(
+  database: Pool,
+  view: AlertView | null,
+): Promise<AlertView | null> {
+  if (view === null || view.status !== "failed") return view;
+  // GUARDED ON THE STATUS IT EXPECTS TO FIND, because the row it is retiring is immediately
+  // eligible: the first retry's backoff is zero, so the poller can claim it between this endpoint
+  // reading the row and this statement running. Unguarded, the update waited on that claim and then
+  // wrote `cancelled` over a `sent` the poller had just committed — a message delivered, a row
+  // saying it was withdrawn, and a caller told it failed. Round 27 chose to cancel here rather than
+  // exclude test rows from the poller, and both halves of that reasoning still hold; what it missed
+  // is that the choice opened a window it did not close.
+  const { rowCount } = await database.query(
+    "UPDATE alerts SET status = 'cancelled' WHERE id = $1 AND status = 'failed'",
+    [view.id],
+  );
+  // Nothing updated means somebody else moved it, and the only thing that can is a delivery. Read
+  // the row rather than reporting the view this function was handed, so the caller is told what
+  // actually happened instead of a 502 that was true a moment ago.
+  return rowCount === 0 ? alertView(database, view.id) : view;
 }
 
 /**
@@ -2121,7 +2180,7 @@ const TEST_ALERT_COPY = {
 };
 
 export function createAlertsRouter(dependencies: AlertsDependencies): Router {
-  const { database, senders } = dependencies;
+  const { database, jurisdiction, senders } = dependencies;
   const router = Router();
 
   router.post("/events/:id/alerts/test", (req, res, next) => {
@@ -2171,10 +2230,11 @@ export function createAlertsRouter(dependencies: AlertsDependencies): Router {
         ],
       );
 
-      const view = await deliverTestAlert(database, alertId, senders);
+      const attempted = await deliverTestAlert(database, alertId, senders, jurisdiction);
       // Reported once, retried never: the poller must not deliver a demo message after this
-      // endpoint has told its caller it failed.
-      await retireFailedTestAlert(database, view);
+      // endpoint has told its caller it failed. Returns the authoritative row, which differs from
+      // what was handed in exactly when the poller won the race.
+      const view = await retireFailedTestAlert(database, attempted);
       if (view?.status !== "sent") {
         res.status(502).json({ error: "test alert could not be delivered", alert: view });
         return;
