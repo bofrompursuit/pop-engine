@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { parseEngineRuleset, parseIntakeContract } from "@pop-engine/engine";
 import type { EngineRuleset, HolidayCalendar, IntakeContract } from "@pop-engine/engine";
 import {
@@ -30,6 +30,7 @@ import {
   type AlertSenders,
 } from "./alert-delivery";
 import {
+  simulatedDeliveries,
   createAlertPoller,
   createAlertScheduler,
   failedDeliveries,
@@ -2317,6 +2318,30 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(await failedDeliveries(pool, eventId)).toEqual([]);
     });
 
+    it("does not count a demo test send as a text message for the event", async () => {
+      // The mirror of the failed-delivery exclusion, in the other direction. There, counting a demo
+      // told an organizer their reminders were failing when they were not. Here it tells them
+      // PopEngine recorded a text-message alert for their event when the only SMS was the demo
+      // they explicitly asked for.
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { database: pool, senders: provider.senders },
+        }),
+      )
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "sms", recipient: "+15550000000" });
+      expect(response.status).toBe(201);
+      // The demo really was a simulated SMS, so this is the row that would be miscounted.
+      expect(response.body.alert.status).toBe("sent");
+
+      expect(await simulatedDeliveries(pool, eventId)).toEqual([]);
+    });
+
     it("does not count a demo test send against the organizer's own alerts", async () => {
       // A test fired at a deliberately bogus address is an operator action against no deadline.
       // Counting it would tell an organizer their reminders are failing when they are not.
@@ -2598,6 +2623,54 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect((await poller.tick()).sent).toBe(1);
       expect(provider.delivered).toHaveLength(1);
     });
+
+    it(
+      "delivers inside the bound when a whole tick was skipped",
+      async () => {
+        // Round 13 taught the tick that a skipped alert is not a completed one. This is the same
+        // distinction one layer up, at the poller: a tick where EVERY due alert was skipped comes
+        // back with no sends, and the respawn guard read that as "nothing to do" and waited out
+        // the interval. So an alert falling due just after an idle scan waited nearly a full
+        // interval for the tick, was skipped, and then waited another whole interval before a
+        // healthy provider was ever asked. Past AC 2 with nothing failing.
+        //
+        // THE BOUND IS THE ASSERTION. The interval is pinned at its default here, so the only way
+        // to land inside AC 2's window is the follow-up scan; waiting for the timer would blow the
+        // deadline by itself.
+        const eventId = await createEvent(scenario("C"));
+        await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+        const provider = fakeProvider();
+        const poller = createAlertPoller({ database: pool, senders: provider.senders });
+        const reviewer = await pool.connect();
+        const startedAt = Date.now();
+        try {
+          // Held past the tick's own retry window, so the tick ends having attempted nothing.
+          await reviewer.query("BEGIN");
+          await reviewer.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
+          poller.start();
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          await reviewer.query("COMMIT");
+
+          await vi.waitFor(
+            async () => {
+              const [row] = await alertsOf(eventId);
+              expect(row?.status).toBe("sent");
+            },
+            { timeout: 20_000, interval: 250 },
+          );
+        } finally {
+          poller.stop();
+          reviewer.release();
+        }
+
+        const [delivered] = await alertsOf(eventId);
+        const tookMs = (delivered?.sent_at?.getTime() ?? 0) - startedAt;
+        expect(tookMs).toBeLessThan(DELIVERY_BOUND_MS);
+        // The sharper statement: it did not wait for the next scheduled scan.
+        expect(tookMs).toBeLessThan(POLL_INTERVAL_MS);
+      },
+      30_000,
+    );
 
     it("keeps retrying through a provider outage without losing an alert", async () => {
       const eventId = await createEvent(scenario("C"));

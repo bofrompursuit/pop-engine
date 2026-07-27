@@ -214,6 +214,15 @@ const SEND_CONCURRENCY = 8;
  */
 const SKIPPED_RETRY_WAIT_MS = 250;
 const SKIPPED_RETRY_WINDOW_MS = 2_000;
+/**
+ * How long the poller waits before a follow-up scan when a whole tick was skipped.
+ *
+ * The tick's own retry window covers a writer that commits while the tick is running. This covers
+ * the one that does not: the tick ends having attempted nothing, and waiting out the interval for
+ * work that is sitting there is what puts a healthy provider past AC 2. Same shape as the retry
+ * inside the tick, one level up, and bounded for the same reason.
+ */
+const SKIPPED_FOLLOW_UP_WAIT_MS = 2_000;
 const TICK_BUDGET_MS = 30_000;
 
 /**
@@ -1266,6 +1275,14 @@ export type AlertTickSummary = {
   readonly failed: number;
   /** Due alerts the tick's time budget stopped it claiming. They stay due for the next tick. */
   readonly abandoned: number;
+  /**
+   * Due alerts a writer's lock kept this tick from attempting at all, after its retry window.
+   *
+   * A subset of `abandoned`, reported separately because the two mean opposite things to the
+   * caller. Abandoned-with-sends is a tick that ran out of budget doing work. Skipped is a tick
+   * that could not start: the work is still there and nobody is doing it.
+   */
+  readonly skipped: number;
 };
 
 export type AlertPoller = {
@@ -1401,7 +1418,8 @@ export function createAlertPoller(dependencies: {
       queue.push(...skipped.splice(0));
       await drain();
     }
-    abandoned += skipped.length;
+    const stillSkipped = skipped.length;
+    abandoned += stillSkipped;
 
     if (abandoned > 0) {
       // Said out loud, because the alternative is a tick that quietly did a fraction of its work.
@@ -1410,8 +1428,12 @@ export function createAlertPoller(dependencies: {
           `they stay due and are taken by the next tick`,
       );
     }
-    return { sent, failed, abandoned };
+    return { sent, failed, abandoned, skipped: stillSkipped };
   };
+
+  /** Set while consecutive ticks keep reporting skipped work, so the chasing cannot run forever. */
+  let chasingSince: number | null = null;
+  let followUp: NodeJS.Timeout | null = null;
 
   return {
     tick,
@@ -1434,7 +1456,37 @@ export function createAlertPoller(dependencies: {
             // Only when the tick actually moved something, so a tick that abandons everything
             // without sending — a budget already spent before the first claim — waits for the
             // timer instead of respawning itself into a hot loop.
-            if (summary.abandoned > 0 && summary.sent + summary.failed > 0) setImmediate(run);
+            if (summary.abandoned > 0 && summary.sent + summary.failed > 0) {
+              chasingSince = null;
+              setImmediate(run);
+              return;
+            }
+
+            // AN ALL-SKIPPED TICK IS NOT A TICK WITH NOTHING TO DO, and the guard above read them
+            // as the same thing because both come back with no sends. They are opposites: no work
+            // means the queue was empty, skipped means the work is still waiting and nobody is
+            // doing it. Round 13 drew exactly this distinction one layer down, at the alert; this
+            // is the same distinction missing one layer up, at the tick.
+            //
+            // Left as it was, an alert that fell due just after an idle scan waited nearly a full
+            // interval for the tick, spent the skip window being skipped, and then waited another
+            // whole interval before a healthy provider was ever asked. Past AC 2's bound with
+            // nothing having failed.
+            //
+            // BOUNDED THE SAME WAY AND FOR THE SAME REASON as the skip retry inside the tick: a
+            // follow-up that chased indefinitely would hold the poller to one event's writer and
+            // reverse the `SKIP LOCKED` decision. So the chasing runs for at most the window AC 2
+            // gives the delivery in the first place, and then the interval takes over — by which
+            // point a lock held that long is not a race, and no retry policy can send through it.
+            if (summary.skipped > 0) {
+              chasingSince ??= clock();
+              if (clock() - chasingSince < DELIVERY_BOUND_MS) {
+                followUp = setTimeout(run, SKIPPED_FOLLOW_UP_WAIT_MS);
+                followUp.unref();
+                return;
+              }
+            }
+            chasingSince = null;
           })
           .catch((error: unknown) => console.error("alert poll failed", error))
           .finally(() => {
@@ -1453,6 +1505,10 @@ export function createAlertPoller(dependencies: {
       // running would otherwise work through its whole batch after the caller believes the poller
       // is off — still claiming rows and still sending them.
       stopped = true;
+      // The follow-up as well, or a poller told to stop keeps waking up to chase skipped rows.
+      if (followUp !== null) clearTimeout(followUp);
+      followUp = null;
+      chasingSince = null;
       if (timer !== null) clearInterval(timer);
       timer = null;
     },
@@ -1622,6 +1678,13 @@ export async function simulatedDeliveries(
         AND status = 'sent'
         AND (payload->'delivery'->>'simulated') = 'true'
         AND payload->'delivery'->>'label' IS NOT NULL
+        -- Demo sends are not the organizer's alerts, and the same exclusion for the same reason
+        -- failedDeliveries carries it. There the argument was that counting a demo fired at a
+        -- bogus address tells an organizer their reminders are failing when they are not; here it
+        -- runs the other way and tells them PopEngine recorded a text-message alert for their
+        -- event when the only SMS was the demo they asked for. An AC 6 test send is an operator
+        -- action against no deadline in both directions.
+        AND coalesce(payload->>'test', 'false') <> 'true' 
       GROUP BY channel, payload->'delivery'->>'label'
       ORDER BY channel`,
     [eventId],
