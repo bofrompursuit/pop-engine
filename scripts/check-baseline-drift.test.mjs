@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -276,8 +276,7 @@ describe("ruleset names in executable code", () => {
   it("still finds a path after an apostrophe in JSX text", () => {
     const { status, output } = runOn({
       "apps/web/app/reader.tsx":
-        "export const Note = () => <p>don't file late</p>;\n" +
-        `const p = "rules/${MISSING}";\n`,
+        "export const Note = () => <p>don't file late</p>;\n" + `const p = "rules/${MISSING}";\n`,
     });
 
     // Valid source, so the failure must be the planted path and not a lexer complaining.
@@ -451,5 +450,161 @@ describe("the version, which is spelled in three places", () => {
 
     expect(status).toBe(1);
     expect(output).toContain("no longer declares EXPECTED_RULESET_VERSION");
+  });
+});
+
+describe("round 7: the rules the parser made reachable", () => {
+  // The check restated the discoverers' pattern more broadly than they write it. A publication
+  // without the `v` satisfied the guard and then found zero rulesets at boot, which is a green
+  // check on a tree that cannot start.
+  it("refuses a published name the runtime's own pattern would not discover", () => {
+    // The bump REPLACES the published file, which is what a bump does. Every discoverer requires
+    // the `v`, so this tree boots to zero rulesets; a check whose pattern was broader counted one
+    // and went green on it.
+    const withoutV = ["nyc", "rules.2.9.json"].join("-");
+    const { status, output } = runOn({
+      [`rules/${FIXTURE_RULESET}`]: null,
+      [`rules/${withoutV}`]: JSON.stringify({ ruleset_version: FIXTURE_VERSION }),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("No published ruleset in rules/");
+  });
+
+  // The copy this check keeps of that pattern is the thing that can drift, so the copies are
+  // compared directly. Reading the repo rather than a planted tree on purpose: divergence is a fact
+  // about the real files.
+  it("keeps its published-ruleset pattern identical to every runtime discoverer", () => {
+    const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const declared = (relative) => {
+      const text = readFileSync(join(repo, relative), "utf8");
+      return /PUBLISHED_RULESET\s*=\s*(\/[^\n]*?\/)[;\s]/.exec(text)?.[1] ?? null;
+    };
+    const copies = [
+      declared("scripts/check-baseline-drift.mjs"),
+      declared("apps/api/src/ruleset.ts"),
+      declared("apps/web/app/rules-file.ts"),
+      declared("packages/engine/src/__fixtures__/published-ruleset.ts"),
+    ];
+    expect(copies.every((copy) => copy !== null)).toBe(true);
+    expect(new Set(copies).size).toBe(1);
+  });
+
+  // A directory that holds no rulesets was treated as `rules/` merely for not being the fixtures
+  // one, so a path to nowhere resolved against a file it does not point at.
+  it("fails a published name written in a directory that holds no rulesets", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "elsewhere/${FIXTURE_RULESET}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${FIXTURE_RULESET}`);
+  });
+
+  // `../../rules/` is how the env template reaches it and `rules//` is how a fixed bug wrote it.
+  // Both are the published directory, so both must still resolve.
+  it.each([["../../rules/"], ["./rules/"], ["rules//"]])(
+    "resolves a published name written under %s",
+    (prefix) => {
+      const { status } = runOn({
+        "apps/web/app/reader.ts": `const p = "${prefix}${FIXTURE_RULESET}";\n`,
+      });
+
+      expect(status).toBe(0);
+    },
+  );
+
+  // An escape is the one way to write a path that a text search cannot see and a runtime reads
+  // perfectly. Matched on the cooked value, reported at the literal the reader is looking at.
+  it("fails on a name an escape hides from the raw text", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "rules/nyc\\x2drules.v9.9.json";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // A nested declaration shadows nothing the module uses, so reading it as the pin checks a
+  // constant `validateRuleset` never sees.
+  it("reads the module-scope pin rather than a nested declaration of the same name", () => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts":
+        `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n` +
+        `function helper() {\n  const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
+        `  return EXPECTED_RULESET_VERSION;\n}\n`,
+    });
+
+    // The module-scope pin is the wrong one, and the nested correct-looking one must not mask it.
+    expect(status).toBe(1);
+    expect(output).toContain("nyc.v9.9");
+  });
+
+  // Extensions the toolchain runs but the walker did not visit were a hole with no diagnostic:
+  // a file naming a deleted ruleset simply was not read.
+  it.each([[".mts"], [".cts"], [".cjs"], [".jsx"]])("scans a %s file", (extension) => {
+    const { status, output } = runOn({
+      [`apps/web/app/reader${extension}`]: `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader${extension}:1 names ${MISSING}`);
+  });
+});
+
+describe("round 7: the fixture-name exemption, and what it does not cover", () => {
+  it("lets a TEST file declare that its ruleset names are fixtures", () => {
+    const { status } = runOn({
+      "apps/web/app/reader.test.ts":
+        `// baseline-check: fixture ruleset names\n` +
+        `const names = ["${MISSING}", "${ALSO_MISSING}"];\n`,
+    });
+
+    expect(status).toBe(0);
+  });
+
+  it("accepts the marker on the same line as the names", () => {
+    const { status } = runOn({
+      "apps/web/app/reader.test.ts": `const names = ["${MISSING}"]; // baseline-check: fixture ruleset names\n`,
+    });
+
+    expect(status).toBe(0);
+  });
+
+  // The half that matters. A fixture BUILDER is not a test file, and PR #138's break was exactly
+  // that shape: `checklist-fixtures.ts` hardcoding a ruleset path. Claiming the exemption there
+  // would mean renaming the file into `*.test.*`, which changes what vitest runs.
+  it("refuses the marker in a file that is not a test", () => {
+    const { status, output } = runOn({
+      "apps/web/app/checklist-fixtures.ts":
+        `// baseline-check: fixture ruleset names\n` + `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/checklist-fixtures.ts:2 names ${MISSING}`);
+  });
+
+  // Stated in the check's own comment and pinned here so the cost is not deniable: inside a test
+  // file the marker silences a real dangling path too. Its defence is that it is greppable and
+  // shows up in a diff, not that it is impossible to misuse.
+  it("silences a genuinely dangling path in a test file, which is the cost it admits", () => {
+    const { status } = runOn({
+      "apps/web/app/reader.test.ts":
+        `// baseline-check: fixture ruleset names\n` + `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(0);
+  });
+
+  it("leaves an unmarked line in a test file checked", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.test.ts":
+        `// baseline-check: fixture ruleset names\n` +
+        `const ok = ["${MISSING}"];\n` +
+        `const p = "rules/${ALSO_MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.test.ts:3 names ${ALSO_MISSING}`);
   });
 });

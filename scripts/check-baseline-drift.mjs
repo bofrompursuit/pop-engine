@@ -267,7 +267,11 @@ if (unsupportedGlobs.length > 0) {
 // and BASELINE's lineage rows cite them WITH their commits on purpose — that is the recovery trail,
 // and a check that broke it would be removing a feature to add a guard.
 
-const CODE_EXTENSIONS = [".ts", ".tsx", ".mjs", ".js"];
+// Every extension the toolchain can execute. The first four were the ones the repo happened to
+// contain; the rest are not hypothetical, they are the shapes a file can take TOMORROW without
+// anyone thinking to revisit this list. A `.mts` config or a `.cjs` script naming a deleted ruleset
+// would have been invisible to a check whose whole purpose is that references cannot hide.
+const CODE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".js", ".jsx"];
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".next", ".git", "dist", "coverage", "build"]);
 
 /**
@@ -290,10 +294,44 @@ function filesUnder(directory, matches, found = []) {
   return found;
 }
 
-/** What the repo actually publishes, so the message can say so rather than only what is wrong. */
-const publishedRulesets = readdirSync(join(repoRoot, "rules")).filter((entry) =>
-  /^nyc-rules\..+\.json$/.test(entry),
-);
+/**
+ * What the runtime counts as a published ruleset. A COPY of the three discoverers' pattern, and
+ * the copy is deliberate after trying not to make one.
+ *
+ * This check restated the pattern as `^nyc-rules\..+\.json$`, which is broader than
+ * `apps/api/src/ruleset.ts`, `apps/web/app/rules-file.ts` and
+ * `packages/engine/src/__fixtures__/published-ruleset.ts`, all of which require the `v`. A
+ * publication of `nyc-rules.2.9.json` — no `v`, field and pin in order — passed this check and then
+ * found ZERO published rulesets at boot. A green guard on a tree that cannot start is the exact
+ * failure this file exists to prevent, so the guard must not be able to disagree with the thing it
+ * guards.
+ *
+ * READING IT OUT OF THE RUNTIME WAS TRIED AND REVERTED, which is worth recording so nobody spends
+ * the afternoon again. The check already parses TypeScript, so lifting the declaration out of
+ * `apps/api/src/ruleset.ts` costs nothing and removes the copy entirely. It also makes this check
+ * unable to run against a tree that does not contain that file — and every test in this file's
+ * suite works by planting a MINIMAL tree and pointing the real script at it. Twenty-seven of
+ * thirty-one went red, not because the rule was wrong but because a guard that requires the whole
+ * app to be present cannot be tested on anything smaller. The copy is the lesser cost, and
+ * `runtimePatternsAgree` in the suite is what stops it drifting: it reads all three runtime
+ * declarations and this one, and fails if any two differ.
+ */
+const PUBLISHED_RULESET = /^nyc-rules\.v.+\.json$/;
+
+/**
+ * What the repo actually publishes, so the message can say so rather than only what is wrong.
+ *
+ * Computed on first use rather than at module scope, because reading the runtime's pattern goes
+ * through the parser and the parser's `SCRIPT_KINDS` table is declared further down this file. A
+ * `const` initialised here would reach it before it exists.
+ */
+let publishedCache = null;
+const publishedRulesets = () => {
+  publishedCache ??= readdirSync(join(repoRoot, "rules")).filter((entry) =>
+    PUBLISHED_RULESET.test(entry),
+  );
+  return publishedCache;
+};
 
 /**
  * Where a named ruleset must exist for a reference to it to resolve.
@@ -308,7 +346,7 @@ const publishedRulesets = readdirSync(join(repoRoot, "rules")).filter((entry) =>
  * points rather than only what it is called.
  */
 const RULESET_DIRECTORIES = [
-  { prefix: "rules", names: () => publishedRulesets },
+  { prefix: "rules", names: publishedRulesets },
   {
     prefix: "packages/engine/src/__fixtures__",
     names: () =>
@@ -322,16 +360,32 @@ const RULESET_DIRECTORIES = [
  * Whether `named`, appearing at `at` inside `text`, names a file that exists where it points.
  *
  * The directory is read from the path written around the name, which is what a reader and a runtime
- * both go by. A reference carrying no directory at all is held to the published `rules/` artifact,
- * because that is what an unqualified ruleset name means in this repo.
+ * both go by, and then reduced to its LAST SEGMENT. That reduction is the fix: `rules`, `./rules`,
+ * `../../rules` and `rules//` all point at the published directory and all now say so, while a
+ * directory that is neither of the two places rulesets live is rejected instead of being treated as
+ * `rules/` by default.
+ *
+ * The default was the bug. A path in any unrecognised directory was validated against `rules/`
+ * merely for not containing `__fixtures__`, so `elsewhere/nyc-rules.v2.8.json` passed while naming
+ * nothing that exists anywhere. The earlier note admitted a limit here and understated it: the
+ * limit was not "some directories are not distinguished", it was "every directory except one is
+ * treated as `rules/`".
+ *
+ * A reference carrying no directory at all is still held to the published `rules/` artifact,
+ * because that is what an unqualified ruleset name means in this repo and in a config line.
  */
 function resolves(named, text, at) {
   const before = text.slice(0, at);
-  const directory = /([\w./@-]*)$/.exec(before)?.[1] ?? "";
-  const fixtures = RULESET_DIRECTORIES[1];
-  const target = directory.includes("__fixtures__") ? fixtures : RULESET_DIRECTORIES[0];
-  return [...target.names()].includes(named);
+  const written = /([\w./@-]*)$/.exec(before)?.[1] ?? "";
+  const segments = written.split("/").filter((segment) => segment !== "");
+  const directory = segments[segments.length - 1] ?? "";
+  if (directory === "") return RULESET_DIRECTORIES[0].names().includes(named);
+  if (directory === "__fixtures__") return RULESET_DIRECTORIES[1].names().includes(named);
+  if (directory === "rules") return RULESET_DIRECTORIES[0].names().includes(named);
+  // Neither directory holds rulesets, so nothing this points at can be there.
+  return false;
 }
+
 // Ruleset artifacts named inside a STRING, which is the only place a name is load-bearing.
 //
 // CODE ONLY. COMMENTS ARE OUT OF SCOPE, DELIBERATELY AND AFTER CONSIDERING THE ALTERNATIVE — said
@@ -425,18 +479,76 @@ function danglingIn(text) {
   return found;
 }
 
-/** The same search, confined to the string literals the parser found, at their real offsets. */
+/**
+ * The same search, confined to the string literals the parser found.
+ *
+ * BOTH FORMS ARE SCANNED, and each catches what the other cannot. The raw text carries exact
+ * offsets, so a name inside a multi-line template is reported on its own line rather than the line
+ * the literal opened on. The cooked value is what the string IS at runtime: the parser reads
+ * `"rules/nyc\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`, which names a file that is not
+ * there while matching nothing a text search can see. An escape was the one way left to write a
+ * path this check could not read and a runtime could. Findings are deduplicated by name within a
+ * literal, so a reference visible in both forms is reported once, at its precise position.
+ */
 function danglingInLiterals(source, sourceFile, literals) {
   const found = [];
   for (const literal of literals) {
+    const seen = new Set();
     for (const token of literal.raw.matchAll(RULESET_FILENAME)) {
+      if (resolves(token[0], literal.raw, token.index)) continue;
+      seen.add(token[0]);
       const at = literal.index + token.index;
-      if (!resolves(token[0], literal.raw, token.index)) {
-        found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
-      }
+      found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
+    }
+    for (const token of literal.cooked.matchAll(RULESET_FILENAME)) {
+      if (seen.has(token[0]) || resolves(token[0], literal.cooked, token.index)) continue;
+      found.push({
+        line: sourceFile.getLineAndCharacterOfPosition(literal.index).line + 1,
+        named: token[0],
+      });
     }
   }
   return found;
+}
+
+/**
+ * The one exemption, and the only one: a line in a TEST file that declares its ruleset names are
+ * fixtures rather than paths.
+ *
+ * WHY IT EXISTS. `apps/web/app/rules-file.test.ts` builds `nyc-rules.v2.9.json` and
+ * `nyc-rules.v3.0.json` as names for a temp directory it creates, to prove discovery returns the
+ * one published ruleset WHATEVER VERSION IT NAMES. They are deliberately fictional and they must
+ * stay fictional for the test to mean anything. This is the second file to need this: the check's
+ * own suite got there first and assembled its names through a lexer blind spot that the parser
+ * then closed. Two files reaching for the same trick is evidence about the trick.
+ *
+ * WHY A MARKER RATHER THAN A RULE. The tempting rule is "a literal that is exactly a filename is
+ * not a path", which is elegant, needs no marker, and is wrong about a file that is not in front of
+ * us: `const RULES = "nyc-rules.v2.8.json"` joined to a directory elsewhere is ordinary production
+ * code, and a check built to catch hardcoded ruleset paths must not be structurally blind to a
+ * class of production reference. The marker gives up elegance to keep that coverage.
+ *
+ * WHAT IT DOES NOT COVER, said plainly because an exemption that hides its cost is worse than no
+ * exemption:
+ *
+ *   1. IT CAN BE SPRINKLED, inside a test file. Nothing here can tell a fictional fixture name from
+ *      a genuinely dangling path that someone would rather not fix, so a test that reads the REAL
+ *      `rules/` directory by literal name and marks the line goes unguarded by this check. The
+ *      marker is greppable and shows up in a diff, which is the whole of its defence.
+ *   2. IT IS NOT AVAILABLE TO PRODUCTION CODE, which is the half that matters. Only `*.test.*`
+ *      files may claim it. `apps/web/app/checklist/checklist-fixtures.ts` is a fixture BUILDER and
+ *      not a test file, so the PR #138 break — that file hardcoding `rules/nyc-rules.v2.7.json` —
+ *      is still caught today. Claiming the exemption there means renaming the file into `*.test.*`,
+ *      which changes what vitest runs and what coverage measures, so it cannot be done quietly.
+ */
+const FIXTURE_NAMES_MARKER = "baseline-check: fixture ruleset names";
+
+/** Whether `file` may claim the exemption at all, and whether `line` claims it. */
+function claimsFixtureExemption(relative, sourceLines, line) {
+  if (!/(^|\/)[^/]*\.test\.[^/]*$/.test(relative)) return false;
+  const own = sourceLines[line - 1] ?? "";
+  const above = sourceLines[line - 2] ?? "";
+  return own.includes(FIXTURE_NAMES_MARKER) || above.includes(FIXTURE_NAMES_MARKER);
 }
 
 /**
@@ -483,11 +595,18 @@ const CONFIGURES_RULES_FILE =
  * offsets and the reported line has to be the one the name is actually on. Ruleset names contain no
  * escapes, so raw and cooked agree on the name itself.
  */
+// One entry per `CODE_EXTENSIONS` member. `.mts` and `.cts` are TypeScript with a module-format
+// suffix rather than a different language, so they parse as TS; the JS family parses as JS. The
+// fallback below still exists, but nothing in `CODE_EXTENSIONS` should be reaching it.
 const SCRIPT_KINDS = {
   ".ts": ts.ScriptKind.TS,
   ".tsx": ts.ScriptKind.TSX,
+  ".mts": ts.ScriptKind.TS,
+  ".cts": ts.ScriptKind.TS,
   ".mjs": ts.ScriptKind.JS,
+  ".cjs": ts.ScriptKind.JS,
   ".js": ts.ScriptKind.JS,
+  ".jsx": ts.ScriptKind.JSX,
 };
 
 function parseSource(relative, source) {
@@ -509,7 +628,13 @@ function parseSource(relative, source) {
       node.kind === ts.SyntaxKind.TemplateTail;
     if (isLiteral) {
       const start = node.getStart(sourceFile);
-      literals.push({ raw: source.slice(start, node.end), index: start });
+      // BOTH FORMS, because they answer different questions. `cooked` is what the string IS at
+      // runtime, with escapes resolved, and it is what a reference actually names: the parser
+      // reads `"rules/nyc\\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`, which names a
+      // file that is not there while matching nothing in the raw text. `index` is kept so the
+      // diagnostic still points at the literal in the source a person is reading, since an offset
+      // into the cooked value would land somewhere else once an escape has changed the length.
+      literals.push({ raw: source.slice(start, node.end), cooked: node.text, index: start });
     }
     ts.forEachChild(node, visit);
   };
@@ -518,21 +643,45 @@ function parseSource(relative, source) {
 }
 
 /**
- * The version the api pins, read as a DECLARATION rather than matched in text.
+ * The version the api pins, read as a MODULE-SCOPE declaration.
  *
- * A regex over file text found `EXPECTED_RULESET_VERSION = "…"` inside a comment, and then inside
- * an unrelated string, and reported each as the pin. Neither is a declaration, so neither can be
- * mistaken for one here.
+ * THIS IS THE THIRD FIX TO THIS LOOKUP and the first two moved the target rather than closing it,
+ * so it is worth being exact about what changed. A regex over file text found
+ * `EXPECTED_RULESET_VERSION = "…"` inside a comment; stripping comments moved it to any string
+ * that happened to contain the assignment; parsing moved it to any DECLARATION, which is closer but
+ * still accepts one nested inside a function or a block, where it shadows nothing the module uses.
+ * A nested `const EXPECTED_RULESET_VERSION = "nyc.v2.9"` in a test helper would be read as the pin
+ * while `validateRuleset` went on comparing against a stale module-scope constant, and the check
+ * would confirm the wrong one against the artifact.
+ *
+ * Each earlier attempt narrowed WHERE IN THE TEXT to look. This one narrows the tree position:
+ * declaration inside a declaration list inside a statement whose parent is the file itself. That
+ * is a structural fact about the program rather than a guess about its formatting, which is why it
+ * is not the same kind of fix as the two before it.
+ *
+ * WHAT IS AND IS NOT CLAIMED, and the claim is deliberately smaller than the two before it made.
+ * This reads the same binding the api's module-level `validateRuleset` resolves, and `const`
+ * forbids reassignment, so the value checked against the artifact is the value that code compares.
+ * That is the whole claim. It is NOT "final": the gap that remains is a rename, or a second
+ * module-scope declaration of the same name, and neither is closed by scope. Both are visible in a
+ * diff, which is the difference between this and the earlier fixes — those were beaten by things
+ * invisible in a diff, a comment and then a string. Closing the rest needs dataflow and is not
+ * attempted.
  */
 function pinnedVersion(sourceFile) {
   let pinned = null;
+  const atModuleScope = (declaration) =>
+    ts.isVariableDeclarationList(declaration.parent) &&
+    ts.isVariableStatement(declaration.parent.parent) &&
+    declaration.parent.parent.parent === sourceFile;
   const visit = (node) => {
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.name.text === "EXPECTED_RULESET_VERSION" &&
       node.initializer !== undefined &&
-      ts.isStringLiteralLike(node.initializer)
+      ts.isStringLiteralLike(node.initializer) &&
+      atModuleScope(node)
     ) {
       pinned = node.initializer.text;
     }
@@ -570,7 +719,9 @@ for (const file of scanned) {
   }
 
   parsedSource.set(relative, sourceFile);
+  const sourceLines = source.split(/\r?\n/);
   for (const found of danglingInLiterals(source, sourceFile, literals)) {
+    if (claimsFixtureExemption(relative, sourceLines, found.line)) continue;
     danglingReferences.push({ file: relative, ...found });
   }
 }
@@ -588,7 +739,7 @@ if (danglingReferences.length > 0) {
     console.error(`  ✗ ${reference.file}:${reference.line} names ${reference.named}`);
   }
   console.error(
-    `\nThe repo publishes: ${publishedRulesets.join(", ") || "(nothing under rules/)"}.\n` +
+    `\nThe repo publishes: ${publishedRulesets().join(", ") || "(nothing under rules/)"}.\n` +
       "If you are mid version bump, this file was written after the last one and its grep could " +
       "not have found it. Point it at the published artifact — or better, stop naming a version: " +
       "read the rules directory, or take the path from apps/api/src/ruleset.ts, which is the one " +
@@ -624,14 +775,15 @@ if (pinned === null) {
 // exotic — it is precisely mid-bump, a new version added and the old one not yet deleted, which is
 // when someone most needs this working. A validator that stands down on ambiguous input looks
 // exactly like a validator that passed.
-if (publishedRulesets.length !== 1) {
+const publishedNow = publishedRulesets();
+if (publishedNow.length !== 1) {
   console.error(
-    publishedRulesets.length === 0
+    publishedNow.length === 0
       ? `No published ruleset in rules/. The api loads one at boot and every plan pins its ` +
           `version, so there is nothing for this check — or the product — to be right about.`
-      : `rules/ holds ${publishedRulesets.length} published rulesets, and exactly one is the ` +
+      : `rules/ holds ${publishedNow.length} published rulesets, and exactly one is the ` +
           `invariant:\n\n` +
-          publishedRulesets.map((entry) => `  • ${entry}`).join("\n") +
+          publishedNow.map((entry) => `  • ${entry}`).join("\n") +
           `\n\n${pinFile} pins ${pinned}, so that is the one to keep. A superseded ruleset is ` +
           `DELETED from the tree, not left beside its replacement: BASELINE.md records each one as ` +
           `a lineage row naming its git commit, which is how it stays recoverable. If you are ` +
@@ -653,7 +805,7 @@ if (publishedRulesets.length !== 1) {
 // The filename is the anchor because it is what the manifest names and what a reader sees first.
 // `<jurisdiction>-rules.<version>.json` publishes `<jurisdiction>.<version>`, derived rather than
 // hardcoded so a second jurisdiction needs no change here.
-const published = publishedRulesets[0];
+const published = publishedNow[0];
 const namedInFile = /^(.+)-rules\.(.+)\.json$/.exec(published);
 if (namedInFile === null) {
   console.error(

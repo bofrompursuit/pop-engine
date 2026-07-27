@@ -26,6 +26,15 @@ export default defineConfig({
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
       provider: "v8",
+      // `scripts/` is deliberately NOT here, and the reason is measured rather than assumed.
+      // Its suite runs the real guard in `spawnSync` children pointed at planted trees, which is
+      // what makes those tests worth anything: they exercise the file CI runs rather than a copy.
+      // v8 does not instrument those children, so adding `scripts/**` reports 0% for a file its
+      // suite exercises hard and drops the all-files figure from 97% to 70.67%, failing the 90%
+      // gate. Measured on this tree, not predicted. A number that says zero about well-tested code
+      // is worse than an honest exclusion, and instrumenting the children to manufacture a
+      // percentage would be worse still. What stands in for the gate here is the suite itself:
+      // every rule has a planted tree that provably fails when the rule regresses.
       include: ["packages/engine/src/**", "apps/api/src/**", "apps/web/app/**"],
       exclude: ["**/*.test.{ts,tsx}", "apps/api/src/index.ts"],
       thresholds: {

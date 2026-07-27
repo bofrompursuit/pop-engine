@@ -36,6 +36,7 @@ describe("finding the published ruleset", () => {
   it("returns the one published ruleset whatever version it names", () => {
     // The point of the whole change: the resolver has no opinion about which version is current,
     // so a bump moves one file and sweeps nothing.
+    // baseline-check: fixture ruleset names
     for (const name of ["nyc-rules.v2.8.json", "nyc-rules.v2.9.json", "nyc-rules.v3.0.json"]) {
       const directory = rulesDirectoryWith({ [name]: ruleset() });
       expect(publishedRulesFileIn(directory)).toBe(join(directory, name));
@@ -48,6 +49,7 @@ describe("finding the published ruleset", () => {
     const directory = rulesDirectoryWith({
       "nyc-rules.v2.8.json": ruleset(),
       "README.md": "not a ruleset",
+      // baseline-check: fixture ruleset names
       "nyc-rules.json": ruleset(),
     });
     expect(publishedRulesFileIn(directory)).toBe(join(directory, "nyc-rules.v2.8.json"));
@@ -59,6 +61,7 @@ describe("finding the published ruleset", () => {
     expect(() => publishedRulesFileIn(rulesDirectoryWith({}))).toThrow(/found 0/);
     expect(() =>
       publishedRulesFileIn(
+        // baseline-check: fixture ruleset names
         rulesDirectoryWith({ "nyc-rules.v2.8.json": ruleset(), "nyc-rules.v2.9.json": ruleset() }),
       ),
     ).toThrow(/found 2: nyc-rules\.v2\.8\.json, nyc-rules\.v2\.9\.json/);
