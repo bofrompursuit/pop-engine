@@ -19,6 +19,7 @@
 // Run: node scripts/check-baseline-drift.mjs   (wired into CI as `pnpm check:baseline`)
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import ts from "typescript";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -295,26 +296,42 @@ const publishedRulesets = readdirSync(join(repoRoot, "rules")).filter((entry) =>
 );
 
 /**
- * Every ruleset artifact that exists anywhere in the repo, by filename.
+ * Where a named ruleset must exist for a reference to it to resolve.
  *
- * Matched on the FILENAME rather than by resolving the path, and that is a deliberate weakening.
- * The same artifact is named relative to three different bases here: to the source file
- * (`new URL("../../../rules/…", import.meta.url)`), to the repo root (vitest's working directory),
- * and to an app directory (`intake-page-props.ts` resolves against the Next app's cwd). Picking one
- * base flags the other two, and enumerating every base a file might run under is guesswork. The
- * filename is unambiguous, and it is what a publication changes.
- *
- * What this therefore does NOT catch is a correct filename under a wrong directory. That is worth
- * stating rather than implying: this guards the class that broke main — a name a publication
- * deleted — not every possible bad path.
+ * Two directories publish files matching `nyc-rules.*.json` and they are not interchangeable:
+ * `rules/` holds the ONE published artifact the product loads, and
+ * `packages/engine/src/__fixtures__` holds superseded rulesets kept so old plans replay. A flat set
+ * of every name anywhere let a fixture satisfy a production path: a reference to
+ * `rules/nyc-rules.v2.3.json` passed because a same-named replay fixture existed, while the file
+ * the code would actually open was not there. That is not a lexing problem and was not fixed by
+ * parsing; it is this set conflating two directories, and it is fixed by asking where the reference
+ * points rather than only what it is called.
  */
-const existingRulesets = new Set([
-  ...publishedRulesets,
-  ...(existsSync(join(repoRoot, "packages/engine/src/__fixtures__"))
-    ? readdirSync(join(repoRoot, "packages/engine/src/__fixtures__"))
-    : []),
-]);
+const RULESET_DIRECTORIES = [
+  { prefix: "rules", names: () => publishedRulesets },
+  {
+    prefix: "packages/engine/src/__fixtures__",
+    names: () =>
+      existsSync(join(repoRoot, "packages/engine/src/__fixtures__"))
+        ? readdirSync(join(repoRoot, "packages/engine/src/__fixtures__"))
+        : [],
+  },
+];
 
+/**
+ * Whether `named`, appearing at `at` inside `text`, names a file that exists where it points.
+ *
+ * The directory is read from the path written around the name, which is what a reader and a runtime
+ * both go by. A reference carrying no directory at all is held to the published `rules/` artifact,
+ * because that is what an unqualified ruleset name means in this repo.
+ */
+function resolves(named, text, at) {
+  const before = text.slice(0, at);
+  const directory = /([\w./@-]*)$/.exec(before)?.[1] ?? "";
+  const fixtures = RULESET_DIRECTORIES[1];
+  const target = directory.includes("__fixtures__") ? fixtures : RULESET_DIRECTORIES[0];
+  return [...target.names()].includes(named);
+}
 // Ruleset artifacts named inside a STRING, which is the only place a name is load-bearing.
 //
 // CODE ONLY. COMMENTS ARE OUT OF SCOPE, DELIBERATELY AND AFTER CONSIDERING THE ALTERNATIVE — said
@@ -335,26 +352,37 @@ const existingRulesets = new Set([
 //      positives were already designed out of this rule to keep it credible; adding a category that
 //      generates them by design would undo that.
 //
-// So comments are blanked first, preserving line numbers, and only what is left is scanned. The
-// boundary is exact and worth stating both ways: `const p = "rules/nyc-rules.v1.json"` fails, and
-// the same text in a comment does not.
+// So the file is PARSED, by the TypeScript compiler already in devDependencies, and only string
+// literals, no-substitution templates and template spans are scanned. Comments are trivia and are
+// never visited, which is the same deliberate boundary as before but reached by construction rather
+// than by blanking text and hoping the blanking agreed with the scanner. Stated both ways, as
+// before: `const p = "rules/nyc-rules.v1.json"` fails, and the same text in a comment does not.
+//
+// WHAT THE PARSER GUARANTEES, precisely, because the previous scanner's guarantee was "these four
+// reported shapes now work" and that is what kept breaking. Node positions come from the same
+// grammar the runtime uses, so every place a hand-rolled scanner had to guess is decided instead:
+// a regex literal is a RegularExpressionLiteral and its contents are not string contents; JSX text
+// is JsxText and an apostrophe in it opens nothing; a template literal's spans are separate nodes
+// whatever they nest; an escape is the parser's problem. There is no longer a class of "the
+// scanner lost sync" bug to test for, because there is no scanner state to lose.
+//
+// A parse failure is a HARD failure, not a skip. A file this check cannot read is a file it cannot
+// vouch for, and silently passing it is the exact shape of miss the check exists to prevent. All
+// 106 source files in the repo parse clean today, so this costs nothing until it is real.
 //
 // WHAT THESE TWO RULES DO NOT COVER, kept current rather than written once and left to rot:
 //
 //   • Prose in code naming a superseded artifact goes stale silently. Deliberate, per the three
 //     reasons above. In a documentation lint, not here.
-//   • A path assembled by CONCATENATION — `"rules/nyc-rules.v" + version + ".json"` — is invisible.
-//     A multiline template literal used to be too, and no longer is, and the two are worth telling
-//     apart because they look like one gap: a template literal is a LEXICAL shape, so a scanner can
-//     see the whole path by matching across newlines, whereas concatenation needs the value of an
-//     expression, which needs real parsing and constant folding. One was a scanning bug; the other
-//     is a different tool. Half of this gap closed, and the half that did not is named.
-//   • A correct filename under a wrong directory, per the note on `existingRulesets` above.
-//   • Escape consumption inside the scanner is not covered by a failing test. Deleting it changes
-//     no observable outcome in this repo's shapes, because handling comments before strings and
-//     never deciding a close by looking backwards already fix the reported cases. It is kept as
-//     defence, and its absence would show as a loud desync rather than a quiet miss, but nobody
-//     should read the suite as proof that it earns its place.
+//   • A path assembled by CONCATENATION — `"rules/nyc-rules.v" + version + ".json"` — is invisible,
+//     and parsing does NOT close it. Each operand is its own literal node and none of them contains
+//     a ruleset name, so the parser sees exactly what the old scanner saw. Closing it needs the
+//     VALUE of an expression, which is constant folding, not parsing, and that is deliberately out
+//     of scope: it would mean evaluating imported constants to be sound. This file's own test suite
+//     relies on the gap to name fixtures it does not want flagged, which is honest about the cost.
+//   • A path whose directory is not written beside the name, because the directory is read from the
+//     text around it. `join(someDir, name)` is held to `rules/`, which is the right default here and
+//     is still a default.
 //   • Compose v2's default filenames, `compose.yaml` and `compose.yml`, which drop the `docker-`
 //     prefix `CONFIGURES_RULES_FILE` requires. No compose file exists here, so this is prospective
 //     rather than live — but it is a silent miss in the config rule's OWN file set, which is the
@@ -390,19 +418,21 @@ function danglingIn(text) {
   const found = [];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
   for (const match of text.matchAll(RULESET_FILENAME)) {
-    if (!existingRulesets.has(match[0])) found.push({ line: lineOf(match.index), named: match[0] });
+    if (!resolves(match[0], text, match.index)) {
+      found.push({ line: lineOf(match.index), named: match[0] });
+    }
   }
   return found;
 }
 
-/** The same search, confined to the string literals the scanner found, at their real offsets. */
-function danglingInLiterals(source, literals) {
+/** The same search, confined to the string literals the parser found, at their real offsets. */
+function danglingInLiterals(source, sourceFile, literals) {
   const found = [];
-  const lineOf = (index) => source.slice(0, index).split("\n").length;
   for (const literal of literals) {
-    for (const token of literal.value.matchAll(RULESET_FILENAME)) {
-      if (!existingRulesets.has(token[0])) {
-        found.push({ line: lineOf(literal.index + token.index), named: token[0] });
+    for (const token of literal.raw.matchAll(RULESET_FILENAME)) {
+      const at = literal.index + token.index;
+      if (!resolves(token[0], literal.raw, token.index)) {
+        found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
       }
     }
   }
@@ -430,116 +460,86 @@ const CONFIGURES_RULES_FILE =
   /(^|\/)(\.env(\..+)?|docker-compose.*\.ya?ml)$|^\.github\/workflows\/.+\.ya?ml$/;
 
 /**
- * One pass over a JavaScript source, returning what every rule below needs to read it correctly.
+ * The string literals a JavaScript or TypeScript source contains, found by PARSING it.
  *
- * ONE SCANNER, NOT THREE. This script hand-rolled lexing in three places and was wrong in all
- * three: an escape check that looked only at the previous character, so `"ends with \\\\"` left the
- * quote open and a later `//` blanked a real path away; a literal regex that treated an escaped
- * delimiter as the end of the literal, so `"prefix \\" rules/…json"` put the path outside every
- * match; and a pin lookup run on raw source, which read a commented-out assignment instead of the
- * live constant. Three separate patches would have been three more chances to be wrong the same
- * way, so the lexing happens once, here, and every rule consumes the result.
+ * This replaces a hand-rolled scanner, and the reason is worth recording rather than the change
+ * being read as taste. The script lexed by hand in three places, then in one place after those were
+ * consolidated, and each version produced a fresh list of findings: escape parity, escaped
+ * delimiters, a pin read out of a comment, then nested template literals, a regex after `return`,
+ * and an apostrophe in JSX text read as a string. Nested templates, regex-versus-division after a
+ * keyword, and JSX are not edge cases to patch. They are the reason parsers exist.
  *
- * Returns `commentFree`, the source with comments blanked and string contents intact, and
- * `literals`, every string literal with the offset it starts at. Escapes are handled by consuming
- * the escaped character rather than by looking backwards, which is what makes both the backslash
- * parity case and the escaped delimiter case fall out rather than needing rules of their own.
+ * `typescript` is already a devDependency, so this adds no package and no supply-chain surface.
+ * What the parser settles, by construction rather than by rule:
  *
- * Regular-expression literals are recognised too, because they are not optional here: this repo
- * contains `/'([^']+)'/g`, and a scanner that does not know a regex from a division reads that
- * apostrophe as a string opening and loses sync for the rest of the file. Regex-versus-division is
- * decided the standard way, by what precedes the slash, since a regex cannot follow a value.
+ *   • a nested template inside `${...}` is its own literal node, so a path in one is seen;
+ *   • a regular expression is a `RegularExpressionLiteral` wherever it appears, `return /'/` too;
+ *   • JSX text is `JsxText` and is not a literal, so an apostrophe in markup means nothing here;
+ *   • a comment is trivia and never a node, so the deliberate rule that a ruleset name in a comment
+ *     passes now holds because comments are not in the tree at all, rather than because a blanking
+ *     pass was correct.
  *
- * Known limit, since this is a scanner and not a parser, and pretending otherwise is how the last
- * three bugs happened: a template substitution's contents are treated as literal text, so a quote
- * or backtick inside `${...}` can confuse it. That is caught rather than silent. A scan that ends
- * inside an unterminated literal fails loudly at the call site, because real source does not end
- * that way, so a desync is reported instead of quietly narrowing what gets seen.
+ * RAW source text is read rather than the parser's cooked `.text`, because an escape changes the
+ * offsets and the reported line has to be the one the name is actually on. Ruleset names contain no
+ * escapes, so raw and cooked agree on the name itself.
  */
-function scanSource(source) {
-  let commentFree = "";
-  const literals = [];
-  /** The last code character that was not whitespace, which is what tells a regex from a division. */
-  let lastSignificant = null;
-  let i = 0;
-  while (i < source.length) {
-    const pair = source.slice(i, i + 2);
-    if (pair === "/*") {
-      const close = source.indexOf("*/", i + 2);
-      const stop = close === -1 ? source.length : close + 2;
-      for (let j = i; j < stop; j += 1) commentFree += source[j] === "\n" ? "\n" : " ";
-      i = stop;
-      continue;
-    }
-    if (pair === "//") {
-      const lineEnd = source.indexOf("\n", i);
-      const stop = lineEnd === -1 ? source.length : lineEnd;
-      commentFree += " ".repeat(stop - i);
-      i = stop;
-      continue;
-    }
-    // A slash begins a regular expression unless it follows a value, which is the only place
-    // division can appear. Getting this wrong desyncs the scan, and the unterminated-literal
-    // invariant at the call site is what makes that loud rather than silent.
-    if (source[i] === "/" && !/[\w$)\]]/.test(lastSignificant ?? "")) {
-      let j = i + 1;
-      let inClass = false;
-      while (j < source.length) {
-        const character = source[j];
-        if (character === "\\") {
-          j += 2;
-          continue;
-        }
-        if (character === "\n") break;
-        if (character === "[") inClass = true;
-        else if (character === "]") inClass = false;
-        else if (character === "/" && !inClass) {
-          j += 1;
-          break;
-        }
-        j += 1;
-      }
-      commentFree += source.slice(i, j);
-      lastSignificant = "/";
-      i = j;
-      continue;
-    }
+const SCRIPT_KINDS = {
+  ".ts": ts.ScriptKind.TS,
+  ".tsx": ts.ScriptKind.TSX,
+  ".mjs": ts.ScriptKind.JS,
+  ".js": ts.ScriptKind.JS,
+};
 
-    const quote = source[i];
-    if (quote === '"' || quote === "'" || quote === "`") {
-      const start = i;
-      let value = quote;
-      i += 1;
-      let terminated = false;
-      while (i < source.length) {
-        const character = source[i];
-        if (character === "\\") {
-          // The escaped character is consumed with its backslash, so a trailing `\\\\` cannot be
-          // mistaken for an escape of the closing quote, and an escaped quote cannot close it.
-          value += source.slice(i, i + 2);
-          i += 2;
-          continue;
-        }
-        value += character;
-        i += 1;
-        if (character === quote) {
-          terminated = true;
-          break;
-        }
-        // A single-quoted or double-quoted literal cannot span lines; a template can.
-        if (character === "\n" && quote !== "`") break;
-      }
-      commentFree += value;
-      lastSignificant = quote;
-      if (terminated) literals.push({ value, index: start });
-      else return { commentFree, literals, unterminated: true };
-      continue;
+function parseSource(relative, source) {
+  const extension = relative.slice(relative.lastIndexOf("."));
+  const sourceFile = ts.createSourceFile(
+    relative,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    SCRIPT_KINDS[extension] ?? ts.ScriptKind.JS,
+  );
+  const literals = [];
+  const visit = (node) => {
+    const isLiteral =
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      node.kind === ts.SyntaxKind.TemplateHead ||
+      node.kind === ts.SyntaxKind.TemplateMiddle ||
+      node.kind === ts.SyntaxKind.TemplateTail;
+    if (isLiteral) {
+      const start = node.getStart(sourceFile);
+      literals.push({ raw: source.slice(start, node.end), index: start });
     }
-    if (!/\s/.test(source[i])) lastSignificant = source[i];
-    commentFree += source[i];
-    i += 1;
-  }
-  return { commentFree, literals, unterminated: false };
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { sourceFile, literals };
+}
+
+/**
+ * The version the api pins, read as a DECLARATION rather than matched in text.
+ *
+ * A regex over file text found `EXPECTED_RULESET_VERSION = "…"` inside a comment, and then inside
+ * an unrelated string, and reported each as the pin. Neither is a declaration, so neither can be
+ * mistaken for one here.
+ */
+function pinnedVersion(sourceFile) {
+  let pinned = null;
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "EXPECTED_RULESET_VERSION" &&
+      node.initializer !== undefined &&
+      ts.isStringLiteralLike(node.initializer)
+    ) {
+      pinned = node.initializer.text;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return pinned;
 }
 
 const scanned = filesUnder(repoRoot, (_relative, name) =>
@@ -548,36 +548,29 @@ const scanned = filesUnder(repoRoot, (_relative, name) =>
 const configFiles = filesUnder(repoRoot, (relative) => CONFIGURES_RULES_FILE.test(relative));
 const danglingReferences = [];
 
-/** Every scanned source, kept so the pin lookup below reads the same comment-free text. */
-const scannedSource = new Map();
+/** Each scanned file's parse, kept so the pin lookup reads the same tree rather than a second one. */
+const parsedSource = new Map();
 
 for (const file of scanned) {
   const relative = file.slice(repoRoot.length + 1);
   const source = readFileSync(file, "utf8");
-  const { commentFree, literals, unterminated } = scanSource(source);
+  const { sourceFile, literals } = parseSource(relative, source);
 
-  // Two invariants a correct scan must hold, both failing loudly rather than scanning less. A
-  // scanner that loses sync sees fewer literals than the file has, and seeing less is
-  // indistinguishable from passing, which is the failure mode this whole check exists to remove.
-  if (unterminated) {
+  // A file that will not parse yields no literals, and no literals is indistinguishable from
+  // nothing to find. Reported rather than scanned past, for the same reason every other narrowing
+  // in this script is reported: a check that quietly stops looking reads exactly like a clean tree.
+  if (sourceFile.parseDiagnostics.length > 0) {
+    const first = sourceFile.parseDiagnostics[0];
     console.error(
-      `The source scanner reached the end of ${relative} inside an unterminated string literal. ` +
-        "Real source does not end that way, so this is the scanner losing sync — most likely on a " +
-        "template substitution or a regular-expression literal containing a quote. Reported " +
-        "rather than scanned past, because a desynced scan quietly stops finding things.",
-    );
-    process.exit(1);
-  }
-  if (commentFree.length !== source.length) {
-    console.error(
-      `The source scanner corrupted ${relative}: ${source.length} characters in, ` +
-        `${commentFree.length} out. That is a bug in this check, not in the file.`,
+      `${relative} could not be parsed, so it was not scanned: ` +
+        ts.flattenDiagnosticMessageText(first.messageText, " ") +
+        "\n\nA file this check cannot read is a file this check cannot vouch for.",
     );
     process.exit(1);
   }
 
-  scannedSource.set(relative, commentFree);
-  for (const found of danglingInLiterals(source, literals)) {
+  parsedSource.set(relative, sourceFile);
+  for (const found of danglingInLiterals(source, sourceFile, literals)) {
     danglingReferences.push({ file: relative, ...found });
   }
 }
@@ -608,13 +601,13 @@ if (danglingReferences.length > 0) {
 // If the file bumps and the pin does not, the api refuses to boot; this fails first and says why.
 // Read before the count is validated, so a repo holding two rulesets can be told which to keep.
 const pinFile = "apps/api/src/ruleset.ts";
-// Read from the COMMENT-FREE source the scanner already produced. An unanchored first match over
-// raw source found `// const EXPECTED_RULESET_VERSION = "nyc.v2.8"` in a comment and reported that
-// as the pin, so the check passed while the live constant said something else entirely.
-const pinSource =
-  scannedSource.get(pinFile) ??
-  scanSource(readFileSync(join(repoRoot, pinFile), "utf8")).commentFree;
-const pinned = /EXPECTED_RULESET_VERSION\s*=\s*"([^"]+)"/.exec(pinSource);
+// Read as a DECLARATION from the parse tree. A regex over file text reported a commented-out
+// assignment as the pin, and then an assignment-shaped string as the pin. Neither is a declaration,
+// so neither can be mistaken for one now.
+const pinTree =
+  parsedSource.get(pinFile) ??
+  parseSource(pinFile, readFileSync(join(repoRoot, pinFile), "utf8")).sourceFile;
+const pinned = pinnedVersion(pinTree);
 if (pinned === null) {
   console.error(
     `${pinFile} no longer declares EXPECTED_RULESET_VERSION, which this check reads as the one\n` +
@@ -639,7 +632,7 @@ if (publishedRulesets.length !== 1) {
       : `rules/ holds ${publishedRulesets.length} published rulesets, and exactly one is the ` +
           `invariant:\n\n` +
           publishedRulesets.map((entry) => `  • ${entry}`).join("\n") +
-          `\n\n${pinFile} pins ${pinned[1]}, so that is the one to keep. A superseded ruleset is ` +
+          `\n\n${pinFile} pins ${pinned}, so that is the one to keep. A superseded ruleset is ` +
           `DELETED from the tree, not left beside its replacement: BASELINE.md records each one as ` +
           `a lineage row naming its git commit, which is how it stays recoverable. If you are ` +
           `mid-bump, this is the step between adding the new file and removing the old one.`,
@@ -678,7 +671,7 @@ const disagreements = [
   publishedVersion === expectedVersion
     ? null
     : `the file's own ruleset_version is ${publishedVersion}`,
-  pinned[1] === expectedVersion ? null : `${pinFile} pins ${pinned[1]}`,
+  pinned === expectedVersion ? null : `${pinFile} pins ${pinned}`,
 ].filter(Boolean);
 
 if (disagreements.length > 0) {
@@ -703,7 +696,7 @@ if (failures.length > 0) {
 
 console.log(
   `Ruleset reference check passed: ${scanned.length} source and ${configFiles.length} config ` +
-    `files scanned, every ruleset name exists, and ${pinFile} pins ${pinned[1]}.`,
+    `files scanned, every ruleset name exists, and ${pinFile} pins ${pinned}.`,
 );
 console.log(`Baseline status check passed: ${checked.length} APPROVED artifacts consistent.`);
 for (const c of checked) console.log("  ✓ " + c);

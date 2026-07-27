@@ -238,6 +238,95 @@ describe("ruleset names in executable code", () => {
     expect(status).toBe(1);
     expect(output).toContain(`apps/web/app/reader.ts:2 names ${MISSING}`);
   });
+  // Regex-or-division cannot be decided by looking at the previous character: after `return` the
+  // preceding token is a keyword, so `/` opens a regex, and a hand-rolled scanner that read the
+  // letter `n` as the end of an operand called it division and let the apostrophe open a string
+  // that ran to end of file. The parser decides it from grammar position, so there is nothing to
+  // get wrong.
+  it("still finds a path after a regex in return position", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        "function quoted(text) {\n  return /'([^']+)'/.test(text);\n}\n" +
+        `const p = "rules/${MISSING}";\n`,
+    });
+
+    // Valid source, so the failure must be the planted path and not a lexer complaining.
+    expect(output).not.toContain("unterminated");
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:4 names ${MISSING}`);
+  });
+
+  // Pairing backticks left to right closes the outer template on the inner one's opener, and the
+  // filenames then sit BETWEEN the pairs rather than inside them. The reported shape has two nested
+  // templates, so the mispairing lands the names outside every recorded literal and the check
+  // passed. Every span is its own node now, and `${}` depth is the parser's to track.
+  it("finds a path in a template literal that nests other template literals", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        "const p = `${dir}/${legacy ? `" + MISSING + "` : `" + FIXTURE_RULESET + "`}`;\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // JSX TEXT IS NOT STRING CONTENT, and an apostrophe in English prose between two tags is the
+  // commonest character in the repo's web copy. Read as a quote it opened a literal that never
+  // closed and silently swallowed the remainder of the file.
+  it("still finds a path after an apostrophe in JSX text", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.tsx":
+        "export const Note = () => <p>don't file late</p>;\n" +
+        `const p = "rules/${MISSING}";\n`,
+    });
+
+    // Valid source, so the failure must be the planted path and not a lexer complaining.
+    expect(output).not.toContain("unterminated");
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.tsx:2 names ${MISSING}`);
+  });
+
+  // A file the check cannot parse is a file it cannot vouch for, so it fails loudly rather than
+  // scanning nothing and reporting a pass. Every source file in the repo parses clean, so this
+  // costs nothing until it is real.
+  it("fails on a file it cannot parse rather than passing it unscanned", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const broken = (((;\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("apps/web/app/reader.ts");
+    expect(output).toContain("could not be parsed");
+  });
+});
+
+describe("where a named ruleset has to exist, which is not just anywhere", () => {
+  const FIXTURES = "packages/engine/src/__fixtures__";
+
+  // Reproduced from review, and not a lexing bug: one flat set of every ruleset name anywhere let a
+  // superseded REPLAY fixture vouch for a PRODUCTION path. The file the code would open is absent
+  // and the check passed on the strength of a same-named file in a different directory.
+  it("does not let a replay fixture satisfy a path under rules/", () => {
+    const { status, output } = runOn({
+      [`${FIXTURES}/${MISSING}`]: JSON.stringify({ ruleset_version: "nyc.v9.9" }),
+      "apps/api/src/loader.ts": `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/src/loader.ts:1 names ${MISSING}`);
+  });
+
+  // The other half of the same rule, which is what makes it a resolution and not a blanket ban:
+  // replay code pointing AT the fixture directory is correct and must keep passing.
+  it("accepts a fixture path that points at the fixture directory", () => {
+    const { status, output } = runOn({
+      [`${FIXTURES}/${MISSING}`]: JSON.stringify({ ruleset_version: "nyc.v9.9" }),
+      "packages/engine/src/replay.ts": `const p = "${FIXTURES}/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
+  });
 });
 
 describe("the RULES_FILE override, which no code scan can see through", () => {
@@ -328,6 +417,21 @@ describe("the version, which is spelled in three places", () => {
 
     expect(status).toBe(1);
     expect(output).toContain("pins nyc.v9.9");
+  });
+
+  // Blanking comments fixed the commented-out pin above and left the same bug one shape over: any
+  // assignment-shaped TEXT still matched first, including one inside a string. The pin is read as a
+  // variable DECLARATION now, so only a declaration can be one.
+  it("reads the live pin, not one quoted inside a string literal", () => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts":
+        `const banner = 'EXPECTED_RULESET_VERSION = "nyc.v9.9"';\n` +
+        `const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
+        `export { banner, EXPECTED_RULESET_VERSION };\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
   });
 
   it("fails when the artifact moved and the pin did not", () => {
