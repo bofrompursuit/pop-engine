@@ -175,7 +175,7 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
 
       {finding.feeDisplay !== null && <p className="line__fee">{finding.feeDisplay}</p>}
 
-      {/* F-204: application path from the rules data only. AC 4 — "apply at [portal]", new tab. */}
+      {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
       <PortalBlock
         portalName={finding.portalName}
         portalUrl={finding.portalUrl}

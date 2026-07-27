@@ -159,7 +159,7 @@ export function PlanContextBody({
 
       {context.feeDisplay !== null && <p className="check-item__text">{context.feeDisplay}</p>}
 
-      {/* F-204: application path from the rules data only. AC 4 — "apply at [portal]", new tab. */}
+      {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
       <PortalBlock
         portalName={context.portalName}
         portalUrl={context.portalUrl}

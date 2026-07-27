@@ -4,11 +4,11 @@
  * Renders only what the published rule carried onto the finding: name, URL, instructions.
  * Never invents a portal, never treats a citation `source.urls` entry as an application path,
  * and never implies PopEngine submits anything — copy is "apply at [portal]", links open in a
- * new tab (AC 4).
+ * new tab (AC 2).
  *
- * Unresolved-portal fallback (AC 2: name + "confirm application path with agency"), required
- * documents (AC 3), and per-facet verification are deferred behind SPEC-CONFLICT #149 — the
- * published ruleset does not carry that data.
+ * SPEC-CONFLICT #149 resolved by amending F-204 to drop required documents, DOHMH/SLA portals,
+ * and per-facet verification from acceptance until a future ruleset publish. This component still
+ * never reads `source.urls`.
  */
 
 export type PortalFields = {
