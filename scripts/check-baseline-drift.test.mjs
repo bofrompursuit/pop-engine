@@ -1498,3 +1498,171 @@ describe.concurrent("round 14: shell operators, one boundary, and escaped YAML q
     expect(output).toContain(`apps/api/.env.example:1 names ${MISSING}`);
   });
 });
+
+describe.concurrent("round 15: ignored files, substitution, and values that span lines", () => {
+  const IGNORE = "node_modules/\n.env*\n!.env.example\n";
+
+  // README tells a developer to copy the example to `apps/api/.env`, which is gitignored. Scanning
+  // it rejected an ordinary local override naming a path that exists, so following the documented
+  // setup made check:baseline fail on a clean tree. That hits everyone who sets the project up.
+  it.each([
+    // Assembled, never written out, for the reason at the top of this file: the check scans this
+    // suite too, and a literal here would be a dangling reference in its own right.
+    ["an absolute path outside the repo", `/tmp/${FIXTURE_RULESET}`],
+    ["a path this repo knows nothing about", `../elsewhere/${MISSING}`],
+  ])("ignores a gitignored .env naming %s", async (_label, path) => {
+    const { status, output } = await runOn({
+      ".gitignore": IGNORE,
+      "apps/api/.env": `RULES_FILE=${path}\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // The pair, and the half that matters: the COMMITTED template is the one that goes stale, and the
+  // negation in .gitignore is what keeps it in scope. Skipping it would close the finding by
+  // deleting the rule that caught the original bug.
+  it("still scans the committed .env.example that .gitignore negates", async () => {
+    const { status, output } = await runOn({
+      ".gitignore": IGNORE,
+      "apps/api/.env.example": `RULES_FILE=rules/${MISSING}\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env.example:1 names ${MISSING}`);
+  });
+
+  // With nothing declaring it ignored, it is scanned. Same direction as the directory fallback:
+  // absent .gitignore means scan MORE, so a missing file makes this noisier and never quieter.
+  it("scans a .env when no .gitignore declares it ignored", async () => {
+    const { status, output } = await runOn({ "apps/api/.env": `RULES_FILE=rules/${MISSING}\n` });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env:1 names ${MISSING}`);
+  });
+
+  // Backquote command substitution is ordinary Bash and the tokenizer knew two quote characters and
+  // not the third thing a shell does with them.
+  it.each([
+    ["backquotes", "cat `printf rules/NAME`"],
+    ["the modern spelling", "cat $(printf rules/NAME)"],
+    ["a substitution mid-command", "cp `which node` rules/NAME"],
+  ])("accepts a package script using %s", async (_label, shape) => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: shape.replace("NAME", FIXTURE_RULESET) } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // The pair. A substitution delimits words; it does not stop the check reading them.
+  it("still fails a dangling name inside a backquoted substitution", async () => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `cat \`printf rules/${MISSING}\`` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${MISSING}`);
+  });
+
+  // An unterminated backquote is not valid shell, so the command is judged as written rather than
+  // guessed at, which is the same rule the quotes already follow and is what keeps the round 12
+  // case working.
+  it("judges a script with an unterminated backquote as written", async () => {
+    const { status, output } = await runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}\`backup` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${FIXTURE_RULESET}\`backup`);
+  });
+
+  // Verified on Node v24.18.0: a quoted .env value that LITERALLY spans lines is one value, in all
+  // three quote characters. The segmenter stopped at the newline and the raw pass then validated
+  // the existing first line.
+  it.each([['"', '"'], ["'", "'"], ["`", "`"]])(
+    "fails a .env value spanning lines in %s quotes",
+    async (open, close) => {
+      const { status, output } = await runOn({
+        "apps/api/.env.example": `RULES_FILE=${open}rules/${FIXTURE_RULESET}\nbackup${close}\n`,
+      });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`names ${FIXTURE_RULESET}`);
+    },
+  );
+
+  // The pair for the multiline segmenter: an ordinary single-line value naming the artifact is
+  // still quiet, and an UNQUOTED value still stops at its line, which is what Node does.
+  it("still accepts a single-line .env value naming the published artifact", async () => {
+    const { status, output } = await runOn({
+      "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET}"\nOTHER=x\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // Node keeps the quote in the value and ends it at the line, so an unterminated quote must not
+  // run to the end of the file and swallow whatever follows.
+  it("does not let an unterminated .env quote swallow the rest of the file", async () => {
+    const { status, output } = await runOn({
+      "apps/api/.env.example": `RULES_FILE="unterminated\nOTHER=rules/${MISSING}\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env.example:2 names ${MISSING}`);
+  });
+
+  // A YAML block scalar is one value across its indented lines. `run: |` is in most workflow files
+  // ever written, so these are not exotic.
+  it.each([
+    ["folded and stripped", ">-", " "],
+    ["folded", ">", " "],
+    ["literal", "|", "\n"],
+    ["literal and kept", "|+", "\n"],
+  ])("fails a %s block scalar whose value continues past the name", async (_label, indicator) => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: ${indicator}\n        rules/${FIXTURE_RULESET}\n        backup\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`names ${FIXTURE_RULESET}`);
+  });
+
+  // The pair. A block scalar naming the artifact and nothing else is a correct workflow and must
+  // stay quiet, so the block's extent has to end where the indentation says rather than later.
+  it("still accepts a block scalar naming the published artifact alone", async () => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: >-\n        rules/${FIXTURE_RULESET}\n    other: x\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A dangling name AFTER a block scalar, at the original indentation, is outside it. If the block
+  // swallowed the rest of the file this would go unreported.
+  it("stops a block scalar at the indentation, so later keys are still read", async () => {
+    const { status, output } = await runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      NOTE: |\n        some text\n      RULES_FILE: rules/${MISSING}\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`.github/workflows/ci.yml:6 names ${MISSING}`);
+  });
+});

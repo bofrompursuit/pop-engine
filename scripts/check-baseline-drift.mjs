@@ -296,18 +296,63 @@ const CODE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".js", "
  * the silent narrowing above, arrived at by a different route.
  */
 const ALWAYS_SKIPPED = ["node_modules", ".git"];
-const skippedDirectories = () => {
+const gitignoreLines = () => {
   const gitignore = join(repoRoot, ".gitignore");
-  if (!existsSync(gitignore)) return new Set(ALWAYS_SKIPPED);
-  const declared = readFileSync(gitignore, "utf8")
+  if (!existsSync(gitignore)) return [];
+  return readFileSync(gitignore, "utf8")
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line.endsWith("/") && !line.startsWith("#"))
+    .filter((line) => line !== "" && !line.startsWith("#"));
+};
+const skippedDirectories = () => {
+  const declared = gitignoreLines()
+    .filter((line) => line.endsWith("/"))
     .map((line) => line.slice(0, -1))
     .filter((name) => name !== "" && !name.includes("/") && !name.includes("*"));
   return new Set([...ALWAYS_SKIPPED, ...declared]);
 };
 const SKIPPED_DIRECTORIES = skippedDirectories();
+
+/**
+ * Whether `.gitignore` says a FILE is not part of this repo, negations honoured.
+ *
+ * Round 10 derived the skipped DIRECTORIES from `.gitignore` and stopped there, which left the file
+ * half of the same question unasked. The README tells a developer to copy `apps/api/.env.example`
+ * to `apps/api/.env`; that copy is gitignored, was still scanned, and a perfectly ordinary local
+ * override like `RULES_FILE=/tmp/nyc-rules.v2.8.json` was rejected because `resolves` only knows
+ * this repo's rules directories. So following the documented setup instructions made
+ * `pnpm check:baseline` fail on a clean tree, over a file the repo deliberately does not track,
+ * naming a path that exists. That is worse than failing at publish time: it hits everyone who sets
+ * the project up.
+ *
+ * DERIVED RATHER THAN TRACKED-ONLY, and the difference matters. Asking git for tracked files would
+ * also close this, and it would additionally skip a file that is merely NEW — one a developer has
+ * written and not yet added is exactly the file a reference check should be reading. It would also
+ * need git present and a real repository, which the planted trees this suite is built from are not,
+ * and reading something the trees lack is the round 7 mistake. `.gitignore` answers the question
+ * that is actually being asked, which is not "is this committed" but "does this repo consider this
+ * file part of itself".
+ *
+ * Only basename patterns are taken, which is the form git applies at any depth, and `!` negation is
+ * honoured, so `.env*` skips `apps/api/.env` while `!.env.example` keeps the committed template in
+ * scope. The template is the one that goes stale and it is still checked.
+ */
+const asBasenamePattern = (pattern) =>
+  new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+^${}()|[\]\\?]/g, "\\$&")).join("[^/]*")}$`);
+const ignoredFiles = () => {
+  const lines = gitignoreLines().filter((line) => !line.endsWith("/"));
+  const patterns = (prefixed) =>
+    lines
+      .filter((line) => line.startsWith("!") === prefixed)
+      .map((line) => (prefixed ? line.slice(1) : line))
+      .filter((line) => line !== "" && !line.includes("/"))
+      .map(asBasenamePattern);
+  return { ignored: patterns(false), kept: patterns(true) };
+};
+const IGNORED_FILES = ignoredFiles();
+const isIgnoredFile = (name) =>
+  IGNORED_FILES.ignored.some((pattern) => pattern.test(name)) &&
+  !IGNORED_FILES.kept.some((pattern) => pattern.test(name));
 
 /**
  * Every file under `directory` that `matches`, skipping the trees that are not this repo's source.
@@ -322,7 +367,7 @@ function filesUnder(directory, matches, found = []) {
     const full = join(directory, entry.name);
     if (entry.isDirectory()) {
       if (!SKIPPED_DIRECTORIES.has(entry.name)) filesUnder(full, matches, found);
-    } else if (matches(full.slice(repoRoot.length + 1), entry.name)) {
+    } else if (!isIgnoredFile(entry.name) && matches(full.slice(repoRoot.length + 1), entry.name)) {
       found.push(full);
     }
   }
@@ -640,30 +685,130 @@ const decodeDotenvEscapes = (value) => value.replace(/\\n/g, "\n");
  * `--env-file` accepts backticks as a third quote character; YAML does not, and treating one as a
  * quote in YAML would silently swallow text between two unrelated backticks in a comment.
  */
+/**
+ * Where a config file's VALUES are: `[{ index, length, value }]`, decoded, in file order.
+ *
+ * A segmenter per format rather than a regex per format, because round 15 is where the regex ran
+ * out. Both formats let a value SPAN LINES, and both segmenters stopped at a newline for the same
+ * unexamined reason: a newline usually ends a line. It usually does. In a quoted dotenv value and a
+ * YAML block scalar it does not, and in both cases the raw fallback then validated the existing
+ * prefix and passed.
+ */
+
+/**
+ * dotenv values, found from the ASSIGNMENT rather than by hunting quotes.
+ *
+ * Line structure is what makes multiline safe here. A quote only opens a value directly after
+ * `KEY=`, so an apostrophe in a comment cannot open one and swallow the rest of the file, which is
+ * exactly what a quote-hunting regex allowed to cross lines would do. Verified on Node v24.18.0,
+ * and the finding cites v24.15.0 with the same behaviour:
+ *
+ *     ML="rules/nyc-rules.v2.8.json<newline>backup"   ->  one value, the newline inside it
+ *     SQ='a<newline>b'   BQ=`c<newline>d`             ->  the same, all three quote characters
+ *     UQ=e<newline>f                                  ->  "e"; unquoted values stop at the line
+ *     OPEN="unterminated<newline>NEXT=sentinel        ->  OPEN is `"unterminated`, NEXT still read
+ *
+ * That last line is why an unterminated quote is left alone rather than run to the end of the file:
+ * Node keeps the quote character in the value and ends it at the line, so the raw pass reading that
+ * line as text is the closer description. Same rule as the shell tokenizer, for the same reason.
+ */
+function dotenvValues(text) {
+  const values = [];
+  for (const assignment of text.matchAll(/^[ \t]*(?:export[ \t]+)?[\w.]+[ \t]*=[ \t]*/gm)) {
+    const at = assignment.index + assignment[0].length;
+    const quote = text[at];
+    if (quote !== '"' && quote !== "'" && quote !== "`") continue;
+    const close = text.indexOf(quote, at + 1);
+    if (close === -1) continue;
+    const content = text.slice(at + 1, close);
+    values.push({
+      index: at,
+      length: close - at + 1,
+      value: quote === '"' ? decodeDotenvEscapes(content) : content,
+    });
+  }
+  return values;
+}
+
+/**
+ * YAML values: quoted scalars, and the BLOCK scalars that were missing.
+ *
+ * `RULES_FILE: >-` followed by indented lines is one value, folded to spaces; `|` keeps the
+ * newlines. Neither was recognised, so the block's lines went to the raw pass a line at a time and
+ * the first line validated on its own. Block scalars are not exotic here: `run: |` is in most
+ * GitHub workflow files ever written, which is also why failing loudly on them was not an option.
+ *
+ * The extent is the indentation, which is what YAML says it is: the block runs while lines are
+ * blank or indented deeper than the key that introduced it.
+ */
+function yamlValues(text) {
+  const values = [];
+  const lines = text.split("\n");
+  const offsets = [];
+  let running = 0;
+  for (const line of lines) {
+    offsets.push(running);
+    running += line.length + 1;
+  }
+
+  const blocked = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = /^([ \t]*)[^\s#][^:\n]*:[ \t]*([|>])([+-]?\d*|\d*[+-]?)[ \t]*(#[^\n]*)?$/.exec(
+      lines[index],
+    );
+    if (header === null) continue;
+    const indent = header[1].length;
+    const body = [];
+    let last = index;
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const line = lines[next];
+      const blank = line.trim() === "";
+      const deeper = /^[ \t]*/.exec(line)[0].length > indent;
+      if (!blank && !deeper) break;
+      body.push(line.trim());
+      last = next;
+    }
+    // Trailing blank lines are chomped by every indicator, so they are not part of the value and
+    // would otherwise show up as a space on the end of a reported name.
+    while (body.length > 0 && body[body.length - 1] === "") body.pop();
+    if (body.length === 0) continue;
+    const from = offsets[index + 1];
+    const to = offsets[last] + lines[last].length;
+    // `>` folds line breaks to spaces, `|` keeps them. Either way the value is one string, which is
+    // the whole point: a name on one line and a suffix on the next are the same path.
+    values.push({
+      index: from,
+      length: to - from,
+      value: body.join(header[2] === ">" ? " " : "\n"),
+    });
+    blocked.push([from, to]);
+    index = last;
+  }
+
+  for (const quoted of text.matchAll(/"((?:[^"\\\n]|\\.)*)"|'((?:[^'\n]|'')*)'/g)) {
+    if (blocked.some(([from, to]) => quoted.index >= from && quoted.index < to)) continue;
+    const double = quoted[1] !== undefined;
+    values.push({
+      index: quoted.index,
+      length: quoted[0].length,
+      value: double ? decodeYamlEscapes(quoted[1]) : quoted[2].replace(/''/g, "'"),
+    });
+  }
+
+  return values.sort((a, b) => a.index - b.index);
+}
+
 const CONFIG_FORMATS = {
   // `\"` DOES NOT ESCAPE in a `.env` value, so the scalar really does end at that quote and the
-  // backslash stays in the value. Observed, not assumed: `DQ_Q="a\"b"` yields `a\`. A regex that
-  // stops at the first matching quote is therefore CORRECT here, and making it escape-aware to
-  // match YAML would introduce the very bug being fixed there, in reverse. `--env-file` also
-  // accepts backticks as a third quote character, which YAML does not.
-  dotenv: {
-    scalars: /(['"`])((?:(?!\1)[^\n])*)\1/g,
-    contentOf: (match) => ({ quote: match[1], content: match[2] }),
-    decode: { '"': decodeDotenvEscapes },
-  },
-  // ESCAPE-AWARE, because YAML's double-quoted scalar defines `\"` and a regex that stops at the
-  // first quote loses to it: `RULES_FILE: "archive\"/nyc\x2drules.v9.9.json"` had its scalar cut
-  // at the escaped quote, the remainder went to the raw pass, and neither pass ever saw the cooked
-  // path. A single-quoted YAML scalar escapes a quote by DOUBLING it, `''`, with no backslashes at
-  // all, so the two forms need different patterns rather than one with a backslash bolted on.
-  yaml: {
-    scalars: /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\n]|'')*)'/g,
-    contentOf: (match) =>
-      match[1] !== undefined
-        ? { quote: '"', content: match[1] }
-        : { quote: "'", content: match[2] },
-    decode: { '"': decodeYamlEscapes, "'": (value) => value.replace(/''/g, "'") },
-  },
+  // backslash stays in the value. Observed, not assumed: `DQ_Q="a\"b"` yields `a\`. Making it
+  // escape-aware to match YAML would introduce the very bug being fixed there, in reverse.
+  // `--env-file` also accepts backticks as a third quote character, which YAML does not.
+  dotenv: { values: dotenvValues },
+  // ESCAPE-AWARE, because YAML's double-quoted scalar defines `\"` and a segmenter that stops at
+  // the first quote loses to it. A single-quoted YAML scalar escapes a quote by DOUBLING it, `''`,
+  // with no backslashes at all, so the two forms need different handling rather than one with a
+  // backslash bolted on.
+  yaml: { values: yamlValues },
 };
 
 /** `.env`, `.env.example` and friends load through `--env-file`; the rest of the set is YAML. */
@@ -688,7 +833,7 @@ const configFormat = (relative) => (/(^|\/)\.env(\..+)?$/.test(relative) ? "dote
  */
 function danglingIn(text, format = "yaml") {
   const found = [];
-  const { scalars, contentOf, decode } = CONFIG_FORMATS[format];
+  const { values } = CONFIG_FORMATS[format];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
   // `at` is where the segment starts in the file. A raw segment is the file's own text, so a match
   // inside it keeps its exact offset; a decoded scalar is a different string, so every match in one
@@ -702,16 +847,12 @@ function danglingIn(text, format = "yaml") {
   };
 
   let plainFrom = 0;
-  // A quoted scalar does not span lines in either format, so a run that reaches one is unterminated
-  // and is left to the raw pass rather than swallowing the rest of the file.
-  for (const quoted of text.matchAll(scalars)) {
-    scan(text.slice(plainFrom, quoted.index), RULESET_FILENAME_IN_TEXT, plainFrom, true);
-    const { quote, content } = contentOf(quoted);
-    const value = (decode[quote] ?? ((raw) => raw))(content);
-    // The whole scalar is one value, so its offset is the scalar's, not the decoded token's: an
-    // escape changes the length and a computed column would point somewhere else in the line.
-    scan(value, RULESET_FILENAME_IN_VALUE, quoted.index, false);
-    plainFrom = quoted.index + quoted[0].length;
+  for (const { index, length, value } of values(text)) {
+    scan(text.slice(plainFrom, index), RULESET_FILENAME_IN_TEXT, plainFrom, true);
+    // The whole value is one string, so its offset is the value's start, not the decoded token's:
+    // an escape or a fold changes the length and a computed column would land somewhere else.
+    scan(value, RULESET_FILENAME_IN_VALUE, index, false);
+    plainFrom = index + length;
   }
   scan(text.slice(plainFrom), RULESET_FILENAME_IN_TEXT, plainFrom, true);
   return found;
@@ -973,7 +1114,17 @@ const WORKSPACE_MANIFEST = /^(package\.json|(apps|packages)\/[^/]+\/package\.jso
  *   • `"..."` keeps most characters literal but honours `\` before `"`, `\`, `` ` `` and `$`;
  *   • outside quotes, `\` escapes the next character, and unquoted whitespace separates words;
  *   • outside quotes, a CONTROL OR REDIRECTION OPERATOR separates them too, with or without the
- *     whitespace: `;`, `&`, `|`, `<`, `>`, `(` and `)`.
+ *     whitespace: `;`, `&`, `|`, `<`, `>`, `(` and `)`;
+ *   • a BACKQUOTE delimits command substitution anywhere a single quote has not made it literal,
+ *     so it separates words too.
+ *
+ * The backquote is round 15 and closes the older of the two substitution spellings.
+ * ``cat `printf rules/nyc-rules.v2.8.json` `` is ordinary Bash and was rejected, because the
+ * tokenizer knew two quote characters and not the third thing a shell does with them. The modern
+ * `$(...)` spelling already worked, and worked by accident rather than by design: `(` and `)` are
+ * in the operator set above, so the substitution fell apart into words on its own. Both are covered
+ * now, one deliberately, and a tokenizer that knew one spelling and not the other was a finding
+ * waiting to be filed.
  *
  * That last line is round 14, and it is the same defect as the quoting one it sits under. Splitting
  * on whitespace ALONE meant `cat rules/nyc-rules.v2.8.json; echo ok` handed the matcher a filename
@@ -988,11 +1139,13 @@ const WORKSPACE_MANIFEST = /^(package\.json|(apps|packages)\/[^/]+\/package\.jso
  * compute, exactly like a concatenated path in JavaScript. The word keeps the text as written and
  * is judged as a name, which either resolves or is reported — never guessed at.
  *
- * AN UNTERMINATED QUOTE RETURNS null rather than a best guess. The command is not valid shell and
- * would not run, so there are no words to speak of; dropping the stray quote would invent a value
- * the shell never produces, and inventing values is the whole family of defect this round is about.
- * The caller judges the command as written instead, which is the conservative reading and is what
- * catches a quote character appended to a published name.
+ * AN UNTERMINATED QUOTE OR BACKQUOTE RETURNS null rather than a best guess. The command is not
+ * valid shell and would not run, so there are no words to speak of; dropping the stray delimiter
+ * would invent a value the shell never produces, and inventing values is the whole family of defect
+ * these rounds are about. The caller judges the command as written instead, which is the
+ * conservative reading and is what catches a delimiter appended to a published name. The backquote
+ * is held to the same rule as the quotes for the same reason, so
+ * `node seed.mjs rules/nyc-rules.v2.8.json\`backup` is still reported whole.
  */
 const SHELL_OPERATORS = new Set([";", "&", "|", "<", ">", "(", ")"]);
 
@@ -1000,9 +1153,15 @@ function shellWords(command) {
   const words = [];
   let word = null;
   let quote = null;
+  let backquoted = false;
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index];
-    if (quote === null && (/\s/.test(character) || SHELL_OPERATORS.has(character))) {
+    // A backquote is literal ONLY inside single quotes, which is why this is not in the operator
+    // set: the set is consulted for unquoted text alone, and a backquote still opens a substitution
+    // inside a double-quoted string.
+    const substitutes = character === "`" && quote !== "'";
+    if (substitutes) backquoted = !backquoted;
+    if (substitutes || (quote === null && (/\s/.test(character) || SHELL_OPERATORS.has(character)))) {
       if (word !== null) words.push(word);
       word = null;
       continue;
@@ -1023,7 +1182,7 @@ function shellWords(command) {
       word += character;
     }
   }
-  if (quote !== null) return null;
+  if (quote !== null || backquoted) return null;
   if (word !== null) words.push(word);
   return words;
 }
