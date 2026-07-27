@@ -472,6 +472,14 @@ function resolves(named, text, at) {
 //   • A path whose directory is not written beside the name, because the directory is read from the
 //     text around it. `join(someDir, name)` is held to `rules/`, which is the right default here and
 //     is still a default.
+//   • AN ESCAPE THAT HIDES THE `nyc-rules.` PREFIX ITSELF, which is the concatenation gap wearing a
+//     different hat and is named separately because a reader will not otherwise connect the two.
+//     `RULES_FILE="rules/nyc\x2drules.v2.8.json"` in a `.env` is a real, absent path — `--env-file`
+//     keeps the backslash — but no token is spelled anywhere in the value, so a scanner that looks
+//     for names has nothing to look at. Round 13 stopped this being WORSE than a gap: the old
+//     decoder resolved `\x2d` as though it were YAML, produced a name that exists, and had the
+//     check vouch for the path. It says nothing about it now, which is the honest answer, but it
+//     still does not catch it. Same shape in a `String.raw` template.
 //   • Compose v2's default filenames, `compose.yaml` and `compose.yml`, which drop the `docker-`
 //     prefix `CONFIGURES_RULES_FILE` requires. No compose file exists here, so this is prospective
 //     rather than live — but it is a silent miss in the config rule's OWN file set, which is the
@@ -520,28 +528,43 @@ function resolves(named, text, at) {
 //   EVERY SCANNER JUDGES THE VALUE A RUNTIME WOULD SEE, AND THE TOKENIZER FOLLOWS THE VALUE
 //   RATHER THAN THE FILE TYPE.
 //
-// "The tokenizer follows the value" is the operative half, and the half that kept being missed. It
-// is not a property of the file: a `package.json` is raw bytes, and the script command inside it is
-// a VALUE, because `JSON.parse` already decoded it. A `.github/workflows/*.yml` is raw bytes, and a
-// double-quoted scalar inside it is a VALUE, because the YAML loader will decode its escapes before
-// anything runs. Asking "what kind of file is this" gives the wrong answer in both. Asking "has
-// something already decoded this by the time it is used" gives the right one every time.
+// THAT WAS HALF THE RULE, and round 13 is the other half. Round 12 moved every scanner onto decoded
+// values and then applied ONE decoder to all of them, as though "decoded" were a single state. It
+// is not. Three formats reach this file and no two share their escape or quoting rules, so:
 //
-// Which is why `danglingIn` below SEGMENTS its input rather than picking one tokenizer for the
-// whole file, and why `danglingInScripts` uses the value tokenizer on text it read out of JSON.
+//   A VALUE IS DECODED BY THE SEMANTICS OF THE FORMAT IT CAME FROM, AND THE TOKENIZER FOLLOWS THE
+//   VALUE'S ORIGIN RATHER THAN THE FACT THAT IT HAS BEEN DECODED AT ALL.
 //
-// IN A COOKED VALUE the delimiters are already gone. The parser resolved them: by the time this
-// sees `rules/nyc-rules.v2.8.json{backup`, there is no quote, no backtick and no `${`, only the
-// string the runtime will hand to `readFileSync`. Every one of those characters is an ordinary
-// filename character there, so only two things can end the token:
+// What that costs to get wrong, one per format, all three observed rather than reasoned about:
 //
-//   • `/` ends the segment — the directory is read separately, by `resolves`;
-//   • whitespace, which ends a filename by universal convention and keeps a diagnostic readable
-//     when a value is prose rather than a path.
+//   • A JS literal is decoded by the PARSER, which also tells us exactly where the string ends.
+//     Treating whitespace as a delimiter afterwards discards that: `readFileSync("rules/
+//     nyc-rules.v2.8.json ")` validated on the name before the space while the runtime opened the
+//     one with it.
+//   • A package script is decoded by `JSON.parse` into SHELL SOURCE, not into a filename. Quoting
+//     is still ahead of it: `cat 'rules/nyc-rules.v2.8.json'` had its closing quote eaten into the
+//     name and was reported missing, a false positive on a valid command.
+//   • A `.env` value is decoded by `--env-file`, which is NOT YAML and shares almost none of its
+//     escapes. Decoding `\x2d` there invents a name the loader never produces.
 //
-// IN RAW CONFIG TEXT the delimiters are still present and still delimit. A `.env` or YAML file is
-// read whole, so a name at the end of a quoted value has to stop before its closing quote, and `{`
-// and `}` bound a YAML flow mapping. Those five exclusions earn their place there and only there.
+// So the tokenizer choice is not "raw or decoded". It is WHETHER THE EXTENT IS KNOWN:
+//
+// WHEN THE EXTENT IS KNOWN — a parsed JS literal, a shell word, a quoted scalar — something has
+// already told us where the value ends, so nothing needs to guess. A SPACE IS AN ORDINARY FILENAME
+// CHARACTER there, which is the whole of the trailing-space finding, so only `/` and a LINE BREAK
+// end the token: `/` because the directory is read separately by `resolves`, and a newline because
+// it terminates the value outright in both config formats and does not appear in a path anyone
+// writes. Excluding the newline and not the space is deliberate — excluding neither made a
+// multi-line template that mentions the artifact in prose report its whole remainder.
+//
+// WHEN THE EXTENT IS NOT KNOWN — unquoted config text, read whole — a boundary has to be guessed,
+// so whitespace ends the token and the quote characters and braces still delimit, because in that
+// text they genuinely do.
+//
+// The cost of the first, stated: a string whose prose names the published artifact and then keeps
+// going, `"rules/nyc-rules.v2.8.json is the current one"`, now reports the whole run. That is loud
+// and fixed in a minute, and this file has traded that way since round 8 on the grounds that an
+// accepted typo is silent and breaks at runtime.
 //
 // WHY THIS WAS ONE SET AND WHY THAT WAS WRONG. Round 9 unified the JS rule on cooked values and
 // kept the raw-oriented class that had served the old raw scan. The exclusions were then describing
@@ -554,24 +577,58 @@ function resolves(named, text, at) {
 // as an escape lead-in, a hazard that only exists in raw source text, and truncating there reported
 // `nyc-rules.v2.8` for a path that is nothing of the sort. The reasoning was right and stopped at
 // the character that had been reported; the rest of the class needed the same treatment.
-const RULESET_FILENAME_IN_VALUE = /nyc-rules\.[^\s/]*/g;
+const RULESET_FILENAME_IN_VALUE = /nyc-rules\.[^\n/]*/g;
 const RULESET_FILENAME_IN_TEXT = /nyc-rules\.[^\s/'"`{}]*/g;
 
 /**
- * The escapes a double-quoted scalar resolves before anything reads the value.
+ * How a double-quoted scalar decodes, PER FORMAT, because the two formats this reads are not
+ * remotely the same and round 12 gave them one decoder.
  *
- * Not a YAML parser, and not trying to be: this decodes the numeric and single-character escapes
- * that both YAML double-quoted scalars and `.env` double-quoted values define, which is what a
- * ruleset path can be hidden behind. Anything else is left as written, because a wrong guess about
- * an exotic escape would invent a filename rather than find one.
+ * YAML 1.2 §5.7 defines the full C-style set for a double-quoted scalar, so `\x2d`, `-`, `\n`,
+ * `\t` and `\\` all resolve. This is a subset of that, covering what a ruleset path can hide behind
+ * rather than the whole grammar, and anything unrecognised is left exactly as written — a wrong
+ * guess would invent a filename rather than find one. Stated as spec rather than observation: this
+ * repo has no YAML loader to interrogate, and GitHub's is not on this machine.
+ *
+ * DOTENV IS NOT YAML, and this is the one place the difference is load-bearing. Observed directly
+ * on Node v24.18.0 with `--env-file`, because guessing at another tool's behaviour is how the
+ * previous decoder got here:
+ *
+ *     A="rules/nyc\x2drules.v2.8.json"   ->   rules/nyc\x2drules.v2.8.json   (backslash kept)
+ *     DQ_N="a\nb"                        ->   a<newline>b                    (the ONLY escape)
+ *     DQ_T="a\tb"  DQ_U="a-b"       ->   backslash kept, both
+ *     DQ_BS="a\\b"                       ->   a\\b       (NOT collapsed to one)
+ *     DQ_Q="a\"b"                        ->   a\         (`\"` does not escape; the quote ends it)
+ *     'a\nb'  `a\nb`  a\nb               ->   literal, nothing decoded
+ *
+ * So `--env-file` honours exactly one escape, `\n`, and only inside double quotes. Decoding `\x2d`
+ * there produced `rules/nyc-rules.v2.8.json`, a file that exists, and the check then VOUCHED for an
+ * override that actually names a path with a backslash in it. Not merely a miss: an endorsement.
  */
-const decodeEscapes = (value) =>
+const decodeYamlEscapes = (value) =>
   value.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)/g, (whole, escape) => {
     if (escape[0] === "x" || escape[0] === "u")
       return String.fromCharCode(parseInt(escape.slice(1), 16));
     const simple = { n: "\n", t: "\t", r: "\r", 0: "\0", "\\": "\\", '"': '"', "/": "/" };
     return simple[escape] ?? whole;
   });
+
+/** `--env-file` honours `\n` in a double-quoted value and nothing else. Observed, see above. */
+const decodeDotenvEscapes = (value) => value.replace(/\\n/g, "\n");
+
+/**
+ * Which quoting characters open a scalar, and how its contents decode, for one config format.
+ *
+ * `--env-file` accepts backticks as a third quote character; YAML does not, and treating one as a
+ * quote in YAML would silently swallow text between two unrelated backticks in a comment.
+ */
+const CONFIG_FORMATS = {
+  dotenv: { quotes: "['\"`]", decode: { '"': decodeDotenvEscapes } },
+  yaml: { quotes: "['\"]", decode: { '"': decodeYamlEscapes } },
+};
+
+/** `.env`, `.env.example` and friends load through `--env-file`; the rest of the set is YAML. */
+const configFormat = (relative) => (/(^|\/)\.env(\..+)?$/.test(relative) ? "dotenv" : "yaml");
 
 /**
  * Where `text` has a ruleset name that is not one of the files that exist, and on what line.
@@ -586,9 +643,13 @@ const decodeEscapes = (value) =>
  * Single quotes are segmented too but NOT decoded, which is what both formats specify: a
  * single-quoted scalar is literal. The quotes still come off, so a brace inside one is an ordinary
  * filename character rather than punctuation.
+ *
+ * WHICH decoder is the caller's to say, because `.env` and YAML disagree about almost every escape
+ * and sharing one is what round 12 got wrong. See `CONFIG_FORMATS`.
  */
-function danglingIn(text) {
+function danglingIn(text, format = "yaml") {
   const found = [];
+  const { quotes, decode } = CONFIG_FORMATS[format];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
   // `at` is where the segment starts in the file. A raw segment is the file's own text, so a match
   // inside it keeps its exact offset; a decoded scalar is a different string, so every match in one
@@ -604,9 +665,10 @@ function danglingIn(text) {
   let plainFrom = 0;
   // A quoted scalar does not span lines in either format, so a run that reaches one is unterminated
   // and is left to the raw pass rather than swallowing the rest of the file.
-  for (const quoted of text.matchAll(/(['"])([^'"\n]*)\1/g)) {
+  const scalars = new RegExp(`(${quotes})((?:(?!\\1)[^\\n])*)\\1`, "g");
+  for (const quoted of text.matchAll(scalars)) {
     scan(text.slice(plainFrom, quoted.index), RULESET_FILENAME_IN_TEXT, plainFrom, true);
-    const value = quoted[1] === '"' ? decodeEscapes(quoted[2]) : quoted[2];
+    const value = (decode[quoted[1]] ?? ((raw) => raw))(quoted[2]);
     // The whole scalar is one value, so its offset is the scalar's, not the decoded token's: an
     // escape changes the length and a computed column would point somewhere else in the line.
     scan(value, RULESET_FILENAME_IN_VALUE, quoted.index, false);
@@ -856,6 +918,64 @@ const CONFIGURES_RULES_FILE =
  */
 const WORKSPACE_MANIFEST = /^(package\.json|(apps|packages)\/[^/]+\/package\.json)$/;
 
+/**
+ * A shell command split into the words the shell would pass along, with its quoting removed.
+ *
+ * `JSON.parse` decodes a script into SHELL SOURCE, not into a filename, and round 12 treated the
+ * two as the same thing. One decode had happened, so the string was called a value and handed
+ * straight to the value tokenizer — but a layer of quoting was still in front of it, and
+ * `cat 'rules/nyc-rules.v2.8.json'` had its closing quote eaten into the name and was reported
+ * missing. A false positive on a command that runs perfectly.
+ *
+ * Not a shell. It implements the three quoting forms POSIX defines and nothing else, because that
+ * is all that stands between a script and the path it names:
+ *
+ *   • `'...'` is literal, with no escapes at all, not even for a backslash;
+ *   • `"..."` keeps most characters literal but honours `\` before `"`, `\`, `` ` `` and `$`;
+ *   • outside quotes, `\` escapes the next character, and unquoted whitespace separates words.
+ *
+ * Expansion is NOT attempted and must not be: `$RULES` and `$(cat x)` are values this check cannot
+ * compute, exactly like a concatenated path in JavaScript. The word keeps the text as written and
+ * is judged as a name, which either resolves or is reported — never guessed at.
+ *
+ * AN UNTERMINATED QUOTE RETURNS null rather than a best guess. The command is not valid shell and
+ * would not run, so there are no words to speak of; dropping the stray quote would invent a value
+ * the shell never produces, and inventing values is the whole family of defect this round is about.
+ * The caller judges the command as written instead, which is the conservative reading and is what
+ * catches a quote character appended to a published name.
+ */
+function shellWords(command) {
+  const words = [];
+  let word = null;
+  let quote = null;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (quote === null && /\s/.test(character)) {
+      if (word !== null) words.push(word);
+      word = null;
+      continue;
+    }
+    if (word === null) word = "";
+    if (quote === null && (character === "'" || character === '"')) {
+      quote = character;
+    } else if (quote === character) {
+      quote = null;
+    } else if (character === "\\" && quote !== "'") {
+      // Inside double quotes a backslash is literal unless it precedes one of the four characters
+      // the shell still treats as special there; outside quotes it always escapes.
+      const next = command[index + 1];
+      const special = quote === '"' ? ['"', "\\", "`", "$"].includes(next) : next !== undefined;
+      word += special ? next : character;
+      if (special) index += 1;
+    } else {
+      word += character;
+    }
+  }
+  if (quote !== null) return null;
+  if (word !== null) words.push(word);
+  return words;
+}
+
 /** Where a manifest's `scripts` name a ruleset that is not there, and on what line. */
 function danglingInScripts(relative, text) {
   const found = [];
@@ -873,17 +993,18 @@ function danglingInScripts(relative, text) {
   const lines = text.split(/\r?\n/);
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command !== "string") continue;
-    // THE VALUE TOKENIZER, because `JSON.parse` above already decoded this. The command is a value
-    // by the time anything can run it, so `{`, `}` and the quote characters are ordinary filename
-    // characters here and not delimiters. Handing it to the raw-text tokenizer let
-    // `rules/nyc-rules.v2.8.json{backup` validate on its `.json` prefix and pass, which is the
-    // whole-token family again reached through a scanner that had not moved with the rule above.
-    for (const match of command.matchAll(RULESET_FILENAME_IN_VALUE)) {
-      if (resolves(match[0], command, match.index)) continue;
-      // The command is one string with no line structure of its own, so the line reported is the
-      // manifest line the script is declared on, which is what a reader needs to go and fix it.
-      const declaredOn = lines.findIndex((line) => line.includes(`"${name}"`));
-      found.push({ line: declaredOn === -1 ? 1 : declaredOn + 1, named: match[0] });
+    // ONE WORD AT A TIME, with the shell's quoting taken off first. `JSON.parse` decoded this into
+    // shell source, not into a filename, so the value tokenizer alone was one layer too early: it
+    // read the closing quote of `cat 'rules/nyc-rules.v2.8.json'` as part of the name. A word has a
+    // known extent, so `{`, `}`, a quote and a space are all ordinary filename characters inside it.
+    for (const word of shellWords(command) ?? [command]) {
+      for (const match of word.matchAll(RULESET_FILENAME_IN_VALUE)) {
+        if (resolves(match[0], word, match.index)) continue;
+        // The command is one string with no line structure of its own, so the line reported is the
+        // manifest line the script is declared on, which is what a reader needs to go and fix it.
+        const declaredOn = lines.findIndex((line) => line.includes(`"${name}"`));
+        found.push({ line: declaredOn === -1 ? 1 : declaredOn + 1, named: match[0] });
+      }
     }
   }
   return found;
@@ -1127,7 +1248,7 @@ for (const file of scanned) {
 
 for (const file of configFiles) {
   const relative = file.slice(repoRoot.length + 1);
-  for (const found of danglingIn(readFileSync(file, "utf8"))) {
+  for (const found of danglingIn(readFileSync(file, "utf8"), configFormat(relative))) {
     danglingReferences.push({ file: relative, ...found });
   }
 }

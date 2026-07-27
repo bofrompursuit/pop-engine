@@ -1094,21 +1094,24 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
 
   // A quoted scalar is decoded by the loader before the process sees it, so the bytes on disk never
   // show the `nyc-rules.` prefix at all. Reading the file whole could not see this one.
-  it.each([
-    [".github/workflows/ci.yml", (v) => `jobs:\n  verify:\n    env:\n      RULES_FILE: ${v}\n`, 4],
-    ["apps/api/.env.example", (v) => `PORT=3001\nRULES_FILE=${v}\n`, 2],
-  ])("fails on an escaped ruleset hidden in a quoted scalar in %s", (file, shape, line) => {
-    const { status, output } = runOn({ [file]: shape(`"rules/nyc\\x2drules.v9.9.json"`) });
+  //
+  // YAML ONLY. This case had a second row asserting the same of `apps/api/.env.example`, and round
+  // 13 removed it, because `--env-file` does not define `\x` at all and the row pinned the check
+  // decoding a `.env` value with YAML semantics. See the dotenv cases below for what it does define.
+  it("fails on an escaped ruleset hidden in a quoted scalar in a workflow file", () => {
+    const { status, output } = runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/nyc\\x2drules.v9.9.json"\n`,
+    });
 
     expect(status).toBe(1);
-    expect(output).toContain(`${file}:${line} names ${MISSING}`);
+    expect(output).toContain(`.github/workflows/ci.yml:4 names ${MISSING}`);
   });
 
   // Same escape, resolving to the artifact that IS there. Decoding must find the real name too, not
   // only report on everything it decodes.
   it("accepts an escaped quoted scalar that decodes to the published artifact", () => {
     const { status, output } = runOn({
-      "apps/api/.env.example": `RULES_FILE="rules/nyc\\x2drules.v0.0.json"\n`,
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/nyc\\x2drules.v0.0.json"\n`,
     });
 
     expect(status).toBe(0);
@@ -1201,5 +1204,131 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
 
     expect(status).toBe(1);
     expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+});
+
+// Round 12 moved every scanner onto decoded values and then applied ONE decoder to all of them, as
+// though "decoded" were a single state. The three formats that reach this file share almost none of
+// their escape or quoting rules, so the other half of the rule is: a value is decoded by the
+// semantics of the format it came FROM, and the tokenizer follows the value's ORIGIN rather than
+// the fact that it has been decoded at all.
+describe("round 13: each format decodes by its own rules", () => {
+  // The parser told us exactly where the string ends, and treating whitespace as a delimiter
+  // afterwards throws that away. The runtime opens the name WITH the trailing space.
+  it("fails a cooked path whose trailing whitespace is part of the filename", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = readFileSync("rules/${FIXTURE_RULESET} ");\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${FIXTURE_RULESET} `);
+  });
+
+  // The pair. The published artifact named cleanly is the ordinary case and must stay quiet, which
+  // is what stops the fix above from being "report every string containing the name".
+  it("still accepts a cooked path naming the published artifact exactly", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = readFileSync("rules/${FIXTURE_RULESET}");\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A package script is decoded by JSON.parse into SHELL SOURCE, not into a filename, so a layer of
+  // quoting is still in front of it. The closing quote was being eaten into the name and a command
+  // that runs perfectly was reported missing.
+  it.each([
+    ["single quotes", `cat 'rules/${FIXTURE_RULESET}'`],
+    ["double quotes", `cat "rules/${FIXTURE_RULESET}"`],
+    ["a quoted directory", `cat 'rules'/${FIXTURE_RULESET}`],
+  ])("accepts a package script that shell-quotes with %s", (_label, command) => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // The pair, and the half that matters: unquoting must not stop the rule catching a real one.
+  it.each([
+    ["single quotes", `cat 'rules/${MISSING}'`],
+    ["double quotes", `cat "rules/${MISSING}"`],
+    // An escaped space joins the words: the command names ONE file whose name contains a space,
+    // and that file is not there. Unquoting has to produce the name the shell would, not a
+    // convenient one.
+    ["an escaped space", `cat rules/${FIXTURE_RULESET}\\ copy`],
+  ])("still fails a shell-quoted script naming a file that is not there, with %s", (_label, command) => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("package.json:4 names");
+  });
+
+  // An unterminated quote is not valid shell and would not run, so there are no words to speak of.
+  // Dropping the stray quote would invent a value the shell never produces, so the command is
+  // judged as written, which is what catches a quote appended to a published name.
+  it("judges a script with an unterminated quote as written rather than guessing", () => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}'backup` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${FIXTURE_RULESET}'backup`);
+  });
+
+  // VERIFIED against Node v24.18.0 rather than reasoned about: `--env-file` honours `\n` inside
+  // double quotes and NOTHING else. `\t`, `\x2d`, `-` and `\0` all keep their backslash, `\\`
+  // is not collapsed, and `\"` does not escape the quote. Decoding `\x` here as YAML does produced
+  // a name that exists and made the check VOUCH for an override naming a path with a backslash.
+  //
+  // This case is the one the correction newly CATCHES: the escape sits after the `nyc-rules.`
+  // prefix, so the token is visible and names a file that is not there.
+  it("fails a .env override whose escape is preserved and names no file", () => {
+    const { status, output } = runOn({
+      "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET.replace("v0.0", "v0\\x2e0")}"\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("apps/api/.env.example:1 names");
+  });
+
+  // The one escape `--env-file` really does honour, pinned so a future simplification cannot quietly
+  // drop it. The newline splits the value, so the name that remains is the published one.
+  it("honours the one escape --env-file defines, and only inside double quotes", () => {
+    const { status, output } = runOn({
+      "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET}\\nTRAILING=x"\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // The same bytes in single quotes decode to nothing at all, in either format's rules.
+  it("decodes nothing inside a single-quoted .env value", () => {
+    const { status } = runOn({
+      "apps/api/.env.example": `RULES_FILE='rules/${FIXTURE_RULESET}\\nTRAILING=x'\n`,
+    });
+
+    // `\n` stays two characters, so the name runs on and is not the published artifact.
+    expect(status).toBe(1);
+  });
+
+  // The pair for the dotenv reader as a whole: an ordinary stale override must still be caught, and
+  // an ordinary correct one must still pass. Neither involves an escape.
+  it("still fails a plain stale .env override", () => {
+    const { status, output } = runOn({
+      "apps/api/.env.example": `PORT=3001\nRULES_FILE=../../rules/${MISSING}\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/api/.env.example:2 names ${MISSING}`);
   });
 });
