@@ -23,7 +23,18 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * The tree to check. Defaults to this repo, which is the only thing CI and a developer ever want.
+ *
+ * `BASELINE_CHECK_ROOT` exists so the test suite can point the REAL script at a planted tree rather
+ * than testing a copy of it. It is the smallest affordance that makes these rules provable: the
+ * alternatives were copying the script into a temp directory, which verifies a copy and not the
+ * file CI runs, or wrapping every rule in exported functions, which is the restructure this did not
+ * need. Nothing in the repo sets it.
+ */
+const repoRoot = process.env.BASELINE_CHECK_ROOT
+  ? resolve(process.env.BASELINE_CHECK_ROOT)
+  : resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinePath = join(repoRoot, "docs/BASELINE.md");
 
 /**
@@ -339,6 +350,14 @@ const existingRulesets = new Set([
 //     expression, which needs real parsing and constant folding. One was a scanning bug; the other
 //     is a different tool. Half of this gap closed, and the half that did not is named.
 //   • A correct filename under a wrong directory, per the note on `existingRulesets` above.
+//   • Compose v2's default filenames, `compose.yaml` and `compose.yml`, which drop the `docker-`
+//     prefix `CONFIGURES_RULES_FILE` requires. No compose file exists here, so this is prospective
+//     rather than live — but it is a silent miss in the config rule's OWN file set, which is the
+//     class this whole check exists for, so it is named rather than left to be rediscovered.
+//   • The reverse risk in the same rule: config files are scanned whole, comments included, so
+//     prose in one that reads "the nyc-rules. file" yields the token `nyc-rules`, which is in no
+//     published set, and CI goes red on a sentence. Also prospective, and worth naming because
+//     `apps/api/.env.example` now carries several lines of explanatory prose that this rule reads.
 //
 // Covered as of this round and not before: the `RULES_FILE` override in `.env`, compose and
 // workflow files, which is where the only live stale reference in the repo actually was.

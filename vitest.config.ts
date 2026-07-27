@@ -14,7 +14,14 @@ export default defineConfig({
     environment: "node",
     // Discovery covers every workspace, so a new app's tests run the day they land.
     // Next.js keeps its code in `app/`, not `src/`, so that tree is listed too.
-    include: ["{apps,packages}/*/src/**/*.test.{ts,tsx}", "apps/web/app/**/*.test.{ts,tsx}"],
+    // `scripts/` is listed because the baseline check is CI's own guard, and a guard with no test
+    // proves only that it does not false-positive on a good tree. Nothing proved it still FAILS on
+    // a bad one until its suite existed.
+    include: [
+      "{apps,packages}/*/src/**/*.test.{ts,tsx}",
+      "apps/web/app/**/*.test.{ts,tsx}",
+      "scripts/**/*.test.mjs",
+    ],
     // Workspace packages export TypeScript source; force Vite to transform them.
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
