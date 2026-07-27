@@ -296,12 +296,33 @@ const existingRulesets = new Set([
     : []),
 ]);
 
-// Ruleset artifacts named inside a STRING, which is the only place a name is load-bearing. A
-// comment may legitimately mention a version that has been superseded — the fix for this very bug
-// says in prose which path it used to hard-code, in markdown backticks that read exactly like a
-// template literal — and flagging prose would make the check punish the record of the thing it
-// exists to prevent. So comments are blanked first, preserving line numbers, and only what is left
-// is scanned.
+// Ruleset artifacts named inside a STRING, which is the only place a name is load-bearing.
+//
+// CODE ONLY. COMMENTS ARE OUT OF SCOPE, DELIBERATELY AND AFTER CONSIDERING THE ALTERNATIVE — said
+// here so the next person knows it was decided rather than missed, because a stale comment naming
+// a deleted artifact is a real defect and a reader is entitled to ask why this does not catch it.
+//
+// The case for scanning prose is that stale documentation is the same dangling-reference class the
+// repo hit three times in one night. The case against, which won:
+//
+//   1. A comment cannot break a build. This check was built for a path that is READ, and the break
+//      it exists to prevent was an import-time `readFileSync` of a file a publication had deleted.
+//      Prose has no such failure mode, so including it widens the rule past its evidence.
+//   2. The comments it would flag are CORRECT AND USEFUL. The most valuable ones are precisely the
+//      ones that name an old path in order to explain why the code no longer does — this file's own
+//      `withoutComments` note, and the migration away from hard-coded paths, both do exactly that.
+//      A check that flags the record of a fix punishes the fix.
+//   3. A check that flags prose accumulates exemptions until someone switches it off. Three false
+//      positives were already designed out of this rule to keep it credible; adding a category that
+//      generates them by design would undo that.
+//
+// So comments are blanked first, preserving line numbers, and only what is left is scanned. The
+// boundary is exact and worth stating both ways: `const p = "rules/nyc-rules.v1.json"` fails, and
+// the same text in a comment does not.
+//
+// What this leaves uncovered, stated rather than implied: prose naming a superseded artifact goes
+// stale silently. Nothing else catches that today. If it ever matters enough, it is a documentation
+// lint and a different tool — not a widening of this one.
 const STRING_LITERAL = /"([^"\n]*)"|'([^'\n]*)'|`([^`\n]*)`/g;
 const RULESET_FILENAME = /nyc-rules\.[\w.-]+\.json/g;
 
