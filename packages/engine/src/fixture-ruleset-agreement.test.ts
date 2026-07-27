@@ -878,6 +878,47 @@ describe("the fixture suite and the published ruleset agree", () => {
     }
   });
 
+  it("gives every OFFICIAL_CONFLICT rule the note_text its conflict line renders from", () => {
+    // F-206 AC 2 requires an OFFICIAL_CONFLICT line to render BOTH readings with BOTH sources, and
+    // `findings.ts` builds that line from exactly one field:
+    //
+    //   conflictText: rule.verificationStatus === "OFFICIAL_CONFLICT" ? rule.noteText : null
+    //
+    // `noteText` is read from `output.note_text` alone (ruleset.ts). A rule whose conflict prose
+    // lives in the `notes` ARRAY instead therefore parses fine, evaluates fine, and renders a
+    // conflict badge with NOTHING in it. The criterion holds today only by luck: both published
+    // OFFICIAL_CONFLICT rules happen to carry note_text.
+    //
+    // Nothing in the suite caught this. It was measured, not guessed: flipping DOB-ASSEMBLY-001 to
+    // OFFICIAL_CONFLICT left the suite 808/808 GREEN while the rendering was broken, because every
+    // other check compares rule ids, dispositions and dates, and none reads the field the conflict
+    // line is made of. This is the ABSENT-not-disagreeing shape the rest of this file has been
+    // moved toward: it fails when a rule arrives without the field, rather than only when two
+    // artifacts state that field differently.
+    //
+    // Asserted over the whole published ruleset (`ruleset.rules` is rules followed by advisories in
+    // file order) rather than a fixture list, so a third OFFICIAL_CONFLICT rule added later is
+    // covered without anyone remembering to extend a test.
+    const conflictRules = ruleset.rules.filter(
+      (rule) => rule.verificationStatus === "OFFICIAL_CONFLICT",
+    );
+    expect(
+      conflictRules.length,
+      "the published ruleset declares at least one OFFICIAL_CONFLICT rule",
+    ).toBeGreaterThan(0);
+
+    for (const rule of conflictRules) {
+      expect(
+        rule.noteText,
+        `${rule.id} is OFFICIAL_CONFLICT but publishes no output.note_text, so findings.ts ` +
+          `computes conflictText: null and F-206's conflict line renders empty. OFFICIAL_CONFLICT ` +
+          `requires note_text because conflictText reads that field and nothing else. If this ` +
+          `rule's prose is in the output.notes array, move it into note_text rather than changing ` +
+          `the rule's verification status.`,
+      ).not.toBeNull();
+    }
+  });
+
   // ---------------------------------------------------------------------------------------------
   // The key's OUTPUTS, not just its rule ids.
   //
