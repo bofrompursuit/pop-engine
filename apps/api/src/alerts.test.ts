@@ -39,6 +39,7 @@ import {
   DELIVERY_BOUND_MS,
   MAX_ALERTS_PER_TICK,
   POLL_INTERVAL_MS,
+  TICK_BUDGET_MS,
   type AlertScheduler,
 } from "./alerts";
 import { createApp } from "./app";
@@ -3360,7 +3361,11 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       const worstCaseFirstPassMs = Math.ceil(MAX_ALERTS_PER_TICK / concurrency) * PROVIDER_TIMEOUT_MS;
 
       expect(worstCaseFirstPassMs).toBeLessThanOrEqual(DELIVERY_BOUND_MS - POLL_INTERVAL_MS);
-      // And it is not trivially small: a cap of nothing would satisfy the line above.
+      // AND INSIDE THE BUDGET THE TICK ACTUALLY HAS. Two bounds, and this is the tighter one today.
+      // A cap larger than the tick can attempt makes the scan hand itself work it must abandon, so
+      // fresh alerts queue behind rows the previous pass already had its turn on.
+      expect(worstCaseFirstPassMs).toBeLessThanOrEqual(TICK_BUDGET_MS);
+      // And it is not trivially small: a cap of nothing would satisfy the lines above.
       expect(MAX_ALERTS_PER_TICK).toBeGreaterThanOrEqual(concurrency);
     });
 
@@ -3457,6 +3462,46 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       // the earliest, tomorrow's expiry would cancel a warning whose other controlling window has
       // nineteen days left.
       expect(warning?.payload.controlling_apply_by).toBe(dayFromToday(20));
+    });
+
+    it("keeps one provider identity when a review rewrites a pending alert's copy", async () => {
+      // THE CRASH WINDOW, DEFEATED BY THE MECHANISM COVERING IT. The provider accepts, the process
+      // dies before COMMIT so the whole transaction rolls back and the row is byte-identical to
+      // before the attempt, a checklist review then rewrites that pending row's subject and body,
+      // and the retry used to present a different provider identity. The provider could not
+      // recognise it and the same person was messaged twice, which is exactly what AC 2 says a
+      // crash between send and mark-sent must not cause.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const [before] = await alertsOf(eventId);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      });
+
+      await poller.tick();
+      expect(provider.delivered).toHaveLength(1);
+      const firstKey = provider.attempts[0]?.idempotencyKey;
+
+      // The crash: the mark-sent is rolled back and the row is exactly as it was.
+      await pool.query("UPDATE alerts SET status = 'pending', sent_at = NULL WHERE id = $1", [
+        before?.id,
+      ]);
+      // A review recomputes the copy on that pending row.
+      await pool.query(
+        `UPDATE alerts SET payload = payload || '{"subject":"moved","body":"file by a new date"}'::jsonb
+          WHERE id = $1`,
+        [before?.id],
+      );
+
+      await poller.tick();
+
+      // Same identity, so the provider recognises the retry and the organizer is messaged once.
+      expect(provider.attempts).toHaveLength(2);
+      expect(provider.attempts[1]?.idempotencyKey).toBe(firstKey);
+      expect(provider.delivered).toHaveLength(1);
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

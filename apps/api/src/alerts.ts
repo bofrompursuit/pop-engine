@@ -223,7 +223,7 @@ const SKIPPED_RETRY_WINDOW_MS = 2_000;
  * inside the tick, one level up, and bounded for the same reason.
  */
 const SKIPPED_FOLLOW_UP_WAIT_MS = 2_000;
-const TICK_BUDGET_MS = 30_000;
+export const TICK_BUDGET_MS = 30_000;
 
 /**
  * How many due alerts one scan will claim — DERIVED, because choosing it independently of the
@@ -250,6 +250,15 @@ const TICK_BUDGET_MS = 30_000;
  * the provider's worst case, now fits inside what remains of the bound rather than inside all of
  * it. The alert that waited the longest is the one the cap has to hold for.
  *
+ * TWO BOUNDS, NOT ONE, and the second is the tighter of them today. The polling delay says how much
+ * of the DELIVERY budget is left; `TICK_BUDGET_MS` says how long this tick may keep claiming at
+ * all. Sizing against the first alone selected 48 rows when three ten-second waves at eight
+ * concurrent sends can only attempt 24, so a scan routinely handed itself work it had to abandon,
+ * and fresh alerts queued behind rows the previous pass had already taken its turn on. A cap should
+ * never exceed what the tick can actually attempt: the scan and the budget now agree, and
+ * `abandoned` goes back to meaning something unusual happened rather than being the normal state of
+ * a busy tick.
+ *
  * IT INTERACTS WITH `drained` AND THAT IS THE FIX WORKING. A smaller cap means more scans come back
  * at their limit, which reports not-drained and triggers the immediate rescan. Throughput is
  * unchanged because the rescan is immediate; what changes is that a wave of failures can be
@@ -257,7 +266,8 @@ const TICK_BUDGET_MS = 30_000;
  * empty scan is not full and abandons nothing, so it reports drained and the timer takes over.
  */
 export const MAX_ALERTS_PER_TICK = Math.floor(
-  (SEND_CONCURRENCY * (DELIVERY_BOUND_MS - POLL_INTERVAL_MS)) / PROVIDER_TIMEOUT_MS,
+  (SEND_CONCURRENCY * Math.min(DELIVERY_BOUND_MS - POLL_INTERVAL_MS, TICK_BUDGET_MS)) /
+    PROVIDER_TIMEOUT_MS,
 );
 
 /** What the poller's own pool has to hold: every concurrent send, plus the scan that feeds them. */
@@ -1189,33 +1199,46 @@ const idempotencyKey = (
   createHash("sha256").update(recipient).digest("hex").slice(0, 12);
 
 /**
- * The key handed to the PROVIDER: the row's key plus a digest of the COPY that would be delivered.
+ * WHY THE PROVIDER IS SIMPLY HANDED THE ROW'S KEY, with no digest of the copy on the end.
  *
- * An idempotency key means "this is the same request as before, do not do it twice", and the row's
- * key does not mean that on its own — it means "this is the same alert on the same channel to the
- * same destination". An alert keeps that identity across regenerations while its subject and body
- * are recomputed, so a payload the organizer would read as a different message reached Resend under
- * the key of the one it replaced, and Resend was entitled to answer with its stored response for
- * the original. A moved filing date is exactly that case: same requirement, same destination, new
- * sentence, and the new sentence is the one that matters.
+ * Round 10 added that digest so a CHANGED request would get a fresh provider identity: a corrected
+ * recipient had to actually reach the new address rather than being deduplicated onto the old one.
+ * Round 11 then moved the destination INTO the row key, and round 19 narrowed the digest to the
+ * copy alone because the recipient no longer needed covering here. What was left was a mechanism
+ * whose only remaining effect is inside the one window it was supposed to protect.
  *
- * NARROWED THIS ROUND, and the narrowing is the point rather than an omission. The digest used to
- * cover the recipient too, because the recipient could change under a fixed row key. It cannot any
- * more: the destination is part of the row key, so a corrected address is a different row with a
- * different key before this function is reached. Covering it here as well would be a second
- * mechanism for a case the first already decides, and two mechanisms for one case is how they drift
- * apart. This one now has exactly one job: the copy.
+ * TRACE THE CASES. The digest can only matter when the provider holds a record of an attempt and
+ * this side does not, because that is the only time the key is presented twice. There are exactly
+ * two such states, and the copy digest is wrong in both:
  *
- * Same copy, same key, so the crash-window protection AD-13 rests on is unchanged in strength — a
- * lost mark-sent retries under the identical key and the provider delivers once.
+ *   The crash window. The provider accepts, the process dies before COMMIT, and the whole
+ *   transaction rolls back — so the row is byte-identical to before the attempt. A checklist review
+ *   then rewrites that pending row's subject or body, the retry presents a different digest, the
+ *   provider cannot recognise it, and the same person is messaged twice. That is precisely the
+ *   double-send AC 2 says a crash between send and mark-sent must not cause.
  *
- * No column and no migration: the value is derived from the row at send time, so there is no second
- * place for it to fall out of step with what is being sent.
+ *   The timed-out accept. The provider accepts, this side times out and marks the row failed. A
+ *   corrected ADDRESS is already handled, because it is a different row with a different key. A
+ *   corrected copy hits the same defect as above.
+ *
+ * So the digest bought nothing the row key does not already provide, and cost the guarantee it sat
+ * beside. Removed rather than conditioned.
+ *
+ * THE OTHER PROPOSED FIX CANNOT WORK, and it is worth recording why rather than leaving it to be
+ * suggested again: "do not rewrite an ATTEMPTED row's payload", by analogy with rounds 11 and 12
+ * refusing to rewrite an attempted row's recipient. Those rounds could identify the row because a
+ * failed attempt records itself. The crash window records nothing, by definition — that is what
+ * makes it the crash window — so there is no attempted row to recognise. The analogy holds for the
+ * failure case and misses the case actually reported.
+ *
+ * WHAT THIS COSTS, stated rather than implied: if the provider accepted a message and a later
+ * regeneration changed that alert's wording, the corrected wording may be deduplicated away. The
+ * organizer did receive the message, on the same requirement and the same channel, and the
+ * checklist carries the corrected dates on every visit. Delivering one message twice to the same
+ * person is the harm the spec names; delivering the earlier wording of a message they already have
+ * is not.
  */
-const providerKey = (row: DueAlertRow): string => {
-  const copy = [row.payload.subject ?? "", row.payload.body ?? ""].join("\u0000");
-  return `${row.idempotency_key}:${createHash("sha256").update(copy).digest("hex").slice(0, 16)}`;
-};
+const providerKey = (row: DueAlertRow): string => row.idempotency_key;
 
 /**
  * The addresses to schedule to: what the organizer just entered, falling back to what this event's
