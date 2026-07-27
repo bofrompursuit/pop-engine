@@ -116,6 +116,7 @@ type AlertRow = {
   status: string;
   sent_at: Date | null;
   failure_count: number;
+  next_attempt_at: Date | null;
   payload: {
     subject?: string;
     body?: string;
@@ -1338,6 +1339,57 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       expect(response.body.alertContacts).toEqual({ email: null, phone: null });
       expect(response.body.alerts).toMatchObject({ scheduled: 0, channels: [] });
+    });
+
+    it("gives a corrected address a clean start rather than the old one's punishment", async () => {
+      // The other half of making a contact correctable. The row keeps its identity across a
+      // recipient change, so the failure evidence carried over — and that evidence was about an
+      // address that is no longer there. The corrected destination was ordered behind fresh
+      // alerts, and its FIRST failure read the retained count and jumped straight to the maximum
+      // backoff.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "typo@example.test" });
+      const before = await alertsOf(eventId);
+      expect(before.length).toBeGreaterThan(0);
+      // Three attempts against the typo, which is enough to reach the longest backoff step.
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 3,
+                           next_attempt_at = clock_timestamp() + interval '15 minutes'
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      await materialize(eventId, { contactEmail: "organizer@example.test" });
+
+      const corrected = await alertsOf(eventId);
+      expect(corrected.every((row) => row.recipient === "organizer@example.test")).toBe(true);
+      // Ordered as fresh: `ORDER BY failure_count, send_at, id` puts a non-zero count behind every
+      // untried alert, so a corrected address would have queued behind them.
+      expect(corrected.every((row) => row.failure_count === 0)).toBe(true);
+      // And eligible now, rather than serving out a backoff the old address earned.
+      expect(corrected.every((row) => row.next_attempt_at === null)).toBe(true);
+    });
+
+    it("keeps the evidence when a review changes nothing about the destination", async () => {
+      // The mirror of the same rule, and the reason the reset is conditional rather than blanket.
+      // This upsert runs on EVERY checklist review, so clearing unconditionally would let an
+      // organizer wipe a genuinely dead address's backoff simply by pressing review, putting it
+      // back at the head of the batch — the monopolisation migration 010 exists to stop.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 3,
+                           next_attempt_at = clock_timestamp() + interval '15 minutes'
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      // Same address, reviewed again.
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+
+      const after = await alertsOf(eventId);
+      expect(after.every((row) => row.failure_count === 3)).toBe(true);
+      expect(after.every((row) => row.next_attempt_at !== null)).toBe(true);
     });
 
     it("applies a corrected address to alerts that have not gone out", async () => {

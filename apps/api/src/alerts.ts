@@ -763,15 +763,40 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- date changes: the unlock is keyed on the requirement rather than on the date it
              -- fires, so a regeneration that recomputes that date has to move the row it already
              -- owns instead of leaving it pointing at the old day.
-             -- A recomputed alert is a fresh one: whatever backoff a previous attempt earned
-             -- belonged to the copy the plan has just replaced.
              -- recipient too, and a failed row is in scope, which is what makes correcting a bad
              -- address take effect. Without both, a typo could not be fixed: the pending copies
              -- kept the old destination and the failed ones went on retrying to it forever. A
              -- SENT row is still excluded and still immutable — that one is the audit record of
              -- where a message actually went (AC 7).
+             --
+             -- THE FAILURE EVIDENCE BELONGS TO THE DESTINATION, NOT TO THE ROW, and that is what
+             -- decides both lines below. failure_count and next_attempt_at exist to answer one
+             -- question — how much reason is there to believe this will not get through — and the
+             -- reason was always evidence about an address. Change the address and the evidence is
+             -- about something that is no longer there.
+             --
+             -- Each line was wrong in the opposite direction. failure_count carried over, so a
+             -- corrected address inherited the old one's punishment: sorted behind fresh alerts by
+             -- the scan's ordering, and one transient failure at the NEW destination read the
+             -- retained count and jumped straight to the maximum backoff. That silently undid the
+             -- point of making the contact correctable at all. next_attempt_at was cleared
+             -- unconditionally, which is the same error mirrored: every checklist review wiped a
+             -- genuinely dead address's backoff and put it back at the head of the batch, which is
+             -- the monopolisation migration 010 exists to stop.
+             --
+             -- So both now key on the same fact. A changed destination is a fresh start; an
+             -- unchanged one keeps everything the attempts against it established, however many
+             -- times the plan is reviewed.
              SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at, status = 'pending',
-                 recipient = EXCLUDED.recipient, next_attempt_at = NULL
+                 recipient = EXCLUDED.recipient,
+                 failure_count = CASE
+                   WHEN alerts.recipient IS DISTINCT FROM EXCLUDED.recipient THEN 0
+                   ELSE alerts.failure_count
+                 END,
+                 next_attempt_at = CASE
+                   WHEN alerts.recipient IS DISTINCT FROM EXCLUDED.recipient THEN NULL
+                   ELSE alerts.next_attempt_at
+                 END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
            -- xmax = 0 is true only for a row this statement inserted, which is what separates a
            -- newly scheduled alert from one that already existed and was recomputed in place.
