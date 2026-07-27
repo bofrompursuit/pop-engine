@@ -341,6 +341,48 @@ describe.concurrent("ruleset names in executable code", () => {
   });
 });
 
+// The break this whole check exists for, reconstructed, and the gate on any future narrowing of
+// what it scans (issue #159).
+//
+// PR #128 added `apps/web/app/checklist/checklist-fixtures.ts` defaulting to
+// `rules/nyc-rules.v2.7.json`; the v2.8 publication deleted that file, the read is at MODULE SCOPE
+// so it threw during import, and vitest reported "no tests" for the two suites that import it
+// rather than a red assertion. Main went from 957 passing to 542, with 415 tests silently not
+// running and CI green on the PR that did it.
+//
+// It is pinned here because the file it broke is imported by TEST FILES ONLY. Any narrowing of the
+// input to "code reachable from a production entry point" would stop scanning it, and would
+// therefore have missed the exact failure this check was written for. That is the boundary: the
+// scan may narrow to what the toolchain LOADS, and no further.
+describe.concurrent("the PR #128 break, which is the coverage floor for what gets scanned", () => {
+  it("fails on a module-scope default in a helper that only tests import", async () => {
+    const { status, output } = await runOn({
+      "apps/web/app/checklist/checklist-fixtures.ts":
+        `import { readFileSync } from "node:fs";\n` +
+        `const RULES_FILE = process.env.RULES_FILE ?? "rules/${MISSING}";\n` +
+        `export const RULESET = JSON.parse(readFileSync(RULES_FILE, "utf8"));\n`,
+      "apps/web/app/checklist/checklist-view.test.tsx":
+        `import { RULESET } from "./checklist-fixtures";\nexport const value = RULESET;\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/checklist/checklist-fixtures.ts:2 names ${MISSING}`);
+  });
+
+  // The discriminator. The case above would still pass if the helper were scanned merely because
+  // it carries a code extension, so this pins the property that actually matters: the file has no
+  // importer outside the test tree, and it is scanned anyway. If a future narrowing keys on
+  // production reachability, this is the case that goes red.
+  it("scans such a helper even when nothing outside the test tree imports it at all", async () => {
+    const { status, output } = await runOn({
+      "apps/web/app/checklist/checklist-fixtures.ts": `export const path = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/checklist/checklist-fixtures.ts:1 names ${MISSING}`);
+  });
+});
+
 describe.concurrent("where a named ruleset has to exist, which is not just anywhere", () => {
   const FIXTURES = "packages/engine/src/__fixtures__";
 
