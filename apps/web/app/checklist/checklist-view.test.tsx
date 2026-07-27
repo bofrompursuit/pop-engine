@@ -1105,6 +1105,74 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
   });
 });
 
+describe("F-203 AC 5 · a simulated alert is labelled where the organizer reads it", () => {
+  it("says no text messages were sent and how many did not arrive", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(
+          200,
+          checklistBody({
+            created: true,
+            simulatedAlertDeliveries: [{ channel: "sms", sentCount: 2 }],
+          }),
+        ),
+    });
+
+    await renderView();
+
+    // The organizer's version of the fact, not the operator's: no provider name, no open-question
+    // id, and the correction first — what they were counting on did not arrive.
+    const notice = screen.getByText(/No text messages have been sent\./);
+    expect(notice.textContent).toBe(
+      "No text messages have been sent. PopEngine recorded 2 text message alerts for this event, " +
+        "but text message sending is not switched on yet, so nothing was delivered.",
+    );
+    // And no "email is fine" reassurance: nothing in this response says whether it is, and email
+    // is only live when Resend is configured. Pointing at a second channel that may be equally
+    // silent is the same overclaim as calling the simulated one delivered.
+    expect(notice.textContent).not.toContain("Email alerts are sent normally");
+    // Loud enough not to be missed, like the other things that change what can be relied on.
+    expect(notice.getAttribute("role")).toBe("alert");
+  });
+
+  it("says nothing at all when every alert that reported sent was really sent", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(200, checklistBody({ created: true, simulatedAlertDeliveries: [] })),
+    });
+
+    await renderView();
+
+    expect(screen.queryByText(/have been sent\./)).toBeNull();
+    expect(screen.queryByText(/not switched on yet/)).toBeNull();
+    // A real delivery must not pick up a "nothing was delivered" caveat by accident.
+    expect(screen.queryByText(/nothing was delivered/)).toBeNull();
+  });
+
+  it("counts one alert as one, and names a channel it has no word for rather than dropping it", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(
+          200,
+          checklistBody({
+            created: true,
+            simulatedAlertDeliveries: [
+              { channel: "sms", sentCount: 1 },
+              { channel: "carrier_pigeon", sentCount: 3 },
+            ],
+          }),
+        ),
+    });
+
+    await renderView();
+
+    expect(screen.getByText(/1 text message alert for this event/)).toBeDefined();
+    // An unrecognised channel still has to be reported: the point of the notice is that something
+    // did not arrive, and silence about it is the one answer that cannot be right.
+    expect(screen.getByText(/3 carrier_pigeon alerts for this event/)).toBeDefined();
+  });
+});
+
 describe("AC 7 · the demo path", () => {
   it("converts the rescoped plan, flips one status and uploads one document", async () => {
     let current = checklistBody({ created: false });

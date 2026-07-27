@@ -1,0 +1,2002 @@
+// F-203 deadline alerts, against the real schema. Each `describe` names the acceptance criterion
+// it covers; the edge cases from the spec have their own block at the end.
+//
+// Two clocks are in play and the suite keeps them apart on purpose. Scenario plans are evaluated
+// against the answer key's clock (`FIXTURE_TODAY`), so their alerts are dated in that future and
+// no tick can send them — which is what makes the scheduling assertions stable. The poller is
+// driven instead by plans written directly with dates in the real past, so "due" is true on any
+// machine at any time rather than only while the wall clock sits in a particular week.
+
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { Pool } from "pg";
+import request from "supertest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { parseEngineRuleset, parseIntakeContract } from "@pop-engine/engine";
+import type { EngineRuleset, HolidayCalendar, IntakeContract } from "@pop-engine/engine";
+import {
+  FIXTURE_TODAY,
+  SCENARIO_INTAKE_FIXTURES,
+  fixtureSubmission,
+} from "@pop-engine/engine/fixtures";
+import {
+  AlertDeliveryError,
+  createResendEmailSender,
+  createSimulatedSmsSender,
+  sendersFromEnv,
+  unconfiguredEmailSender,
+  SIMULATED_SMS_LABEL,
+  type AlertMessage,
+  type AlertSenders,
+} from "./alert-delivery";
+import { createAlertPoller, createAlertScheduler, type AlertScheduler } from "./alerts";
+import { createApp } from "./app";
+import { instantAtLocalHour, todayInJurisdiction } from "./calendar";
+import { createPlanService } from "./plan";
+import { deadlineReminderOffsets, loadRuleset, rulesFilePath } from "./ruleset";
+import type { DocumentStorage } from "./storage";
+
+const databaseUrl = process.env.DATABASE_URL ?? "";
+
+const storage: DocumentStorage = {
+  put: async () => undefined,
+  signedDownloadUrl: async () => "https://storage.test/unused",
+  remove: async () => undefined,
+};
+
+/**
+ * A provider that remembers every message and, like Resend, treats a repeated `Idempotency-Key` as
+ * the same send. That last part is the whole point: it is what a re-send after a lost mark-sent
+ * lands on, so the fake has to model it or the crash test proves nothing.
+ */
+type FakeProvider = {
+  readonly senders: AlertSenders;
+  /** One entry per DELIVERED message, deduplicated by idempotency key. */
+  readonly delivered: AlertMessage[];
+  /** Every attempt, including ones the provider deduplicated away. */
+  readonly attempts: AlertMessage[];
+  fail: string | null;
+  /** Fails only for this destination, so one dead address can be modelled beside a live one. */
+  failFor: string | null;
+  /** Runs before each send resolves, for modelling a provider that takes measurable time. */
+  beforeSend: (() => Promise<void>) | null;
+};
+
+const fakeProvider = (): FakeProvider => {
+  const delivered: AlertMessage[] = [];
+  const attempts: AlertMessage[] = [];
+  const provider: FakeProvider = {
+    senders: {} as AlertSenders,
+    delivered,
+    attempts,
+    fail: null,
+    failFor: null,
+    beforeSend: null,
+  };
+  const send = (simulated: boolean) => async (message: AlertMessage) => {
+    attempts.push(message);
+    if (provider.beforeSend !== null) await provider.beforeSend();
+    if (provider.fail !== null) throw new AlertDeliveryError(provider.fail);
+    if (provider.failFor === message.recipient) {
+      throw new AlertDeliveryError(`email provider rejected the send with status 550`);
+    }
+    if (!delivered.some((sent) => sent.idempotencyKey === message.idempotencyKey)) {
+      delivered.push(message);
+    }
+    return {
+      simulated,
+      label: simulated ? SIMULATED_SMS_LABEL : null,
+      provider: simulated ? "simulated" : "fake",
+    };
+  };
+  return Object.assign(provider, {
+    senders: { email: send(false), sms: send(true) } satisfies AlertSenders,
+  });
+};
+
+const scenario = (id: string): Record<string, unknown> => {
+  const fixture = SCENARIO_INTAKE_FIXTURES.find((candidate) => candidate.scenario === id);
+  if (fixture === undefined) throw new Error(`no fixture ${id}`);
+  return fixtureSubmission(fixture);
+};
+
+type AlertRow = {
+  id: string;
+  checklist_item_id: string | null;
+  alert_type: string;
+  channel: string;
+  recipient: string;
+  idempotency_key: string;
+  send_at: Date;
+  status: string;
+  sent_at: Date | null;
+  failure_count: number;
+  payload: {
+    subject?: string;
+    body?: string;
+    delivery?: { simulated: boolean; label: string | null };
+    last_error?: string;
+    test?: boolean;
+  };
+};
+
+describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
+  let pool: Pool;
+  let ruleset: EngineRuleset;
+  let intakeContract: IntakeContract;
+  let reminderOffsets: number[];
+  const createdEventIds: string[] = [];
+
+  // The answer key's fixtures are dated in windows with no contested holidays (AD-11), so the
+  // calendar is injected rather than the missing-list guard relaxed.
+  const fixtureCalendar = (calendarId: string): HolidayCalendar => ({
+    id: calendarId,
+    holidays: [],
+  });
+
+  const schedulerWith = (now?: () => Date): AlertScheduler =>
+    createAlertScheduler({
+      reminderDaysBefore: reminderOffsets,
+      slackWarningDays: ruleset.slackWarningDays,
+      jurisdiction: ruleset.jurisdiction,
+      now,
+    });
+
+  const appWith = (provider: FakeProvider, today = FIXTURE_TODAY) =>
+    createApp({
+      database: pool,
+      intakeContract,
+      today: () => today,
+      planService: createPlanService(pool, ruleset, fixtureCalendar, () => today),
+      // The scheduler reads the real clock to decide whether a filing date has passed, so the
+      // scenario suites pin it to the answer key's day exactly as the plan service is pinned.
+      // Without that, every assertion below about a fixture's alert set would start changing on
+      // the day the wall clock overtook the fixture's dates.
+      checklist: {
+        database: pool,
+        storage,
+        scheduleAlerts: schedulerWith(() => new Date(`${today}T13:00:00Z`)),
+      },
+      alerts: { database: pool, senders: provider.senders },
+    });
+
+  const createEvent = async (submission: Record<string, unknown>): Promise<string> => {
+    const response = await request(appWith(fakeProvider())).post("/api/events").send(submission);
+    expect(response.status).toBe(201);
+    const eventId = response.body.event.id as string;
+    createdEventIds.push(eventId);
+    return eventId;
+  };
+
+  /** An event with a plan and a checklist, alerts scheduled against the supplied contacts. */
+  const materialize = async (
+    eventId: string,
+    contacts: Record<string, unknown> = { contactEmail: "organizer@example.test" },
+    today = FIXTURE_TODAY,
+  ) => {
+    const app = appWith(fakeProvider(), today);
+    expect((await request(app).post(`/api/events/${eventId}/plan`)).status).toBe(201);
+    const response = await request(app).post(`/api/events/${eventId}/checklist`).send(contacts);
+    return response;
+  };
+
+  const alertsOf = async (eventId: string): Promise<AlertRow[]> => {
+    const { rows } = await pool.query<AlertRow>(
+      `SELECT a.* FROM alerts AS a WHERE a.event_id = $1 ORDER BY a.send_at, a.alert_type, a.channel`,
+      [eventId],
+    );
+    return rows;
+  };
+
+  /** The rule ids behind the checklist item an alert hangs off, for readable assertions. */
+  const ruleIdsFor = async (checklistItemId: string): Promise<string[]> => {
+    const { rows } = await pool.query<{ rule_ids: string[] }>(
+      `SELECT item.rule_ids FROM checklist_items AS checklist
+         JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+        WHERE checklist.id = $1`,
+      [checklistItemId],
+    );
+    return rows[0]?.rule_ids ?? [];
+  };
+
+  const describeAlerts = async (eventId: string): Promise<string[]> => {
+    const rows = await alertsOf(eventId);
+    return Promise.all(
+      rows.map(async (row) => {
+        const rules =
+          row.checklist_item_id === null
+            ? "plan"
+            : (await ruleIdsFor(row.checklist_item_id)).join("+");
+        return `${row.send_at.toISOString().slice(0, 10)} ${row.alert_type} ${rules} ${row.channel} ${row.status}`;
+      }),
+    );
+  };
+
+  /** A calendar day in the jurisdiction, offset from the real clock the scheduler reads. */
+  const dayFromToday = (days: number): string => {
+    const day = new Date(`${todayInJurisdiction("US-NY-NYC")}T00:00:00Z`);
+    day.setUTCDate(day.getUTCDate() + days);
+    return day.toISOString().slice(0, 10);
+  };
+
+  /**
+   * A plan written directly, dated relative to the real clock rather than to a fixed year.
+   *
+   * The poller needs alerts that are genuinely due wherever this runs, and the fixture scenarios
+   * are dated against the answer key's clock. A back-dated plan was the first attempt and was
+   * wrong for a reason worth keeping written down: alerts are only scheduled for filing dates that
+   * are still ahead, so a 2020 deadline now correctly schedules nothing. The shape that IS due is
+   * the spec's own edge case — a checklist created inside the reminder window — so that is what
+   * this builds: the filing date is today, which is still a day an organizer can file on, and
+   * every published offset counts back from it to a day that has already gone.
+   */
+  const insertDuePlan = async (
+    eventId: string,
+    options: {
+      latestApplyDate?: string;
+      planToday?: string;
+      applyAfterDate?: string | null;
+      disposition?: string;
+      verdict?: string;
+      minSlackDays?: number | null;
+      conflictText?: string | null;
+      /**
+       * Re-point this existing task at the new plan's item instead of creating another, which is
+       * what `materialize` does on a regeneration. A test about identity ACROSS plans has to do
+       * it: a fresh task per plan gives every alert a fresh key, so no key can ever collide and
+       * the collision under test cannot happen.
+       */
+      reuseChecklistItemId?: string;
+    } = {},
+  ): Promise<{ planId: string; checklistItemId: string }> => {
+    const {
+      latestApplyDate = dayFromToday(0),
+      planToday = todayInJurisdiction("US-NY-NYC"),
+      applyAfterDate = null,
+      disposition = "required",
+      verdict = "feasible",
+      minSlackDays = null,
+      conflictText = null,
+      reuseChecklistItemId,
+    } = options;
+    const planId = randomUUID();
+    const itemId = randomUUID();
+    const checklistItemId = reuseChecklistItemId ?? randomUUID();
+    await pool.query(
+      `INSERT INTO permit_plans (id, event_id, event_revision, ruleset_version, snapshot_date,
+                                 verdict, verdict_detail, intake_snapshot, generated_at)
+       VALUES ($1, $2, 1, $3, $4, $6, $5::jsonb, '{}'::jsonb, current_timestamp)`,
+      [
+        planId,
+        eventId,
+        ruleset.rulesetVersion,
+        ruleset.snapshotDate,
+        JSON.stringify({
+          today: planToday,
+          minSlackDays,
+          finding_renderings: [
+            {
+              rule_ids: ["NYPD-SOUND-001"],
+              notes: [],
+              note_text: null,
+              conflict_text: conflictText,
+              deadline_display: "file at least 5 days before use",
+              slack_days: null,
+              deadline_unknown_fields: [],
+              timeline_unresolved_reason: null,
+              portal_instructions: null,
+            },
+            ...(applyAfterDate === null
+              ? []
+              : [
+                  {
+                    rule_ids: ["PARKS-EVENT-001"],
+                    notes: [],
+                    note_text: null,
+                    conflict_text: null,
+                    deadline_display: "apply at least 21 days ahead",
+                    slack_days: null,
+                    deadline_unknown_fields: [],
+                    timeline_unresolved_reason: null,
+                    portal_instructions: null,
+                  },
+                ]),
+          ],
+        }),
+        verdict,
+      ],
+    );
+    if (applyAfterDate !== null) {
+      // The upstream half of the dependency. An unlock alert is only scheduled when the plan
+      // carries the requirement the gated one waits on — `DEPENDENCY_SEQUENCING_BINDINGS` names
+      // both ends, and an unlock that cannot name its dependency is not scheduled at all.
+      await pool.query(
+        `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
+                                        latest_apply_date, deadline, sources, kind, disposition,
+                                        deadline_status, verification_status)
+         VALUES ($1, $2, ARRAY['PARKS-EVENT-001'], '[]'::jsonb, 'Special Event Permit',
+                 'NYC Parks', $3, $4::jsonb, '[]'::jsonb, 'permit', 'required', 'on_track',
+                 'SOURCE_CONFIRMED')`,
+        [
+          randomUUID(),
+          planId,
+          latestApplyDate,
+          JSON.stringify({
+            type: "composite",
+            hardFloorDays: 21,
+            processingRangeDays: [21, 30],
+            display: "apply at least 21 days ahead",
+            qualification: null,
+            boundary: "inclusive",
+          }),
+        ],
+      );
+    }
+    await pool.query(
+      `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
+                                      latest_apply_date, apply_after_date, sources, kind,
+                                      disposition, deadline_status, verification_status)
+       VALUES ($1, $2, ARRAY['NYPD-SOUND-001'], '[]'::jsonb, 'Sound Device Permit', 'NYPD', $3, $4,
+               '[]'::jsonb, 'permit', $5, 'on_track', 'SOURCE_CONFIRMED')`,
+      [itemId, planId, latestApplyDate, applyAfterDate, disposition],
+    );
+    await pool.query(
+      // The re-point `materialize` performs on a regeneration: the task survives, and only the
+      // plan item it points at changes.
+      `INSERT INTO checklist_items (id, plan_item_id, cohort_position) VALUES ($1, $2, 0)
+       ON CONFLICT (id) DO UPDATE SET plan_item_id = EXCLUDED.plan_item_id`,
+      [checklistItemId, itemId],
+    );
+    return { planId, checklistItemId };
+  };
+
+  /**
+   * An event whose alerts are due right now. `offsets` is narrowed to one in the tests that count
+   * provider attempts, so the count is about the poller rather than about how many offsets the
+   * ruleset happens to publish.
+   */
+  const schedulePastDue = async (eventId: string, offsets = reminderOffsets): Promise<number> => {
+    // Offsets that all land behind today, against a filing date that is still ahead: every alert
+    // this writes is due immediately, and none of them names a date that has passed.
+    const { planId } = await insertDuePlan(eventId);
+    const client = await pool.connect();
+    try {
+      const summary = await createAlertScheduler({
+        reminderDaysBefore: offsets,
+        slackWarningDays: ruleset.slackWarningDays,
+        jurisdiction: ruleset.jurisdiction,
+      })(client, eventId, planId, { email: "organizer@example.test", phone: null });
+      return summary.scheduled;
+    } finally {
+      client.release();
+    }
+  };
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: databaseUrl });
+    ruleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
+    const published = await loadRuleset();
+    intakeContract = parseIntakeContract(published.document);
+    reminderOffsets = deadlineReminderOffsets(published);
+  });
+
+  /**
+   * A tick sends everything due in the database, not everything due for one event, so an alert
+   * one test left pending would be picked up by the next test's poller and counted there. Due
+   * leftovers are retired between tests; future-dated ones are what the scheduling tests assert
+   * on and are left alone.
+   */
+  afterEach(async () => {
+    await pool.query(
+      `UPDATE alerts SET status = 'cancelled'
+        WHERE status IN ('pending', 'failed') AND send_at <= current_timestamp`,
+    );
+  });
+
+  afterAll(async () => {
+    if (createdEventIds.length > 0) {
+      await pool.query("DELETE FROM alerts WHERE event_id = ANY($1)", [createdEventIds]);
+      // Before the events they key on: contacts are event-scoped (migration 009).
+      await pool.query("DELETE FROM event_alert_contacts WHERE event_id = ANY($1)", [
+        createdEventIds,
+      ]);
+      await pool.query(
+        `DELETE FROM checklist_items WHERE plan_item_id IN (
+           SELECT item.id FROM permit_plan_items AS item
+             JOIN permit_plans AS plan ON plan.id = item.plan_id
+            WHERE plan.event_id = ANY($1))`,
+        [createdEventIds],
+      );
+      await pool.query(
+        `DELETE FROM permit_plan_items WHERE plan_id IN (
+           SELECT id FROM permit_plans WHERE event_id = ANY($1))`,
+        [createdEventIds],
+      );
+      await pool.query("DELETE FROM checklist_acknowledgements WHERE event_id = ANY($1)", [
+        createdEventIds,
+      ]);
+      await pool.query("DELETE FROM permit_plans WHERE event_id = ANY($1)", [createdEventIds]);
+      await pool.query("DELETE FROM events WHERE id = ANY($1)", [createdEventIds]);
+    }
+    await pool.end();
+  });
+
+  describe("AC 1 — materializing a checklist schedules the plan's alert set", () => {
+    it("schedules a reminder per published offset for every dated permit, and nothing else", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const response = await materialize(eventId);
+
+      expect(response.status).toBe(201);
+      expect(response.body.alerts).toMatchObject({
+        cancelled: 0,
+        channels: ["email"],
+        reason: null,
+      });
+      // Two Parks reminders, two NYPD reminders, one dependency unlock.
+      expect(response.body.alerts.scheduled).toBe(5);
+      expect((await describeAlerts(eventId)).sort()).toEqual(
+        [
+          // Parks: latest_apply 2026-08-26, offsets 7 and 1.
+          "2026-08-19 deadline_reminder PARKS-EVENT-001 email pending",
+          "2026-08-25 deadline_reminder PARKS-EVENT-001 email pending",
+          // NYPD is gated on the Parks decision window (AC 4), then reminds against its own date.
+          "2026-08-12 dependency_unlocked NYPD-SOUND-001 email pending",
+          "2026-09-04 deadline_reminder NYPD-SOUND-001 email pending",
+          "2026-09-10 deadline_reminder NYPD-SOUND-001 email pending",
+        ].sort(),
+      );
+    });
+
+    it("schedules the offsets the ruleset publishes rather than a hardcoded pair", async () => {
+      // The artifact is the contract (F-203 Outputs: config, not code).
+      expect(reminderOffsets).toEqual([7, 1]);
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const parks = (await alertsOf(eventId)).filter(
+        (row) => row.alert_type === "deadline_reminder",
+      );
+      const parksDays = await Promise.all(
+        parks.map(async (row) => ({
+          rules: (await ruleIdsFor(row.checklist_item_id ?? "")).join("+"),
+          day: row.send_at.toISOString().slice(0, 10),
+        })),
+      );
+      expect(
+        parksDays
+          .filter((row) => row.rules === "PARKS-EVENT-001")
+          .map((row) => row.day)
+          .sort(),
+      ).toEqual(["2026-08-19", "2026-08-25"]);
+    });
+
+    it("schedules nothing for a finding whose deadline the engine declines to date", async () => {
+      // Scenario D carries FDNY-FUEL-001, a research_required lead time: no agency publishes one,
+      // so there is no date to schedule against and none is invented.
+      const eventId = await createEvent(scenario("D"));
+      const response = await materialize(eventId);
+
+      const undated = response.body.items.filter(
+        (item: { latestApplyDate: string | null }) => item.latestApplyDate === null,
+      );
+      expect(undated.length).toBeGreaterThan(0);
+      // The published "confirm the lead time with the agency" rendering, whatever the rule words it
+      // as — FDNY names itself. The point is that the row says confirm, and carries no date.
+      expect(undated[0].deadlineDisplay).toMatch(/confirm with/);
+      const scheduledFor = await Promise.all(
+        (await alertsOf(eventId))
+          .filter((row) => row.checklist_item_id !== null)
+          .map((row) => ruleIdsFor(row.checklist_item_id ?? "")),
+      );
+      expect(scheduledFor.flat()).not.toContain("FDNY-FUEL-001");
+    });
+
+    it("fires the slack warning immediately when the plan is at risk, labeled as PopEngine policy", async () => {
+      const eventId = await createEvent(scenario("D"));
+      await materialize(eventId);
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(warning?.checklist_item_id).toBeNull();
+      // The answer key pins Scenario D at "apply within 10 days".
+      expect(warning?.payload.subject).toBe("At risk — apply within 10 days");
+      expect(warning?.payload.body).toContain(
+        "14-day threshold is PopEngine's internal planning buffer, not an official threshold",
+      );
+      expect(warning?.send_at.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it("says what the slack number is, rather than calling it time remaining", async () => {
+      const eventId = await createEvent(scenario("D"));
+      await materialize(eventId);
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      // The number is a minimum across findings, measured from the plan's evaluation date — not
+      // the distance from today, and for a gated finding not a distance at all.
+      expect(warning?.payload.body).toContain(
+        "the narrowest slack across its dated requirements is 10 days, measured from the plan's " +
+          "evaluation date 2026-07-22",
+      );
+      expect(warning?.payload.body).not.toContain("days away");
+      // Scenario D has no gated filing, so the window-width qualifier would be noise.
+      expect(warning?.payload.body).not.toContain("width of the window");
+    });
+
+    it("does not describe gated slack as time until filing", async () => {
+      // The reviewer's case: a filing window nine days wide that cannot be entered for another
+      // three weeks. "Nine days away" would tell the organizer they have three weeks less runway
+      // than they do.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(warning?.payload.body).toContain(
+        "the number above is the width of the window it can be filed in, not the time remaining",
+      );
+      expect(warning?.payload.body).not.toContain("days away");
+    });
+
+    it("does not warn about slack on a plan that is not at risk", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      expect((await alertsOf(eventId)).some((row) => row.alert_type === "slack_warning")).toBe(
+        false,
+      );
+    });
+
+    it("schedules no reminder for a filing date the plan's own clock has already passed", async () => {
+      // Scenario A's SAPO street permit closed on 2026-07-12, ten days before the fixture clock.
+      // A countdown to it would read "file by" a day that has gone.
+      const eventId = await createEvent(scenario("A"));
+      await materialize(eventId);
+      const scheduledFor = await Promise.all(
+        (await alertsOf(eventId))
+          .filter((row) => row.checklist_item_id !== null)
+          .map((row) => ruleIdsFor(row.checklist_item_id ?? "")),
+      );
+      expect(scheduledFor.flat()).not.toContain("SAPO-STREET-LARGE-001");
+      expect(scheduledFor.flat()).toContain("NYPD-SOUND-001");
+    });
+
+    it("reads filing dates against the day scheduling happens, not the day the plan was evaluated", async () => {
+      // A plan generated five weeks ago and converted today. Its filing date closed a week ago.
+      // The plan's own `today` still sits behind that date, so a guard reading the plan's clock
+      // sees a deadline that is comfortably ahead and schedules a reminder that is immediately
+      // due and says "file by" a day that has gone.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        planToday: dayFromToday(-35),
+        latestApplyDate: dayFromToday(-7),
+      });
+
+      const client = await pool.connect();
+      try {
+        const summary = await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+        expect(summary.scheduled).toBe(0);
+      } finally {
+        client.release();
+      }
+      expect(await alertsOf(eventId)).toEqual([]);
+    });
+
+    it("sends nothing anywhere when no contact was entered, and says so", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const response = await materialize(eventId, {});
+
+      expect(response.body.alerts).toMatchObject({
+        scheduled: 0,
+        channels: [],
+        reason: "no contact was supplied for this event, so no alerts were scheduled",
+      });
+      expect(await alertsOf(eventId)).toEqual([]);
+    });
+
+    it("schedules on every channel a contact was entered for", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, {
+        contactEmail: "organizer@example.test",
+        contactPhone: "+15555550123",
+      });
+      const rows = await alertsOf(eventId);
+      expect(new Set(rows.map((row) => row.channel))).toEqual(new Set(["email", "sms"]));
+      expect(rows.filter((row) => row.channel === "sms")).toHaveLength(5);
+      // AD-13: every row carries the destination and its own key.
+      expect(rows.every((row) => row.recipient !== "" && row.idempotency_key !== "")).toBe(true);
+      expect(new Set(rows.map((row) => row.idempotency_key)).size).toBe(rows.length);
+    });
+
+    it("refuses a contact that is not an address", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const response = await materialize(eventId, { contactEmail: "not-an-address" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("contactEmail must be an email address");
+      expect(await alertsOf(eventId)).toEqual([]);
+    });
+
+    it("refuses a contact phone that is empty", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const response = await materialize(eventId, { contactPhone: "   " });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe("contactPhone must be a non-empty string");
+    });
+  });
+
+  describe("AC 3 — a hard floor is never softened", () => {
+    it("states the Parks floor and the published deadline text in the reminder itself", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+
+      const rows = await alertsOf(eventId);
+      const parks: AlertRow[] = [];
+      for (const row of rows) {
+        if (row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("PARKS-EVENT-001")) parks.push(row);
+      }
+      expect(parks).toHaveLength(2);
+      for (const alert of parks) {
+        expect(alert.payload.body).toContain(
+          "Applications within 21 days of the event are not accepted.",
+        );
+        // The agency's own words, quoted from the rule rather than paraphrased.
+        expect(alert.payload.body).toContain(
+          "apply at least 21 days ahead (applications inside 21 days are not accepted); processing 21–30 days",
+        );
+      }
+    });
+
+    it("carries the published qualification beside the date it qualifies", async () => {
+      // DOB-ASSEMBLY-001 publishes NO deadline display, and puts the doubt in the deadline's own
+      // qualification and the verification's: the code notes say "earlier than 10 days" while an
+      // external critique says ten BUSINESS days, and the wording is unpinned. Reading only
+      // `deadline_display` dropped both, so the reminder stated a computed calendar date as
+      // though the lead were settled.
+      // Scenario F, which the rule's own `exercised_by_scenarios` names.
+      const eventId = await createEvent(scenario("F"));
+      await materialize(eventId);
+
+      const assembly: AlertRow[] = [];
+      for (const row of await alertsOf(eventId)) {
+        if (row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("DOB-ASSEMBLY-001")) {
+          assembly.push(row);
+        }
+      }
+      expect(assembly.length).toBeGreaterThan(0);
+      for (const alert of assembly) {
+        // Quoted from the rule, not summarised by this repo.
+        expect(alert.payload.body).toContain("External critique says '10 business days'");
+        expect(alert.payload.body).toContain("lead wording variance");
+      }
+    });
+
+    it("keeps a may-be-required line conditional instead of turning it into a filing order", async () => {
+      // A park event that sells: PARKS-TUA-001 fires, and it is dated, MAY_BE_REQUIRED, and
+      // carries a published OFFICIAL_CONFLICT about whether it is triggered at all. An imperative
+      // "file by" over that converts the ruleset's own uncertainty into a PopEngine requirement.
+      const eventId = await createEvent({ ...scenario("C"), selling_anything: true });
+      await materialize(eventId);
+
+      const rows = await alertsOf(eventId);
+      const tua: AlertRow[] = [];
+      for (const row of rows) {
+        if (row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("PARKS-TUA-001")) tua.push(row);
+      }
+      expect(tua).toHaveLength(2);
+      for (const alert of tua) {
+        expect(alert.payload.subject).toMatch(/may be required — file by .* if it applies$/);
+        expect(alert.payload.body).toContain("may be required for your event. If it applies");
+        // The published conflict travels with the date rather than being dropped beside it.
+        expect(alert.payload.body).toContain("OFFICIAL CONFLICT on the trigger");
+        expect(alert.payload.body).toContain("confirm with the Revenue Division");
+      }
+    });
+
+    it("still gives a settled requirement the plain filing instruction", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const rows = await alertsOf(eventId);
+      const parks: AlertRow[] = [];
+      for (const row of rows) {
+        if (row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("PARKS-EVENT-001")) parks.push(row);
+      }
+      expect(parks[0]?.payload.subject).toBe("File your Special Event Permit by 2026-08-26");
+      expect(parks[0]?.payload.body).toContain(
+        "Special Event Permit (NYC Parks): file by 2026-08-26.",
+      );
+    });
+
+    it("labels the reminder timing as PopEngine's, never as the agency's", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const bodies = (await alertsOf(eventId))
+        .filter((row) => row.alert_type === "deadline_reminder")
+        .map((row) => row.payload.body ?? "");
+      expect(bodies).toHaveLength(4);
+      for (const body of bodies) {
+        expect(body).toMatch(
+          /PopEngine sends this reminder \d+ days? before the filing date\. That reminder schedule is PopEngine policy, not an agency deadline\./,
+        );
+      }
+    });
+  });
+
+  describe("AC 4 — dependency alerts fire in sequence", () => {
+    it("gates the sound permit on the Parks timeline and names the dependency in the copy", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+
+      const rows = await alertsOf(eventId);
+      const unlock = rows.find((row) => row.alert_type === "dependency_unlocked");
+      expect(unlock).toBeDefined();
+      expect(await ruleIdsFor(unlock?.checklist_item_id ?? "")).toEqual(["NYPD-SOUND-001"]);
+      // apply_after = today + the Parks rule's own earliest decision (21 days), 2026-07-22 → 08-12.
+      expect(unlock?.send_at.toISOString().slice(0, 10)).toBe("2026-08-12");
+      // Names both ends of the dependency and says what the date is: the EARLIEST a decision could
+      // come back, from the upstream rule's own published range. Not that one has come back.
+      expect(unlock?.payload.body).toContain(
+        "2026-08-12 is the earliest a decision on your Special Event Permit (NYC Parks) could " +
+          "come back, from its published 21–30 day processing range. You can now pursue your " +
+          "Sound Device Permit (NYPD).",
+      );
+      expect(unlock?.payload.body).not.toContain("decision window has passed");
+      // The published filing route, and the published caveat: the ordering itself is not confirmed.
+      expect(unlock?.payload.body).toContain("File at the precinct where the device will be used");
+      expect(unlock?.payload.body).toContain(
+        "A strict issued-before-filed sequence is not confirmed by located primary text",
+      );
+    });
+
+    it("names the sequence on a reminder that lands before the upstream decision is expected", async () => {
+      // ~28 days of runway: the sound permit's own filing date is 2026-08-14, so its seven-day
+      // reminder falls on 08-07 — five days before 08-12, the earliest the Parks decision could
+      // come back. Without the sequence the organizer is told to file, and only later told they
+      // can pursue it.
+      const eventId = await createEvent({ ...scenario("C"), event_date: "2026-08-19" });
+      await materialize(eventId);
+
+      const gated: AlertRow[] = [];
+      for (const row of await alertsOf(eventId)) {
+        if (row.alert_type !== "deadline_reminder" || row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("NYPD-SOUND-001")) gated.push(row);
+      }
+      const early = gated.find((row) => row.send_at.toISOString().slice(0, 10) === "2026-08-07");
+      const late = gated.find((row) => row.send_at.toISOString().slice(0, 10) === "2026-08-13");
+
+      expect(early?.payload.body).toContain(
+        "This filing is sequenced after your Special Event Permit (NYC Parks), whose decision is " +
+          "expected no earlier than 2026-08-12.",
+      );
+      // Not moved and not dropped: `apply_after_date` is the earliest a decision could come back,
+      // and the dependency rule says a strict issued-before-filed order is unconfirmed, so
+      // clamping the reminder to it would assert a bar on filing early that nothing publishes.
+      expect(early?.payload.body).toContain("Filing before then may still be possible");
+      expect(early?.payload.body).toContain("file by 2026-08-14");
+      // The later reminder is past the gate, so the sequence is no longer news.
+      expect(late?.payload.body).not.toContain("This filing is sequenced after");
+    });
+
+    it("puts the unlock before the gated permit's own reminders", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const rows = await alertsOf(eventId);
+      const unlock = rows.find((row) => row.alert_type === "dependency_unlocked");
+      const gated: AlertRow[] = [];
+      for (const row of rows) {
+        if (row.alert_type !== "deadline_reminder" || row.checklist_item_id === null) continue;
+        if ((await ruleIdsFor(row.checklist_item_id)).includes("NYPD-SOUND-001")) gated.push(row);
+      }
+      expect(gated).toHaveLength(2);
+      for (const reminder of gated) {
+        expect(unlock?.send_at.getTime()).toBeLessThan(reminder.send_at.getTime());
+      }
+    });
+  });
+
+  describe("AC 2 — the poller sends what is due, marks it, and retries what failed", () => {
+    it("sends a due alert, marks it sent, and records how it was delivered", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      const provider = fakeProvider();
+
+      const summary = await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect(summary.sent).toBeGreaterThanOrEqual(2);
+      const rows = await alertsOf(eventId);
+      expect(rows.every((row) => row.status === "sent")).toBe(true);
+      expect(rows.every((row) => row.sent_at !== null)).toBe(true);
+      expect(rows[0]?.payload.delivery).toMatchObject({ simulated: false });
+      expect(provider.delivered.map((message) => message.recipient)).toContain(
+        "organizer@example.test",
+      );
+    });
+
+    it("marks a failed send failed, counts it, and sends it on a later tick", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      const provider = fakeProvider();
+      provider.fail = "email provider unreachable: socket hang up";
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      const failedTick = await poller.tick();
+      expect(failedTick.failed).toBeGreaterThanOrEqual(2);
+      const afterFailure = await alertsOf(eventId);
+      expect(afterFailure.every((row) => row.status === "failed")).toBe(true);
+      expect(afterFailure.every((row) => row.failure_count === 1)).toBe(true);
+      expect(afterFailure[0]?.payload.last_error).toContain("socket hang up");
+
+      provider.fail = null;
+      await poller.tick();
+      const afterRetry = await alertsOf(eventId);
+      expect(afterRetry.every((row) => row.status === "sent")).toBe(true);
+      // Nothing was lost and nothing was duplicated by the retry.
+      expect(afterRetry).toHaveLength(afterFailure.length);
+    });
+
+    it("does not send twice when the process dies between the send and the mark", async () => {
+      const eventId = await createEvent(scenario("C"));
+      expect(await schedulePastDue(eventId, [1])).toBe(1);
+      const provider = fakeProvider();
+
+      // The failure a crash looks like from here: the provider took the message and the row never
+      // got marked. Everything else about the transaction is real.
+      // A pool of its own, because the sabotage below patches a connection and a patched
+      // connection goes back into the pool it came from.
+      const doomed = new Pool({ connectionString: databaseUrl });
+      const crashing = Object.create(pool) as Pool;
+      // The scan runs on the shared pool, bound rather than inherited: `Pool.query` reaches for
+      // `this.connect` with a callback, and the promise-only override below would strand it.
+      crashing.query = pool.query.bind(pool) as Pool["query"];
+      // The connection dies after the provider already has the message: every write that would
+      // have recorded the outcome fails, exactly as a process that stopped existing would.
+      crashing.connect = (async () => {
+        const client = await doomed.connect();
+        const query = client.query.bind(client);
+        client.query = ((...args: unknown[]) =>
+          typeof args[0] === "string" && args[0].includes("UPDATE alerts")
+            ? Promise.reject(new Error("connection terminated unexpectedly"))
+            : query(...(args as Parameters<typeof query>))) as typeof client.query;
+        return client;
+      }) as Pool["connect"];
+
+      const crashed = await createAlertPoller({
+        database: crashing,
+        senders: provider.senders,
+      }).tick();
+      await doomed.end();
+      expect(crashed.sent).toBe(0);
+      // The row is untouched, so it is still due.
+      expect((await alertsOf(eventId)).every((row) => row.status === "pending")).toBe(true);
+      expect(provider.delivered).toHaveLength(1);
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+      // Two attempts, one delivery: the repeated attempt carried the same key, and the provider
+      // recognised it (AD-13).
+      expect(provider.attempts).toHaveLength(2);
+      expect(provider.attempts[0]?.idempotencyKey).toBe(provider.attempts[1]?.idempotencyKey);
+      expect(provider.delivered).toHaveLength(1);
+    });
+
+    it("hands the same alert to only one of two concurrent ticks", async () => {
+      const eventId = await createEvent(scenario("C"));
+      expect(await schedulePastDue(eventId, [1])).toBe(1);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      await Promise.all([poller.tick(), poller.tick()]);
+
+      // One row, one attempt: the loser of the `FOR UPDATE SKIP LOCKED` claim finds nothing.
+      expect(provider.attempts).toHaveLength(1);
+      expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+    });
+
+    it("serves a fresh alert even when a full batch of dead destinations is due", async () => {
+      // The starvation shape: enough permanently-failing alerts to fill the scan on their own,
+      // every one of them due earlier than the alert behind them. Ordering by due time alone
+      // re-selects exactly this batch on every tick, forever, so the fresh alert is never claimed
+      // even while the provider is delivering perfectly well to everyone else.
+      const eventId = await createEvent(scenario("C"));
+      expect(await schedulePastDue(eventId, [1])).toBe(1);
+      // Staged after scheduling, not before: reconciliation cancels anything pending the current
+      // plan does not call for, so a backlog written first would be cancelled rather than queued.
+      await pool.query(
+        `INSERT INTO alerts (id, event_id, alert_type, channel, recipient, idempotency_key,
+                             send_at, status, failure_count, payload)
+         SELECT gen_random_uuid(), $1::uuid, 'deadline_reminder', 'email', 'dead@example.test',
+                -- Every one of them due LONGER ago than the fresh alert above, which is what puts
+                -- them all ahead of it under a due-time ordering.
+                $2::text || ':starve:' || n, current_timestamp - ((n + 2) || ' days')::interval,
+                'failed', 1, '{"subject":"queued","body":"queued"}'::jsonb
+           FROM generate_series(1, 100) AS n`,
+        [eventId, eventId],
+      );
+      const provider = fakeProvider();
+      provider.failFor = "dead@example.test";
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      const fresh = (await alertsOf(eventId)).filter(
+        (row) => row.recipient === "organizer@example.test",
+      );
+      expect(fresh).toHaveLength(1);
+      expect(fresh[0]?.status).toBe("sent");
+    });
+
+    it("sends across events concurrently instead of serialising the whole batch", async () => {
+      // A per-request timeout bounds one send. It does not bound a batch: due alerts at ten
+      // seconds each add up in a row while everything behind them misses AC 2's two-minute bound,
+      // and the poller looks busy rather than broken.
+      const events = await Promise.all(
+        Array.from({ length: 6 }, async () => {
+          const eventId = await createEvent(scenario("C"));
+          await schedulePastDue(eventId, [1]);
+          return eventId;
+        }),
+      );
+      const provider = fakeProvider();
+      let inFlight = 0;
+      let peakInFlight = 0;
+      provider.beforeSend = async () => {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        inFlight -= 1;
+      };
+
+      const startedAt = Date.now();
+      const summary = await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+      const elapsed = Date.now() - startedAt;
+
+      expect(summary.sent).toBe(events.length);
+      expect(peakInFlight).toBe(events.length);
+      // Six sends of 80ms are 480ms in a row and one wave otherwise.
+      expect(elapsed).toBeLessThan(400);
+    });
+
+    it("sends one event's own alerts in parallel, not behind each other", async () => {
+      // One checklist can have several reminders due at once — four dated items across two
+      // channels is eight slots. While ownership of the event was taken exclusively, they queued
+      // behind each other however idle the other workers were, and at a timing-out provider that
+      // is minutes for a single organizer. Ownership is event-scoped; delivery is not.
+      const eventId = await createEvent(scenario("C"));
+      expect(await schedulePastDue(eventId, [7, 6, 5, 4, 3, 2])).toBe(6);
+      const provider = fakeProvider();
+      let inFlight = 0;
+      let peakInFlight = 0;
+      provider.beforeSend = async () => {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        inFlight -= 1;
+      };
+
+      const startedAt = Date.now();
+      const summary = await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+      const elapsed = Date.now() - startedAt;
+
+      expect(summary.sent).toBe(6);
+      expect(peakInFlight).toBe(6);
+      // Six sends of 80ms are 480ms one after another and one wave otherwise.
+      expect(elapsed).toBeLessThan(400);
+    });
+
+    it("stops claiming once the tick budget is spent, and leaves the rest due", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [7, 6, 5, 4, 3, 2, 1, 14]);
+      const provider = fakeProvider();
+      // A clock that reports the budget spent once the first wave has been claimed, so the bound
+      // is exercised without spending thirty real seconds on it.
+      let reads = 0;
+      const clock = (): number => {
+        reads += 1;
+        return reads <= 5 ? 0 : 30_000;
+      };
+
+      const summary = await createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        clock,
+      }).tick();
+
+      expect(summary.abandoned).toBeGreaterThan(0);
+      expect(summary.sent + summary.abandoned).toBe(8);
+      // Abandoned means untouched, not failed: the rows never left the queue, so they are still
+      // due and carry no attempt against them.
+      const untouched = (await alertsOf(eventId)).filter((row) => row.status === "pending");
+      expect(untouched).toHaveLength(summary.abandoned);
+      expect(untouched.every((row) => row.failure_count === 0)).toBe(true);
+    });
+
+    it("records sent_at when the provider finished, not when the transaction opened", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [1]);
+      const provider = fakeProvider();
+      provider.beforeSend = () => new Promise((resolve) => setTimeout(resolve, 300));
+      const { rows } = await pool.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+      const beforeTick = rows[0]?.now as Date;
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      const alert = (await alertsOf(eventId))[0];
+      // `current_timestamp` is the transaction's start, which is before the send; the row would be
+      // audited as delivered 300ms earlier than it was, and that gap is exactly what a check of
+      // AC 2's two-minute bound measures.
+      expect((alert?.sent_at as Date).getTime() - beforeTick.getTime()).toBeGreaterThanOrEqual(250);
+    });
+
+    it("stops a dead backlog consuming every scan, so a later alert is served at once", async () => {
+      // The reviewer's case. A backlog of dead destinations kept its original `send_at`, so it
+      // stayed due forever and was re-attempted on every scan; at ten seconds a send it filled
+      // each one, and an alert that became due behind it waited scan after scan. `failure_count`
+      // ordering ranks rows WITHIN a scan and cannot remove them from it — that is what the retry
+      // time does.
+      const dead = await createEvent(scenario("C"));
+      await schedulePastDue(dead, [7, 6, 5, 4]);
+      const provider = fakeProvider();
+      provider.failFor = "organizer@example.test";
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      // Two passes: the first attempt, then the immediate retry a blip deserves.
+      await poller.tick();
+      await poller.tick();
+      expect((await alertsOf(dead)).every((row) => row.failure_count === 2)).toBe(true);
+      const attemptsOnBacklog = provider.attempts.length;
+
+      // A deliverable alert arrives afterwards, on another event.
+      const live = await createEvent(scenario("C"));
+      await schedulePastDue(live, [1]);
+      provider.failFor = "nobody@example.test";
+
+      await poller.tick();
+
+      // Sent on the very next scan: the dead rows are backed off and no longer in the batch.
+      expect((await alertsOf(live)).every((row) => row.status === "sent")).toBe(true);
+      expect(provider.attempts.length).toBe(attemptsOnBacklog + 1);
+      // And nothing was lost — the backlog is still there, still failed, still counted.
+      expect((await alertsOf(dead)).every((row) => row.status === "failed")).toBe(true);
+    });
+
+    it("leaves an alert that is not due yet alone", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const provider = fakeProvider();
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect(provider.attempts).toHaveLength(0);
+      expect((await alertsOf(eventId)).every((row) => row.status === "pending")).toBe(true);
+    });
+
+    it("keeps draining without waiting out the interval when a tick left work behind", async () => {
+      // The budget bounds ONE tick. Waiting the full interval after a tick that ran out of budget
+      // would turn that into a bound on throughput, which is how a large due set misses AC 2's
+      // two-minute delivery bound by design rather than by failure. The interval is how often to
+      // look when there is nothing to do, not how fast work may be done when there is.
+      const eventId = await createEvent(scenario("C"));
+      expect(await schedulePastDue(eventId, [7, 6, 5, 4, 3, 2])).toBe(6);
+      const provider = fakeProvider();
+      provider.beforeSend = () => new Promise((resolve) => setTimeout(resolve, 30));
+      // A clock running 200x fast, so the 30-second budget expires a few sends into every tick and
+      // the test still finishes in well under a second. Real durations, accelerated readings.
+      const base = Date.now();
+      const clock = (): number => (Date.now() - base) * 200;
+      const poller = createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        // Far longer than this test will wait: anything delivered after the first tick proves the
+        // drain re-ran on its own rather than on the timer.
+        intervalMs: 60_000,
+        clock,
+      });
+
+      poller.start();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      poller.stop();
+
+      const rows = await alertsOf(eventId);
+      expect(rows).toHaveLength(6);
+      expect(rows.every((row) => row.status === "sent")).toBe(true);
+    });
+
+    it("keeps ticking on a schedule and can be stopped", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({
+        database: pool,
+        senders: provider.senders,
+        intervalMs: 5,
+      });
+
+      poller.start();
+      poller.start(); // idempotent: a second start must not run two timers
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      poller.stop();
+      poller.stop();
+
+      expect(provider.delivered).toHaveLength(2);
+      expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+    });
+  });
+
+  describe("AC 7 — regeneration recomputes pending alerts and never re-sends a sent one", () => {
+    it("cancels what the new plan no longer calls for, keeps what it still does, and leaves sent alerts alone", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const before = await alertsOf(eventId);
+      // A reminder that has already gone out. Its filing date is about to move, so the recomputed
+      // set will not contain it — which is exactly the row AC 7 says must not be touched.
+      const sentAlready = before.find((row) => row.alert_type === "deadline_reminder");
+      await pool.query(
+        "UPDATE alerts SET status = 'sent', sent_at = current_timestamp WHERE id = $1",
+        [sentAlready?.id],
+      );
+
+      // The organizer moves the event, so every filing date moves with it.
+      const patch = await request(appWith(fakeProvider()))
+        .patch(`/api/events/${eventId}`)
+        .send({ event_date: "2026-10-16" });
+      expect(patch.status).toBe(200);
+      const response = await materialize(eventId);
+      expect(response.status).toBe(200);
+
+      const after = await alertsOf(eventId);
+      const byKey = new Map(after.map((row) => [row.idempotency_key, row]));
+      // The alert that already went out is untouched: still sent, never re-sent, never cancelled.
+      expect(byKey.get(sentAlready?.idempotency_key ?? "")?.status).toBe("sent");
+      // The three other reminders of the old timeline are cancelled rather than deleted.
+      const oldReminders = before.filter(
+        (row) => row.alert_type === "deadline_reminder" && row.id !== sentAlready?.id,
+      );
+      expect(oldReminders).toHaveLength(3);
+      for (const row of oldReminders) {
+        expect(byKey.get(row.idempotency_key)?.status).toBe("cancelled");
+      }
+      // The dependency unlock is unmoved and untouched: it is dated from the plan's clock and the
+      // upstream processing range, neither of which the event date changed.
+      const unlock = before.find((row) => row.alert_type === "dependency_unlocked");
+      expect(byKey.get(unlock?.idempotency_key ?? "")?.status).toBe("pending");
+      // Four recomputed reminders, plus the unmoved unlock.
+      expect(after.filter((row) => row.status === "pending")).toHaveLength(5);
+      expect(response.body.alerts).toMatchObject({ scheduled: 4, cancelled: 3 });
+    });
+
+    it("does not suppress a new reminder that lands on a sent reminder's day", async () => {
+      // The published offsets are 7 and 1, so a filing date that moves by exactly six days puts
+      // the NEW seven-day reminder on the day the OLD one-day reminder already occupies. Keyed on
+      // the send day alone they are the same alert, and since a sent row is correctly left
+      // immutable, the reminder carrying the corrected filing date was dropped in silence.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(30) });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, first.planId, contacts);
+        const collisionDay = dayFromToday(29);
+        const sentAlready = (await alertsOf(eventId)).find(
+          (row) => row.send_at.toISOString().slice(0, 10) === collisionDay,
+        );
+        expect(sentAlready).toBeDefined();
+        await pool.query(
+          "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1",
+          [sentAlready?.id],
+        );
+
+        // The organizer moves the event out by six days, so every filing date moves with it.
+        // Same task, new plan — the regeneration shape, and the only one where two plans' alerts
+        // can share a key at all.
+        const second = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(36),
+          reuseChecklistItemId: first.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, second.planId, contacts);
+
+        const onCollisionDay = (await alertsOf(eventId)).filter(
+          (row) => row.send_at.toISOString().slice(0, 10) === collisionDay,
+        );
+        expect(onCollisionDay).toHaveLength(2);
+        expect(onCollisionDay.filter((row) => row.status === "sent")).toHaveLength(1);
+        const fresh = onCollisionDay.find((row) => row.status === "pending");
+        // The point of the new reminder: it carries the corrected filing date.
+        expect(fresh?.payload.body).toContain(`file by ${dayFromToday(36)}`);
+      } finally {
+        client.release();
+      }
+    });
+
+    it("re-reviewing the same plan schedules nothing new and cancels nothing", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const first = await alertsOf(eventId);
+
+      const second = await materialize(eventId);
+
+      expect(second.body.alerts).toMatchObject({ scheduled: 0, cancelled: 0 });
+      expect(await alertsOf(eventId)).toHaveLength(first.length);
+    });
+
+    it("keeps using the contact already on file when a later review supplies none", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "organizer@example.test" });
+
+      const second = await materialize(eventId, {});
+
+      expect(second.body.alerts.channels).toEqual(["email"]);
+      expect(
+        (await alertsOf(eventId)).every((row) => row.recipient === "organizer@example.test"),
+      ).toBe(true);
+    });
+
+    it("keeps a contact entered against a plan that scheduled nothing", async () => {
+      // Scenario B's only dated finding cannot be dated at all, so the first checklist schedules
+      // no alerts. With the contact living on the alert rows there was nowhere to put it, and a
+      // later rescope that DID produce a dated requirement resolved no channel and silently
+      // scheduled nothing — for an organizer who had entered their address.
+      const eventId = await createEvent(scenario("B"));
+      const first = await materialize(eventId, { contactEmail: "organizer@example.test" });
+      expect(first.body.alerts.scheduled).toBe(0);
+      expect(await alertsOf(eventId)).toEqual([]);
+
+      // The contact survives the fact that nothing was written to send.
+      expect(first.body.alertContacts).toEqual({ email: "organizer@example.test", phone: null });
+      const planId = (await insertDuePlan(eventId, { latestApplyDate: dayFromToday(30) })).planId;
+      const client = await pool.connect();
+      try {
+        // A later review that re-states nothing about contacts still finds one.
+        const summary = await schedulerWith()(client, eventId, planId, {});
+        expect(summary.channels).toEqual(["email"]);
+        expect(summary.scheduled).toBeGreaterThan(0);
+      } finally {
+        client.release();
+      }
+      expect(
+        (await alertsOf(eventId)).every((row) => row.recipient === "organizer@example.test"),
+      ).toBe(true);
+    });
+
+    it("never treats a test send's destination as the organizer's address", async () => {
+      // The demo utility takes a recipient for one message. Reading contacts back off the alert
+      // log made that tester's address the event's, and every real deadline alert went there.
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      await request(appWith(provider))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "tester@example.test" });
+
+      const response = await materialize(eventId, {});
+
+      expect(response.body.alertContacts).toEqual({ email: null, phone: null });
+      expect(response.body.alerts).toMatchObject({ scheduled: 0, channels: [] });
+    });
+
+    it("applies a corrected address to alerts that have not gone out", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "typo@example.test" });
+      // One row has already gone, and one has already failed against the bad address.
+      const before = await alertsOf(eventId);
+      await pool.query(
+        "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1",
+        [before[0]?.id],
+      );
+      await pool.query("UPDATE alerts SET status = 'failed', failure_count = 1 WHERE id = $1", [
+        before[1]?.id,
+      ]);
+
+      await materialize(eventId, { contactEmail: "organizer@example.test" });
+
+      const after = new Map((await alertsOf(eventId)).map((row) => [row.id, row]));
+      // The sent row is the record of where a message actually went, and does not move.
+      expect(after.get(before[0]?.id ?? "")?.recipient).toBe("typo@example.test");
+      // Everything still to go — the failed one included, which was retrying to the bad address.
+      for (const row of before.slice(1)) {
+        expect(after.get(row.id)?.recipient).toBe("organizer@example.test");
+      }
+    });
+
+    it("does not announce a second unlock when regeneration recomputes the same gate", async () => {
+      // `apply_after_date` is the plan's own `today` plus the upstream processing range, so it
+      // moves every time the plan is regenerated on a later day even though the event, the
+      // requirement and the upstream have not changed. Keyed on that date, the sent unlock did not
+      // conflict with the recomputed one and the organizer was told a second time that they may
+      // now pursue something they had already been told was open.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(40),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, first.planId, contacts);
+        const unlock = (await alertsOf(eventId)).find(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        expect(unlock).toBeDefined();
+        await pool.query(
+          "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1",
+          [unlock?.id],
+        );
+
+        // Regenerated a week later: the gate is recomputed from the new clock and lands elsewhere.
+        const second = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(40),
+          applyAfterDate: dayFromToday(28),
+          reuseChecklistItemId: first.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, second.planId, contacts);
+
+        const unlocks = (await alertsOf(eventId)).filter(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        // One unlock per gated requirement, ever. It stays sent and no second one is queued.
+        expect(unlocks).toHaveLength(1);
+        expect(unlocks[0]?.status).toBe("sent");
+      } finally {
+        client.release();
+      }
+    });
+
+    it("moves an unsent unlock to the recomputed date rather than leaving it on the old one", async () => {
+      // The other half of dropping the date from the identity: the row keeps its identity while
+      // its date changes, so reconciliation has to move the row it already owns.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(40),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, first.planId, contacts);
+        const second = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(40),
+          applyAfterDate: dayFromToday(28),
+          reuseChecklistItemId: first.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, second.planId, contacts);
+
+        const unlocks = (await alertsOf(eventId)).filter(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        expect(unlocks).toHaveLength(1);
+        expect(unlocks[0]?.status).toBe("pending");
+        expect(unlocks[0]?.send_at.toISOString().slice(0, 10)).toBe(dayFromToday(28));
+      } finally {
+        client.release();
+      }
+    });
+
+    it("does not send an alert a regeneration rescheduled between the scan and the claim", async () => {
+      // The scan-to-claim window, seen from the other side of the same race the event lock was
+      // introduced for. An unlock keeps its identity across a recomputed `apply_after_date` — that
+      // is what stops it announcing itself twice — so reconciliation rewrites `send_at` on a row
+      // that stays pending and keeps the id the scan already picked up. Claiming on status alone
+      // then sends a rescheduled alert at the old moment: "you can now pursue this" days early.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const plan = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(40),
+        applyAfterDate: dayFromToday(-1),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, plan.planId, contacts);
+      } finally {
+        client.release();
+      }
+      const unlock = (await alertsOf(eventId)).find(
+        (row) => row.alert_type === "dependency_unlocked",
+      );
+      expect(unlock?.send_at.getTime()).toBeLessThan(Date.now());
+
+      const provider = fakeProvider();
+      // The regeneration lands between the scan and the claim: same row, same identity, a gate
+      // that has moved into the future.
+      const racing = Object.create(pool) as Pool;
+      racing.connect = pool.connect.bind(pool) as Pool["connect"];
+      racing.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (typeof text === "string" && text.includes("ORDER BY failure_count")) {
+          const later = await insertDuePlan(eventId, {
+            latestApplyDate: dayFromToday(40),
+            applyAfterDate: dayFromToday(9),
+            reuseChecklistItemId: plan.checklistItemId,
+          });
+          const reviewer = await pool.connect();
+          try {
+            await schedulerWith()(reviewer, eventId, later.planId, contacts);
+          } finally {
+            reviewer.release();
+          }
+        }
+        return result;
+      }) as Pool["query"];
+
+      await createAlertPoller({ database: racing, senders: provider.senders }).tick();
+
+      const after = (await alertsOf(eventId)).find(
+        (row) => row.alert_type === "dependency_unlocked",
+      );
+      // Still the one row, still pending, now waiting for the date the plan actually computed.
+      expect(after?.id).toBe(unlock?.id);
+      expect(after?.status).toBe("pending");
+      expect(after?.send_at.toISOString().slice(0, 10)).toBe(dayFromToday(9));
+      expect(provider.attempts.map((message) => message.subject)).not.toContain(
+        after?.payload.subject,
+      );
+    });
+
+    it("does not deliver an obsolete alert while a checklist review is cancelling it", async () => {
+      // The reconciler and the poller both reach for the same row. Locking the alert row alone put
+      // the cancellation in a queue BEHIND the claim: it woke to a row that had become `sent` and
+      // skipped it, having waited for exactly the delivery it existed to prevent.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(0) });
+      const review = await pool.connect();
+      const provider = fakeProvider();
+      try {
+        const client = await pool.connect();
+        try {
+          await schedulerWith()(client, eventId, first.planId, contacts);
+        } finally {
+          client.release();
+        }
+        expect((await alertsOf(eventId)).every((row) => row.status === "pending")).toBe(true);
+
+        // A checklist review, holding the event exactly as `POST /checklist` does, mid-flight.
+        await review.query("BEGIN");
+        await review.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
+
+        await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+        // Nothing went out: the review owns the event, and the alerts it is about to reconcile are
+        // not delivered out from under it.
+        expect(provider.attempts).toHaveLength(0);
+        await review.query(
+          `UPDATE alerts SET status = 'cancelled' WHERE event_id = $1 AND status IN ('pending', 'failed')`,
+          [eventId],
+        );
+        await review.query("COMMIT");
+      } finally {
+        review.release();
+      }
+
+      expect((await alertsOf(eventId)).every((row) => row.status === "cancelled")).toBe(true);
+      // And once the review is done the poller is free again, with nothing left to send.
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+      expect(provider.attempts).toHaveLength(0);
+    });
+
+    it("brings a cancelled alert back when the requirement returns", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const original = await alertsOf(eventId);
+      await request(appWith(fakeProvider()))
+        .patch(`/api/events/${eventId}`)
+        .send({ event_date: "2026-10-16" });
+      await materialize(eventId);
+      expect(
+        (await alertsOf(eventId)).filter((row) => row.status === "cancelled").length,
+      ).toBeGreaterThan(0);
+
+      // Undo the move: the original dates are back, so the alerts scheduled for them are too.
+      await request(appWith(fakeProvider()))
+        .patch(`/api/events/${eventId}`)
+        .send({ event_date: "2026-09-16" });
+      await materialize(eventId);
+
+      const revived = new Map((await alertsOf(eventId)).map((row) => [row.idempotency_key, row]));
+      for (const row of original) {
+        expect(revived.get(row.idempotency_key)?.status).toBe("pending");
+      }
+    });
+  });
+
+  describe("AC 6 — the test-alert endpoint", () => {
+    it("fires one real alert immediately, labeled a test", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+
+      const response = await request(appWith(provider))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.alert.status).toBe("sent");
+      expect(response.body.alert.payload.test).toBe(true);
+      expect(response.body.alert.payload.subject).toBe("[TEST] PopEngine alert test");
+      expect(provider.delivered).toHaveLength(1);
+      expect(provider.delivered[0]?.body).toContain("TEST ALERT");
+      expect(provider.delivered[0]?.body).toContain(
+        "states no deadline, requirement or agency position",
+      );
+      // The recipient is not echoed back: the caller supplied it, and it is contact data.
+      expect(response.body.alert.recipient).toBeUndefined();
+    });
+
+    it("reports success when the poller delivered the test row first", async () => {
+      // The test row is written due immediately, so the poller can claim it in the gap before the
+      // endpoint sends it. The endpoint's own claim then returns nothing out of SKIP LOCKED — not
+      // because the alert failed, but because someone else was already delivering it.
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      const racing = Object.create(pool) as Pool;
+      racing.connect = pool.connect.bind(pool) as Pool["connect"];
+      racing.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (typeof text === "string" && text.includes("INSERT INTO alerts")) {
+          // Exactly the race, made deterministic: the poller takes the row before the endpoint
+          // gets to it, and delivers it.
+          await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+        }
+        return result;
+      }) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { database: racing, senders: provider.senders },
+        }),
+      )
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.alert.status).toBe("sent");
+      // Delivered once, by the poller. The endpoint reports the row, not its own part in it.
+      expect(provider.delivered).toHaveLength(1);
+    });
+
+    it("waits out a poller that is still mid-send rather than calling it a failure", async () => {
+      // The narrower half of the same race: the poller holds the row and has not finished. A
+      // single look sees `pending` and would report a test that is on its way as undeliverable.
+      const eventId = await createEvent(scenario("C"));
+      const holder = await pool.connect();
+      const claiming = Object.create(pool) as Pool;
+      claiming.connect = pool.connect.bind(pool) as Pool["connect"];
+      claiming.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (typeof text === "string" && text.includes("INSERT INTO alerts")) {
+          await holder.query("BEGIN");
+          await holder.query("SELECT id FROM alerts WHERE event_id = $1 FOR UPDATE", [eventId]);
+          setTimeout(() => {
+            void (async () => {
+              await holder.query(
+                "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE event_id = $1",
+                [eventId],
+              );
+              await holder.query("COMMIT");
+              holder.release();
+            })();
+          }, 250);
+        }
+        return result;
+      }) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { database: claiming, senders: fakeProvider().senders },
+        }),
+      )
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.alert.status).toBe("sent");
+    });
+
+    it("waits as long as a send is allowed to take before calling a test undelivered", async () => {
+      // The retry budget used to be a flat 600ms while the same delivery path allows a request to
+      // stay in flight for ten seconds. A poller that won the claim and then succeeded after a
+      // second produced a 502 moments before the successful send committed — the endpoint giving
+      // up sooner than the thing it is waiting for is allowed to take.
+      const eventId = await createEvent(scenario("C"));
+      const holder = await pool.connect();
+      const claiming = Object.create(pool) as Pool;
+      claiming.connect = pool.connect.bind(pool) as Pool["connect"];
+      claiming.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (typeof text === "string" && text.includes("INSERT INTO alerts")) {
+          await holder.query("BEGIN");
+          await holder.query("SELECT id FROM alerts WHERE event_id = $1 FOR UPDATE", [eventId]);
+          // Well past the old 600ms budget, and well inside what a provider request may take.
+          setTimeout(() => {
+            void (async () => {
+              await holder.query(
+                "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE event_id = $1",
+                [eventId],
+              );
+              await holder.query("COMMIT");
+              holder.release();
+            })();
+          }, 1_500);
+        }
+        return result;
+      }) as Pool["query"];
+
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { database: claiming, senders: fakeProvider().senders },
+        }),
+      )
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.alert.status).toBe("sent");
+    }, 20_000);
+
+    it("reports a delivery failure instead of claiming a send", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      provider.fail = "email provider rejected the send with status 422";
+
+      const response = await request(appWith(provider))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(502);
+      expect(response.body.alert.status).toBe("failed");
+      expect(response.body.alert.failureCount).toBe(1);
+    });
+
+    it("renders an SMS test as a labeled simulation rather than claiming delivery", async () => {
+      const eventId = await createEvent(scenario("C"));
+
+      const response = await request(appWith(fakeProvider()))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "sms", recipient: "+15555550123" });
+
+      expect(response.status).toBe(201);
+      expect(response.body.alert.payload.delivery).toMatchObject({
+        simulated: true,
+        label: SIMULATED_SMS_LABEL,
+      });
+    });
+
+    it("survives a later regeneration rather than being cancelled with the plan's alerts", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const provider = fakeProvider();
+      provider.fail = "provider down";
+      await request(appWith(provider))
+        .post(`/api/events/${eventId}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      await materialize(eventId);
+
+      const test = (await alertsOf(eventId)).find((row) => row.payload.test === true);
+      expect(test?.status).toBe("failed");
+    });
+
+    it("answers in JSON when the request fails outright", async () => {
+      const failing = Object.create(pool) as Pool;
+      failing.query = (() =>
+        Promise.reject(new Error("connection terminated unexpectedly"))) as Pool["query"];
+      const response = await request(
+        createApp({
+          database: pool,
+          intakeContract,
+          today: () => FIXTURE_TODAY,
+          alerts: { database: failing, senders: fakeProvider().senders },
+        }),
+      )
+        .post(`/api/events/${randomUUID()}/alerts/test`)
+        .send({ channel: "email", recipient: "organizer@example.test" });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "alert request failed" });
+    });
+
+    it("rejects a request that names no valid channel, recipient or event", async () => {
+      const eventId = await createEvent(scenario("C"));
+      const app = appWith(fakeProvider());
+
+      expect((await request(app).post("/api/events/not-a-uuid/alerts/test").send({})).status).toBe(
+        400,
+      );
+      expect(
+        (
+          await request(app)
+            .post(`/api/events/${eventId}/alerts/test`)
+            .send({ channel: "carrier-pigeon" })
+        ).body.error,
+      ).toBe("channel must be one of email, sms");
+      expect(
+        (
+          await request(app)
+            .post(`/api/events/${eventId}/alerts/test`)
+            .send({ channel: "email", recipient: " " })
+        ).body.error,
+      ).toBe("recipient must be a non-empty string");
+      expect(
+        (
+          await request(app)
+            .post(`/api/events/${randomUUID()}/alerts/test`)
+            .send({ channel: "email", recipient: "organizer@example.test" })
+        ).status,
+      ).toBe(404);
+      expect(
+        (await request(app).post(`/api/events/${eventId}/alerts/test`).send("[]").type("json"))
+          .status,
+      ).toBe(400);
+    });
+  });
+
+  describe("AC 5 — a simulated send is visible as one", () => {
+    it("reports the SMS simulation label on the checklist an organizer reads", async () => {
+      // AGENTS.md permits the simulation only while it is labeled. The label lived on the alert
+      // row and nothing an organizer can reach read it back, so in the A2P-pending configuration
+      // every SMS was recorded `sent` and looked delivered from every surface a person uses.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId);
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, { email: null, phone: "+15555550123" });
+      } finally {
+        client.release();
+      }
+      const provider = fakeProvider();
+      const before = await request(appWith(provider)).get(`/api/events/${eventId}/checklist`);
+      expect(before.body.simulatedAlertDeliveries).toEqual([]);
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      const after = await request(appWith(provider)).get(`/api/events/${eventId}/checklist`);
+      expect(after.body.simulatedAlertDeliveries).toEqual([
+        { channel: "sms", label: SIMULATED_SMS_LABEL, sentCount: 2 },
+      ]);
+    });
+
+    it("says nothing when every send was live", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      await createAlertPoller({ database: pool, senders: fakeProvider().senders }).tick();
+
+      const response = await request(appWith(fakeProvider())).get(
+        `/api/events/${eventId}/checklist`,
+      );
+      expect(response.body.simulatedAlertDeliveries).toEqual([]);
+    });
+  });
+
+  describe("spec edge cases", () => {
+    it("says a catch-up reminder is late rather than claiming its configured timing", async () => {
+      // A checklist created inside the window sends the seven-day reminder immediately — which is
+      // correct, and means it is NOT going out seven days before anything. Saying it is would be a
+      // claim about PopEngine's own behaviour that the row itself contradicts.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [7]);
+
+      const alert = (await alertsOf(eventId))[0];
+      expect(alert?.payload.body).toContain(
+        "This is PopEngine's 7 days-before reminder, sent now because your checklist was created " +
+          "after that day had already passed.",
+      );
+      expect(alert?.payload.body).not.toContain("PopEngine sends this reminder 7 days before");
+      // The policy label survives the rewording: that part is required whatever the timing.
+      expect(alert?.payload.body).toContain("not an agency deadline");
+    });
+
+    it("keeps the plain wording on a reminder that will go out on its own day", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+      const reminder = (await alertsOf(eventId)).find(
+        (row) => row.alert_type === "deadline_reminder",
+      );
+      expect(reminder?.payload.body).toContain("PopEngine sends this reminder");
+      expect(reminder?.payload.body).not.toContain("sent now because your checklist");
+    });
+
+    it("sends a reminder whose send_at has already passed once, instead of dropping it", async () => {
+      // A checklist created inside the reminder window: the filing date is still ahead, the
+      // reminder day is behind.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      const rows = await alertsOf(eventId);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.send_at.getTime() < Date.now())).toBe(true);
+      const provider = fakeProvider();
+
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+      await poller.tick();
+      await poller.tick();
+
+      expect(provider.attempts).toHaveLength(2);
+      expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+    });
+
+    it("keeps retrying through a provider outage without losing an alert", async () => {
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId);
+      const provider = fakeProvider();
+      provider.fail = "email provider unreachable: ECONNREFUSED";
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      // The first retry is immediate: one failure is usually a blip, and waiting on it would spend
+      // the delivery budget on a provider that is probably fine.
+      await poller.tick();
+      await poller.tick();
+
+      const outage = await alertsOf(eventId);
+      expect(outage.every((row) => row.status === "failed")).toBe(true);
+      expect(outage.every((row) => row.failure_count === 2)).toBe(true);
+
+      // From the second failure the row steps out of the batch for a while, so a destination that
+      // will never accept anything stops consuming every scan. Nothing is dropped — the row is
+      // still there, still failed, still carrying its count.
+      await poller.tick();
+      expect((await alertsOf(eventId)).every((row) => row.failure_count === 2)).toBe(true);
+
+      // And it comes straight back the moment it is eligible again, which is what the spec's
+      // outage edge case asks for: the poller keeps retrying and nothing is lost.
+      await pool.query("UPDATE alerts SET next_attempt_at = NULL WHERE event_id = $1", [eventId]);
+      provider.fail = null;
+      await poller.tick();
+      expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+    });
+  });
+});
+
+describe("the day an alert is sent on", () => {
+  it("sends in the jurisdiction's morning rather than at UTC midnight", () => {
+    // A deadline is a calendar day in the city that publishes it. 09:00 in New York is 13:00Z in
+    // summer and 14:00Z in winter, and neither is the previous evening — which UTC midnight is.
+    expect(instantAtLocalHour("US-NY-NYC", "2026-08-19", 9).toISOString()).toBe(
+      "2026-08-19T13:00:00.000Z",
+    );
+    expect(instantAtLocalHour("US-NY-NYC", "2026-01-19", 9).toISOString()).toBe(
+      "2026-01-19T14:00:00.000Z",
+    );
+  });
+
+  it("refuses a jurisdiction with no mapped clock rather than assuming UTC", () => {
+    expect(() => instantAtLocalHour("US-CA-LA", "2026-08-19", 9)).toThrow(
+      'no local time zone is mapped for jurisdiction "US-CA-LA"',
+    );
+  });
+});
+
+// The delivery adapters need no database: they are the seam between the poller and a provider.
+describe("F-203 delivery channels (AC 5)", () => {
+  const message: AlertMessage = {
+    recipient: "organizer@example.test",
+    subject: "File your Special Event Permit by 2026-08-26",
+    body: "…",
+    idempotencyKey: "event:item:deadline_reminder:email:2026-08-19",
+  };
+
+  it("sends email through Resend and hands it the idempotency key", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const sender = createResendEmailSender({
+      apiKey: "re_test",
+      from: "PopEngine <noreply@example.test>",
+      fetch: (async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof globalThis.fetch,
+    });
+
+    expect(await sender(message)).toEqual({ simulated: false, label: null, provider: "resend" });
+    expect(calls[0]?.url).toBe("https://api.resend.com/emails");
+    expect((calls[0]?.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      message.idempotencyKey,
+    );
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      from: "PopEngine <noreply@example.test>",
+      to: ["organizer@example.test"],
+      subject: message.subject,
+      text: message.body,
+    });
+  });
+
+  it("treats a provider rejection as a retryable failure and echoes no provider body", async () => {
+    const sender = createResendEmailSender({
+      apiKey: "re_test",
+      from: "PopEngine <noreply@example.test>",
+      fetch: (async () =>
+        new Response(JSON.stringify({ message: "organizer@example.test is suppressed" }), {
+          status: 422,
+        })) as unknown as typeof globalThis.fetch,
+    });
+
+    const error = await sender(message).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(AlertDeliveryError);
+    expect((error as Error).message).toBe("email provider rejected the send with status 422");
+    // The provider's body can echo the recipient; it is contact data and does not go in a log.
+    expect((error as Error).message).not.toContain("organizer@example.test");
+  });
+
+  it("abandons a provider that accepts the connection and never answers", async () => {
+    // The poller sends sequentially with the row's transaction open, so an unbounded request does
+    // not stall one alert — it stalls every alert behind it, past the two-minute delivery bound.
+    const sender = createResendEmailSender({
+      apiKey: "re_test",
+      from: "PopEngine <noreply@example.test>",
+      timeoutMs: 25,
+      fetch: ((_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          // What a real half-open socket does under an abort signal: nothing, until the abort.
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        })) as unknown as typeof globalThis.fetch,
+    });
+
+    const started = Date.now();
+    const error = await sender(message).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(AlertDeliveryError);
+    expect((error as Error).message).toBe("email provider did not respond within 25ms");
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("treats an unreachable provider as a retryable failure", async () => {
+    const sender = createResendEmailSender({
+      apiKey: "re_test",
+      from: "PopEngine <noreply@example.test>",
+      fetch: (async () => {
+        throw new Error("socket hang up");
+      }) as unknown as typeof globalThis.fetch,
+    });
+
+    await expect(sender(message)).rejects.toThrow("email provider unreachable: socket hang up");
+  });
+
+  it("fails rather than simulating when email is not configured", async () => {
+    await expect(unconfiguredEmailSender()(message)).rejects.toThrow(AlertDeliveryError);
+  });
+
+  it("renders SMS as a labeled simulation while A2P registration is outstanding", async () => {
+    const seen: AlertMessage[] = [];
+    const delivery = await createSimulatedSmsSender((sent) => seen.push(sent))(message);
+
+    expect(delivery).toEqual({
+      simulated: true,
+      label: SIMULATED_SMS_LABEL,
+      provider: "simulated",
+    });
+    expect(SIMULATED_SMS_LABEL).toContain("not delivered");
+    expect(seen).toEqual([message]);
+  });
+
+  it("picks live email only when both credentials are present, and always simulates SMS", async () => {
+    const unconfigured = sendersFromEnv({});
+    await expect(unconfigured.email(message)).rejects.toThrow("RESEND_API_KEY");
+    await expect(sendersFromEnv({ RESEND_API_KEY: "re_test" }).email(message)).rejects.toThrow(
+      "RESEND_API_KEY",
+    );
+    expect((await unconfigured.sms(message)).simulated).toBe(true);
+
+    // Configured means a live sender rather than the refusing one. It is not called here: the
+    // live adapter is covered above against an injected fetch, and this suite makes no network
+    // requests.
+    const configured = sendersFromEnv({ RESEND_API_KEY: "re_test", SMTP_FROM: "a@b.test" });
+    expect(configured.email).not.toBe(unconfigured.email);
+    expect((await configured.sms(message)).simulated).toBe(true);
+  });
+});

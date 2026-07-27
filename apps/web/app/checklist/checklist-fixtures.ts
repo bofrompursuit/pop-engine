@@ -165,5 +165,11 @@ export const checklistBody = (
   },
   items: [],
   contextItems: [],
+  // Present on every real response, so it is present here: `checklistView` returns it
+  // unconditionally and empty is the answer whenever nothing was simulated (F-203 AC 5).
+  simulatedAlertDeliveries: [],
+  // Likewise: the contact store answers for every event, and nulls are what an event nobody has
+  // given a contact for looks like (migration 009).
+  alertContacts: { email: null, phone: null },
   ...overrides,
 });

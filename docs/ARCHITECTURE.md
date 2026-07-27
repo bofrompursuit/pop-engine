@@ -185,6 +185,7 @@ _Unknown-capable fields use explicit `unknown` values, never NULL-as-unknown. Ed
 | status            | text CHECK IN (pending, sent, failed, cancelled)                      | `cancelled` for alerts obsoleted by plan regeneration                                                                        |
 | sent_at           | timestamptz, nullable                                                 |                                                                                                                              |
 | payload           | jsonb                                                                 | rendered message content                                                                                                     |
+| failure_count     | integer NOT NULL default 0                                            | delivery attempts that failed (migration 008); a failed alert is retried on later ticks, never dropped (F-203 edge case)     |
 
 ### rsvps _(stretch, F-302 — in the day-1 schema so stretch needs no migration)_
 

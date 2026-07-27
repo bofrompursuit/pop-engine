@@ -27,9 +27,10 @@ import {
   SCENARIO_INTAKE_FIXTURES,
   fixtureSubmission,
 } from "@pop-engine/engine/fixtures";
+import { createAlertScheduler, type AlertScheduler } from "./alerts";
 import { createApp } from "./app";
 import { createPlanService } from "./plan";
-import { loadRuleset, rulesFilePath } from "./ruleset";
+import { deadlineReminderOffsets, loadRuleset, rulesFilePath } from "./ruleset";
 import { attachmentDisposition, DocumentStorageError, type DocumentStorage } from "./storage";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
@@ -151,6 +152,8 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
   let pool: Pool;
   let ruleset: EngineRuleset;
   let intakeContract: IntakeContract;
+  /** `config.alert_offsets.deadline_reminder.days_before`, read from the artifact (F-203). */
+  let reminderOffsets: number[] = [];
   const createdEventIds: string[] = [];
 
   // The answer key's scenarios are dated against its own clock, and the fixture windows carry no
@@ -160,13 +163,25 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     holidays: [],
   });
 
+  /**
+   * F-203 runs inside the materialization these tests drive. No test here supplies a contact, so
+   * the scheduler resolves no channel and writes no alert row — the F-202 behaviour below is
+   * unchanged. Scheduling itself is covered in `alerts.test.ts`.
+   */
+  const scheduleAlerts: AlertScheduler = (...args) =>
+    createAlertScheduler({
+      reminderDaysBefore: reminderOffsets,
+      slackWarningDays: ruleset.slackWarningDays,
+      jurisdiction: ruleset.jurisdiction,
+    })(...args);
+
   const appWith = (storage: DocumentStorage) =>
     createApp({
       database: pool,
       intakeContract,
       today: () => FIXTURE_TODAY,
       planService: createPlanService(pool, ruleset, fixtureCalendar, () => FIXTURE_TODAY),
-      checklist: { database: pool, storage },
+      checklist: { database: pool, storage, scheduleAlerts },
     });
 
   /** An event created through the intake endpoint, so it is exactly what F-101 would store. */
@@ -297,7 +312,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         database: pool,
         intakeContract,
         today: () => FIXTURE_TODAY,
-        checklist: { database, storage },
+        checklist: { database, storage, scheduleAlerts },
       }),
     )
       .post(`/api/checklist-items/${checklistItemId}/documents`)
@@ -322,11 +337,19 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: databaseUrl });
     ruleset = parseEngineRuleset(JSON.parse(await readFile(rulesFilePath(), "utf8")));
-    intakeContract = parseIntakeContract((await loadRuleset()).document);
+    const published = await loadRuleset();
+    intakeContract = parseIntakeContract(published.document);
+    reminderOffsets = deadlineReminderOffsets(published);
   });
 
   afterAll(async () => {
     if (createdEventIds.length > 0) {
+      // Before the checklist items they hang off: F-203 alerts reference both (migration 001).
+      await pool.query("DELETE FROM alerts WHERE event_id = ANY($1)", [createdEventIds]);
+      // Before the events they key on: contacts are event-scoped (migration 009).
+      await pool.query("DELETE FROM event_alert_contacts WHERE event_id = ANY($1)", [
+        createdEventIds,
+      ]);
       await pool.query(
         `DELETE FROM documents WHERE checklist_item_id IN (
            SELECT checklist.id FROM checklist_items AS checklist
@@ -2119,7 +2142,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
           database: pool,
           intakeContract,
           today: () => FIXTURE_TODAY,
-          checklist: { database: failing, storage: stubborn },
+          checklist: { database: failing, storage: stubborn, scheduleAlerts },
         }),
       )
         .post(`/api/checklist-items/${body.items[0]?.id}/documents`)

@@ -30,6 +30,7 @@ import type {
   FindingKind,
   VerificationStatus,
 } from "@pop-engine/engine";
+import { alertContacts, parseContacts, simulatedDeliveries, type AlertScheduler } from "./alerts";
 import { calendarDateFrom, renderingKey, PlanIntegrityError, type FindingRendering } from "./plan";
 import { DocumentStorageError, type DocumentStorage } from "./storage";
 
@@ -131,6 +132,13 @@ function uploadKeyOf(supplied: string | undefined): string | null {
 export type ChecklistDependencies = {
   database: Pool;
   storage: DocumentStorage;
+  /**
+   * F-203. Materializing a checklist is also where its alerts are computed, so the two run in one
+   * transaction: a checklist whose reminders silently did not get written is the failure mode
+   * F-202's spec ("creation also schedules F-203 alerts") is guarding against. Required rather
+   * than optional for the same reason — an absent scheduler would schedule nothing, quietly.
+   */
+  scheduleAlerts: AlertScheduler;
 };
 
 type Queryable = {
@@ -579,6 +587,16 @@ async function checklistView(database: Queryable, eventId: string, plan: LatestP
     // in that state; a read says so rather than presenting the plan as current.
     planStale: plan.eventRevision < plan.currentRevision,
     statusRollup,
+    // F-203: channels that reported an alert sent without delivering it, with the label that says
+    // so. Empty in every configuration where nothing is simulated. It is read here rather than
+    // from a new endpoint because a simulated send has to be visible where the organizer works,
+    // and this is that surface (AGENTS.md: a simulation is only permissible while it is labeled).
+    simulatedAlertDeliveries: await simulatedDeliveries(database, eventId),
+    // F-203: where this event's alerts go, so the organizer can see and correct it. Read from the
+    // contact store rather than off an alert row — an alert records where one message went, which
+    // is a different fact with a different lifetime, and is why nothing was ever scheduled through
+    // the product before the store existed.
+    alertContacts: await alertContacts(database, eventId),
     items: view,
     // Advisories, notifications, prohibitions and notes: shown for context, not tracked.
     contextItems: latestItems
@@ -823,7 +841,7 @@ async function metadataOutcome(
 }
 
 export function createChecklistRouter(dependencies: ChecklistDependencies): Router {
-  const { database, storage } = dependencies;
+  const { database, storage, scheduleAlerts } = dependencies;
   const router = Router();
 
   router.post(
@@ -850,6 +868,16 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
             "planId is required and must be the uuid of the plan being displayed; a review " +
             "records which plan the organizer read, so the server will not choose one for it",
         });
+        return;
+      }
+
+      // Where the alerts go (F-203 Inputs: contact fields are entered at checklist creation, since
+      // there is no account to read them off in the MVP). Read from the same body as the plan id
+      // above, and optional: a checklist without a contact is still a checklist, and the response
+      // reports that nothing was scheduled rather than refusing the conversion.
+      const parsed = parseContacts(req.body);
+      if ("error" in parsed) {
+        res.status(400).json({ error: parsed.error });
         return;
       }
 
@@ -908,10 +936,14 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
           return;
         }
         const created = await materialize(client, eventId, plan.id);
+        // After materialization, because reminders hang off the checklist rows it just wrote, and
+        // inside the same transaction, so the checklist and its alerts commit together (AC 7: a
+        // regeneration reviewed here is also where pending alerts are recomputed).
+        const alerts = await scheduleAlerts(client, eventId, plan.id, parsed.contacts);
         const view = await checklistView(client, eventId, plan);
         await client.query("COMMIT");
         // A second call creates nothing and returns the checklist that already exists.
-        res.status(created > 0 ? 201 : 200).json(view);
+        res.status(created > 0 ? 201 : 200).json({ ...view, alerts });
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;

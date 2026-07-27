@@ -608,6 +608,9 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
         "checklist_acknowledgements",
         "checklist_items",
         "documents",
+        // F-203: where an event's alerts go, which is an event-scoped mutable fact and not the
+        // per-message record `alerts.recipient` holds (migration 009).
+        "event_alert_contacts",
         "events",
         "permit_plan_items",
         "permit_plans",
@@ -823,21 +826,26 @@ describe.runIf(databaseUrl.length > 0)("migration 001 and rules sync", () => {
       [otherEventId],
     );
 
+    // `cancelled`, like the row above, so it is never DUE. This suite and the F-203 poller suite
+    // share one database and vitest runs their files in parallel: a row left `pending` with
+    // `send_at = current_timestamp` is a real due alert, and a tick running in the other worker
+    // will claim and deliver it. What is under test here is the trigger, which does not care
+    // about status.
     await database.query(
       `INSERT INTO alerts
         (id, event_id, checklist_item_id, alert_type, channel, recipient,
-         idempotency_key, send_at, payload)
+         idempotency_key, send_at, status, payload)
        VALUES ($1, $2, $3, 'deadline_reminder', 'email', 'demo@example.com',
-               $4, current_timestamp, '{}'::jsonb)`,
+               $4, current_timestamp, 'cancelled', '{}'::jsonb)`,
       [randomUUID(), eventId, checklistItemId, `${eventId}:checklist`],
     );
     await expect(
       database.query(
         `INSERT INTO alerts
           (id, event_id, checklist_item_id, alert_type, channel, recipient,
-           idempotency_key, send_at, payload)
+           idempotency_key, send_at, status, payload)
          VALUES ($1, $2, $3, 'deadline_reminder', 'email', 'demo@example.com',
-                 $4, current_timestamp, '{}'::jsonb)`,
+                 $4, current_timestamp, 'cancelled', '{}'::jsonb)`,
         [randomUUID(), otherEventId, checklistItemId, `${otherEventId}:wrong-checklist`],
       ),
     ).rejects.toThrow(/alert checklist item must belong to event/);

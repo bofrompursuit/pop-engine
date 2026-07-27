@@ -14,6 +14,9 @@ import {
 } from "./checklist-api";
 import { checklistBody, planContext, STREET_MEDIUM, trackedItem } from "./checklist-fixtures";
 
+/** An event nobody has given a contact for, which is what the store answers by default. */
+const NO_CONTACT = { email: null, phone: null };
+
 // `fetch` is stubbed; the api's own behavior is covered by apps/api. What is pinned here is the
 // request this page makes and how each answer is reported.
 
@@ -177,7 +180,7 @@ describe("createChecklist", () => {
     const body = checklistBody({ created: true, items: [trackedItem()] });
     const fetchMock = stubFetch(async () => jsonResponse(201, body));
 
-    const result = await createChecklist("https://api.example.com", "event-1", "plan-1");
+    const result = await createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT);
 
     expect(result).toMatchObject({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -193,6 +196,43 @@ describe("createChecklist", () => {
     );
   });
 
+  it("sends the contact with the conversion, because that is what schedules the alerts", async () => {
+    // This call used to carry no body at all, so the api parsed no contacts, resolved no channel
+    // and scheduled nothing: F-203 was unreachable from the product and only a direct API caller
+    // could exercise it.
+    const fetchMock = stubFetch(async () => jsonResponse(201, checklistBody({ created: true })));
+
+    await createChecklist("https://api.example.com", "event-1", "plan-1", {
+      email: "organizer@example.test",
+      phone: "+15555550123",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      planId: "plan-1",
+      contactEmail: "organizer@example.test",
+      contactPhone: "+15555550123",
+    });
+  });
+
+  it("sends an emptied box as null, which is how the api is told to clear it", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(201, checklistBody({ created: true })));
+
+    await createChecklist("https://api.example.com", "event-1", "plan-1", {
+      email: "a@b.test",
+      phone: "",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // "" is a browser form reporting a field the organizer cleared, and null is the api's word
+    // for that. Sending "" would be refused as not a phone number.
+    expect(JSON.parse(String(init.body))).toEqual({
+      planId: "plan-1",
+      contactEmail: "a@b.test",
+      contactPhone: null,
+    });
+  });
+
   // Edge case: created twice is idempotent. The api answers 200 with the checklist that already
   // exists rather than 201 with a second one, and the client treats both as the current checklist.
   it("takes a 200 as the existing checklist, not as a second one", async () => {
@@ -202,7 +242,7 @@ describe("createChecklist", () => {
     });
     stubFetch(async () => jsonResponse(200, existing));
 
-    const result = await createChecklist("https://api.example.com", "event-1", "plan-1");
+    const result = await createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT);
 
     expect(result.ok && result.checklist.items.map((item) => item.id)).toEqual(["item-1"]);
   });
@@ -212,7 +252,7 @@ describe("createChecklist", () => {
       jsonResponse(409, { error: "plan was generated against revision 1, but the event is at 2" }),
     );
 
-    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toEqual({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT)).resolves.toEqual({
       ok: false,
       noPlan: false,
       message: "plan was generated against revision 1, but the event is at 2",
@@ -224,7 +264,7 @@ describe("createChecklist", () => {
       throw new TypeError("network down");
     });
 
-    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT)).resolves.toMatchObject({
       ok: false,
       message: "The API could not be reached.",
     });
@@ -233,7 +273,7 @@ describe("createChecklist", () => {
   it("reports a 404 as the event having no plan to convert", async () => {
     stubFetch(async () => jsonResponse(404, {}));
 
-    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT)).resolves.toMatchObject({
       ok: false,
       noPlan: true,
     });
@@ -242,7 +282,7 @@ describe("createChecklist", () => {
   it("refuses a created checklist it cannot read", async () => {
     stubFetch(async () => jsonResponse(201, { created: "yes" }));
 
-    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1", NO_CONTACT)).resolves.toMatchObject({
       ok: false,
       message: "The API returned a checklist this page cannot read.",
     });
