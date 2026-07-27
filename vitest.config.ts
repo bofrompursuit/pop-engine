@@ -22,6 +22,16 @@ export default defineConfig({
       "apps/web/app/**/*.test.{ts,tsx}",
       "scripts/**/*.test.mjs",
     ],
+    // Only `scripts/check-baseline-drift.test.mjs` runs concurrent cases today, and each one spawns
+    // a node process that loads the TypeScript compiler. The default of 5 saturated a two-core CI
+    // runner well enough to time out an unrelated 5-second database test in `checklist.test.ts`,
+    // once, on a run where every other file passed. Measured on this tree, not predicted: that file
+    // runs 122 cases in 5.6s at five and 12.0s at two, against 12.8s for the 110-case synchronous
+    // version it replaced. Two therefore costs most of the parallel win and still does not regress,
+    // and the property that actually fixed the reporter timeout is the awaiting rather than the
+    // parallelism, so buying safety with it is cheap.
+    maxConcurrency: 2,
+
     // Workspace packages export TypeScript source; force Vite to transform them.
     server: { deps: { inline: ["@pop-engine/engine"] } },
     coverage: {
