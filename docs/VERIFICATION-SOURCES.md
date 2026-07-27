@@ -103,7 +103,7 @@ These are the items where verification is likely to _change_ the rules file, not
 
 ## Round 2 — 2026-07-22 (verification of the external rules-v1 critique)
 
-A second fetch-confirmed pass run to verify the external (Codex) assessment of ruleset v1. Same method and caveats as Round 1. These findings are the evidence basis for `rules/nyc-rules.v2.7.json`.
+A second fetch-confirmed pass run to verify the external (Codex) assessment of ruleset v1. Same method and caveats as Round 1. These findings are the evidence basis for `rules/nyc-rules.v2.8.json`.
 
 ### Confirmed (quote on file, URL fetched)
 

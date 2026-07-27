@@ -124,7 +124,7 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
     const response = await request(appWith()).post(`/api/events/${eventId}/plan`);
 
     expect(response.status).toBe(201);
-    expect(response.body.rulesetVersion).toBe("nyc.v2.7");
+    expect(response.body.rulesetVersion).toBe("nyc.v2.8");
     expect(response.body.eventRevision).toBe(1);
     expect(response.body.verdict).toBe("INFEASIBLE");
     expect(response.body.findings.map((finding: { ruleIds: string[] }) => finding.ruleIds)).toEqual(
@@ -405,7 +405,14 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
       food_present: false,
       food_vendor_count: null,
       selling_anything: false,
-      amplified_sound: false,
+      // Amplified and audible from the street on purpose, to keep this test's second half alive.
+      // It used to read DOB-ASSEMBLY-001 as the finding that dates normally while the calendar is
+      // unpublished; nyc.v2.8 makes that rule business-day, so without a sound permit this intake
+      // has NO calendar-dated finding left and the "everything else still dates" guarantee would
+      // have silently lost its subject rather than failed. NYPD-SOUND-001 publishes 5 calendar
+      // days, needs no holiday list, and is therefore the subject that survives the bump.
+      amplified_sound: true,
+      sound_audible_from_public_way: "yes",
       alcohol: true,
       venue_license_covers_event_area: "no",
     });
@@ -427,13 +434,28 @@ describe.runIf(databaseUrl.length > 0)("plan API (F-201)", () => {
         (entry: { ruleIds: string[] }) => entry.ruleIds,
       ),
     ).toContainEqual(["SLA-ONEDAY-001"]);
-    // Everything that needs no business-day math still carries its real date. DOB-ASSEMBLY-001
-    // publishes an exclusive 10-day bound ("earlier than 10 days before the event"), so for an
-    // event on 2026-08-26 the last valid filing day is the 15th, not the 16th.
+    // DOB-ASSEMBLY-001 is now undatable here too, and that is the nyc.v2.8 correction rather than a
+    // regression. It used to publish 10 CALENDAR days on an exclusive bound and dated to 2026-08-15
+    // with no holiday list needed. v2.8 corrects the unit to 10 BUSINESS days on an inclusive bound
+    // against TPPN #07/96 and AC Table 28-112.8, so it now needs the same unpublished calendar
+    // SLA-ONEDAY-001 does and declines to date for the same reason. Asserted explicitly, both
+    // fields, because "no date" is exactly what a broken deadline also looks like: the point is
+    // that it is NOT silently dropped and NOT silently dated from weekday-only arithmetic.
     const assembly = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
       finding.ruleIds.includes("DOB-ASSEMBLY-001"),
     );
-    expect(assembly.latestApplyDate).toBe("2026-08-15");
+    expect(assembly.latestApplyDate).toBeNull();
+    expect(assembly.deadlineStatus).toBe("not_calculable");
+    expect(assembly.notes).toContain("confirm with agency");
+    // And the guarantee this half exists for, now carried by a rule the bump did not touch:
+    // everything that needs no business-day math still carries its real date. NYPD-SOUND-001
+    // publishes "at least 5 days", inclusive, so for an event on 2026-08-26 the last valid filing
+    // day is the 21st.
+    const sound = degraded.body.findings.find((finding: { ruleIds: string[] }) =>
+      finding.ruleIds.includes("NYPD-SOUND-001"),
+    );
+    expect(sound.latestApplyDate).toBe("2026-08-21");
+    expect(sound.deadlineStatus).toBe("on_track");
 
     // With a published list the same finding dates for real, which is what the fixtures exercise.
     const computed = await request(appWith()).post(`/api/events/${eventId}/plan`);

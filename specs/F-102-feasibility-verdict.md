@@ -2,7 +2,7 @@
 
 **Status:** APPROVED (2026-07-24) · **Reviewer/approver:** product owner · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 1) · **Lane:** Dev 1 · **Depends on:** F-201 (same engine invocation) · **Feeds:** plan UI, F-203 slack warnings
-**Updated:** 2026-07-22 against nyc.v2.1 (layered status model, AD-10); retargeted to nyc.v2.5 on 2026-07-25, to nyc.v2.6 on 2026-07-25, and to nyc.v2.7 on 2026-07-26, none with a verdict change.
+**Updated:** 2026-07-22 against nyc.v2.1 (layered status model, AD-10); retargeted to nyc.v2.5 on 2026-07-25, to nyc.v2.6 on 2026-07-25, and to nyc.v2.7 on 2026-07-26, none with a verdict change. Retargeted to nyc.v2.8 on 2026-07-26, which DOES move a deadline status: DOB-ASSEMBLY-001's filing lead becomes ten BUSINESS days on an inclusive bound, so in the running product that finding renders NOT_CALCULABLE rather than a dated status, because business-day math needs the holiday calendar this repo deliberately does not publish (SPEC-CONFLICT #130). No verdict rule, status definition or threshold in this spec changes; NOT_CALCULABLE already never counts toward FEASIBLE.
 
 ## User Story
 

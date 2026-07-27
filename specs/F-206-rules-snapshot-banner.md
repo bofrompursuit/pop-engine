@@ -14,7 +14,7 @@ As an independent organizer, I can see which published rules snapshot produced m
 
 ## Outputs
 
-- A banner on every plan view: "Rules snapshot nyc.v2.7 · published July 26, 2026". Never "verified as of" — a snapshot date means published-on, not all-facts-verified-on.
+- A banner on every plan view: "Rules snapshot nyc.v2.8 · published July 26, 2026". Never "verified as of" — a snapshot date means published-on, not all-facts-verified-on.
 - Per-line verification-status rendering plus either citation click-through or the explicit source-not-established COVERAGE_GAP state.
 - Per-line "last verified" date only when the immutable plan item stored one; never substitute the ruleset snapshot date.
 
