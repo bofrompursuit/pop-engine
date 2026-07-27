@@ -1,11 +1,15 @@
 # Measuring the three-state `asked_when` change (issue #108)
 
-**Status:** MEASUREMENT ONLY. No engine, spec, fixture, answer-key or manifest change is proposed
-here, and none is included in the branch that carries this file. Issue #108 asks a semantics
-question and says fixture impact needs measuring before it can be decided. This is that
-measurement. The decision is the product owner's.
+**Status:** PROPOSED
 
-Measured against `origin/main` at 46971a0, ruleset `nyc-rules.v2.8.json`, Node v24.18.0.
+This document is a MEASUREMENT and proposes no change. It recommends no option, and the branch
+carrying it contains no engine, spec, fixture, schema or manifest change. Issue #108 asks a
+semantics question and says fixture impact needs measuring before it can be decided; this is that
+measurement, and the decision is the product owner's. The status above is the governance §3 state,
+which is about whether an artifact may be implemented, and there is nothing here to implement.
+
+Measured against `origin/main` at 46971a0, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, with the
+throwaway implementation described in section 2 reverted before publication.
 
 ---
 
@@ -147,26 +151,52 @@ did not, because a field that is unknown *for want of its gate's answer* is not 
 supplying that field's own value, so the resolver branched on a field it could not settle and the
 unknown set stopped shrinking.
 
-**Second attempt**, adding one rule: an indeterminate field whose own value *is* present counts as
-answered. With that, plus the two fixture lines:
+**Second attempt**, and rounds 1 and 2 of this document reported its result as the headline. It
+added a rule that an indeterminate field whose own value *is* present counts as answered. That
+terminates and passes 1161/1161, **but it is a different and narrower change than issue #108 asks
+for**, because under it the three states only diverge when the gate *and* the dependent are both
+unanswered. Reporting its number as "the answer key does not move" was measuring one thing and
+quoting it about another, and the number was relayed to the product owner and to an external
+reviewer on that basis.
 
-> **Full suite: 1161/1161 pass. Zero answer-key expectations move.**
+**Third attempt, round 3: preserve #108's semantics exactly and fix the recursion at its actual
+cause.** The dependent resolves unknown whatever its own stored value is, which is the requested
+behaviour. The non-termination was never in the semantics; it was in `evaluateConditional`
+branching on a field it could not settle. A dependent that is unknown *for want of its gate's
+answer* is not resolved by supplying the dependent's value, so that branch never shrank the unknown
+set. **Branching on the blocking GATE instead does shrink it**, because every branch answers a gate
+and there are finitely many gates.
 
-The measured source diff is **one file, +32/-3, `packages/engine/src/conditions.ts`**, plus two
-fixture lines. `visibility.ts` needed no change at all (see the note under 4).
+With that, plus the two fixture lines:
 
-**Three caveats on that number, because it is the one likely to be quoted.**
+> **Full suite: 1161/1161 pass, under the semantics issue #108 actually proposes. Zero answer-key
+> expectations move.**
 
-1. The second attempt's extra rule is a real semantic choice the issue does not discuss: it decides
-   that a stored answer overrides an unanswered gate. It is defensible (if the dependent has an
-   answer, the question was evidently once asked) but it means the three states only diverge when
-   the gate *and* the dependent are both unanswered. That is a narrower change than the issue
-   describes.
-2. Without that rule, the plan generator does not terminate on 5 existing fixtures. So the issue's
-   "Scope if changed" list is incomplete: `verdict.ts` belongs on it, not only `visibility.ts` and
-   `conditions.ts`.
-3. The suite passing is evidence about the fixtures, not about production rows. Every failure the
+Verified live rather than inferred from a green suite, because a change that does nothing also
+passes: with `battery_present` absent, `FDNY-GENERATOR-001` now lists on a plan where it previously
+did not; with `battery_present: false` it does not list. The semantics bite and the answer key
+still does not move.
+
+The measured source diff is **two files**: `packages/engine/src/conditions.ts` (+47/-3) and
+`packages/engine/src/verdict.ts` (+18/-2), plus the two fixture lines. `visibility.ts` needed no
+change at all (see the note under 4).
+
+**Two caveats on that number, because it is the one likely to be quoted.**
+
+1. **`verdict.ts` is not optional.** The issue's "Scope if changed" list names `visibility.ts` and
+   `conditions.ts`; the branching change belongs on it too, and without it the plan generator does
+   not terminate. That is the finding rounds 1 and 2 buried by working around it in the semantics
+   instead.
+2. The suite passing is evidence about the fixtures, not about production rows. Every failure the
    change produced came from a state that, as measured in section 3, the API cannot create.
+
+**Failure counts across the three attempts**, so the shape of the correction is visible:
+
+| Attempt | Semantics | Failures before fixture fix | After | Non-termination |
+| --- | --- | --- | --- | --- |
+| 1 | as #108 asks | 15 | 5 | 5 fixtures |
+| 2 | narrower | 15 | 0 | none |
+| 3 | as #108 asks | 6 | **0** | none |
 
 ## 3. Whether the case can arise today
 
@@ -252,17 +282,48 @@ A NULL column plus the ruleset already determines the answer: a NULL the registr
 SCOPE is unanswered, and the same NULL under a false `asked_when` is not-asked. The API loader can
 derive an `unanswered` member on the way in, exactly as the measured scope resolver derives it now.
 
-The derivation is unambiguous for **every one of the 11 gates**, checked rather than assumed:
+The derivation is unambiguous for **every one of the 11 gates**, checked rather than assumed. The
+table below is stated **under the proposed three-state semantics**, which matters: rounds 1 and 2
+of this document printed it under TODAY's semantics, where an unanswered gate collapses to false,
+and then used it to argue for the new representation. That reused the collapse the change exists to
+remove, and it understated the runtime state.
 
-| Row | `battery_present` | `obstructs_public_way` | `sapo_event_type` |
-| --- | --- | --- | --- |
-| `location_type = street` | in scope -> **unanswered** | in scope -> **unanswered** | out of scope -> not asked |
-| `location_type = park` | in scope -> **unanswered** | out of scope -> not asked | out of scope -> not asked |
+For `location_type = street` with `obstructs_public_way` NULL:
+
+| Field | Today (two-state) | Proposed (three-state) |
+| --- | --- | --- |
+| `battery_present` | in scope, NULL -> unknown | in scope, NULL -> **unanswered** |
+| `obstructs_public_way` | in scope, NULL -> unknown | in scope, NULL -> **unanswered** |
+| `sapo_event_type` | gate `!= no` is false -> **not asked** | gate `!= no` is **unknown** -> **scope unknown** |
+
+For `location_type = park`, where `obstructs_public_way` is legitimately out of scope, both columns
+agree: `obstructs_public_way` and `sapo_event_type` are not asked, and `battery_present` is
+unanswered.
+
+**The third row is the correction.** Under three-state, `sapo_event_type` is neither in scope nor
+out of it; its scope depends on an answer nobody gave, which is exactly the engine's own tri-state
+invariant applied one level up. Calling it "not asked" was the old collapse wearing the new label,
+and it is also what a chained gate looks like in general: indeterminacy propagates down the chain
+rather than stopping at the first dependent.
+
+**What that costs the loader**, corrected upward from rounds 1 and 2:
+
+- scope becomes three-valued, not two, so a loader deriving `unanswered` must derive
+  `scope unknown` as well and cannot answer with a boolean `isInScope`;
+- the derivation must be transitive, since a dependent of an indeterminate gate is itself
+  indeterminate, which is the fixed point the measured `blockersFor` walk computes;
+- the blocking gate must be carried, not just the fact of indeterminacy, because that is what
+  `verdict.ts` branches on (section 2).
 
 The ambiguous case would be a field that is in scope, NULL, and registry-nullable, where NULL could
 equally mean "asked and deliberately left blank". **No gate is registry-nullable**, so no gate is
 ambiguous. The 8 registry-nullable fields are all leaves and none of them gates anything, so their
 ambiguity is pre-existing and is not what the three-state change is about.
+
+None of this changes the conclusion of this section, which is that no DATABASE change is needed: the
+row still carries only NULL and the ruleset still supplies the rest. It does mean the derivation is
+a three-valued transitive walk rather than a two-valued lookup, and rounds 1 and 2 described the
+cheaper thing.
 
 **This argument depends on the registry-versus-schema divergence from section 1, not despite it.**
 Both halves are needed: the schema must PERMIT NULL for the state to be storable at all, which it
@@ -354,8 +415,13 @@ them in the same direction.
 ## 7. What the measurement does and does not force
 
 It does not force an answer. The load-bearing number came out **against** the assumption in the
-issue that this class of change moves approved output: the answer key does not move, and the
-implementation is one file.
+issue that this class of change moves approved output: **under the semantics issue #108 actually
+proposes**, the answer key does not move, and the implementation is two files.
+
+That qualifier is round 3's correction and it matters. Rounds 1 and 2 reported the same number for a
+narrower change and quoted it as though it were about #108's. The number now says what it appeared
+to say, but only because the recursion was fixed in `verdict.ts` rather than worked around in the
+semantics.
 
 The two facts a decision should turn on, neither of which is about fixtures:
 
@@ -365,7 +431,8 @@ The two facts a decision should turn on, neither of which is about fixtures:
   closing it, not of it happening.
 - The change is **larger than the issue scopes it**: `verdict.ts` must change too, or the plan
   generator does not terminate (section 2). That is a correctness-critical file the issue does not
-  mention.
+  mention, and it is where the whole difficulty of this change lives. The semantics are three lines;
+  the branching is the part that has to be got right.
 
 **The round 2 corrections all moved in the same direction, and it is not the direction that favours
 the alternative.** The engine option lost a cost it never had (no database change: section 4), and
@@ -400,3 +467,31 @@ because three of them were errors in the direction of the conclusion.
 
 Errors 1, 2 and 4 each made the engine change look worse or the alternative look better than the
 evidence supports. Corrected, the two options are closer than the first version implied.
+
+### Round 3
+
+Three more, and the first is the most serious error in the history of this document.
+
+5. **The headline number was measured on the wrong change.** 1161/1161 was the second attempt's
+   result, which added a rule that a stored dependent answer overrides its unanswered gate. That is
+   narrower than #108's semantics, the document said so in a later caveat, and the headline did not.
+   It was quoted as the central fact to the product owner and to a cross-model reviewer.
+
+   Round 3 took the option of fixing rather than qualifying: the recursion is fixed in `verdict.ts`
+   by branching on the blocking gate, #108's semantics are preserved exactly, and the suite passes
+   1161/1161. So the headline survives, but it survives on a re-measurement rather than on the
+   evidence originally offered for it, and the scope grew by a file. **The non-termination was
+   never a property of the semantics.** It was a property of branching on a field that could not
+   settle the unknown, and rounds 1 and 2 mistook the second for the first and weakened the
+   semantics to avoid it.
+6. **The chained-gate table was stated under today's semantics while arguing for the new ones**
+   (section 4). Under three-state a NULL `obstructs_public_way` makes `sapo_event_type`'s scope
+   unknown, not "not asked". The corrected table costs the loader a three-valued transitive walk
+   rather than a two-valued lookup. The section's conclusion, that no database change is needed,
+   is unaffected.
+7. **The status was `MEASUREMENT ONLY`, which is not a governance §3 state**, so the document sat
+   outside the approval protocol. It is `PROPOSED`, with the measurement-only qualifier kept as
+   prose.
+
+Error 5 is the one to weigh: for two rounds this document's most quoted sentence was evidence about
+a change nobody had proposed.
