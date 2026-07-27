@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { publishedRulesFileIn } from "./rules-file";
+import { publishedRulesFileIn, rulesFileIn } from "./rules-file";
 
 const directories: string[] = [];
 
@@ -109,5 +109,45 @@ describe("checking that what was found is a ruleset", () => {
     expect(() => publishedRulesFileIn(directory)).toThrow(
       new RegExp(join(directory, "nyc-rules\\.v2\\.8\\.json")),
     );
+  });
+});
+
+describe("choosing between the RULES_FILE override and the published artifact", () => {
+  const originalRulesFile = process.env.RULES_FILE;
+
+  afterEach(() => {
+    if (originalRulesFile === undefined) delete process.env.RULES_FILE;
+    else process.env.RULES_FILE = originalRulesFile;
+  });
+
+  it("uses the override when one is set, without looking in the directory", () => {
+    // The escape hatch has to work in the state someone reaches for it in, which is a rules
+    // directory that cannot answer. An empty one would throw if it were consulted.
+    process.env.RULES_FILE = "/somewhere/else/rules.json";
+    expect(rulesFileIn(rulesDirectoryWith({}))).toBe("/somewhere/else/rules.json");
+  });
+
+  it("falls back to the published artifact when nothing is set", () => {
+    delete process.env.RULES_FILE;
+    const directory = rulesDirectoryWith({ "nyc-rules.v2.8.json": ruleset() });
+    expect(rulesFileIn(directory)).toBe(join(directory, "nyc-rules.v2.8.json"));
+  });
+
+  it("treats an empty RULES_FILE as unset, the way apps/api does", () => {
+    // `??` used to let this through, because it falls back on null and undefined only. Nothing
+    // intends `RULES_FILE=`: it is what a declared-but-unvalued variable becomes, it selects no
+    // outcome that differs from unset, and as a path it resolves to the working directory and
+    // fails on a directory. Same variable, same handling, both services.
+    process.env.RULES_FILE = "";
+    const directory = rulesDirectoryWith({ "nyc-rules.v2.8.json": ruleset() });
+    expect(rulesFileIn(directory)).toBe(join(directory, "nyc-rules.v2.8.json"));
+  });
+
+  it("still fails loudly on an unusable directory when there is nothing to fall back to", () => {
+    // The override is a way past the discovery, not a way to switch it off.
+    delete process.env.RULES_FILE;
+    expect(() => rulesFileIn(rulesDirectoryWith({}))).toThrow(/found 0/);
+    process.env.RULES_FILE = "";
+    expect(() => rulesFileIn(rulesDirectoryWith({}))).toThrow(/found 0/);
   });
 });

@@ -101,3 +101,40 @@ export function publishedRulesFileIn(rulesDirectory: string): string {
   assertPublishedRuleset(path);
   return path;
 }
+
+/**
+ * The ruleset this app should read: the `RULES_FILE` override when there is one, the published
+ * artifact in `rulesDirectory` otherwise.
+ *
+ * ONE PLACE FOR ONE DECISION. Both callers used to spell `process.env.RULES_FILE ?? ...` for
+ * themselves, and `??` falls through on null and undefined only. An empty `RULES_FILE` therefore
+ * counted as a real answer here, resolved to the working directory, and failed on a directory —
+ * while `apps/api` treated the same value as unset and quietly did the right thing. Same variable,
+ * two services, opposite behaviour, and `intake-page-props.ts` carried a comment asserting the
+ * parity that did not hold.
+ *
+ * WHY EMPTY MEANS UNSET, rather than web's `??` being right and the api being the odd one out.
+ * Nothing intends `RULES_FILE=`. It is what a declared-but-unvalued variable becomes: node's
+ * `--env-file-if-exists` reads `RULES_FILE=` as the empty string, and several hosts materialise a
+ * declared variable with no value the same way. There is also no outcome it could usefully select
+ * that differs from unset, because the fallback IS the default artifact, so both intents land in
+ * the same place. And an empty path is not a path to anything: it resolves to the working
+ * directory, so the failure it produces is EISDIR on a directory, naming neither the variable nor
+ * the ruleset.
+ *
+ * The alternative worth naming, since "never proceed on input that can only be a mistake" would
+ * argue for it: treat empty as a configuration ERROR and refuse to start. Rejected as the smaller
+ * risk of the two. Falling back loads this repo's own published, ratified artifact rather than
+ * anything invented, the api validates it against `EXPECTED_RULESET_VERSION` regardless, and an
+ * operator who meant to pin a different version sees it — F-206 renders the ruleset version on
+ * every plan. Refusing would instead break the default path outright on any host that always
+ * materialises declared variables.
+ */
+export function rulesFileIn(rulesDirectory: string): string {
+  const override = process.env.RULES_FILE;
+  // Returned as given, matching `rulesFilePath` in `apps/api/src/ruleset.ts`: what the override
+  // names is the caller's explicit choice, and the parsers validate whatever it points at.
+  return override !== undefined && override !== ""
+    ? override
+    : publishedRulesFileIn(rulesDirectory);
+}

@@ -26,14 +26,15 @@ import {
   parseEngineRuleset,
   type Deadline,
 } from "@pop-engine/engine";
-import { publishedRulesFileIn } from "../rules-file";
+import { rulesFileIn } from "../rules-file";
 
 /**
  * The published ruleset, found rather than named — the resolver #138 added here, now shared with
  * the rest of this app rather than living only in the file that happened to break first.
- * `RULES_FILE` still overrides, because `apps/web/app/pages.test.tsx` sets it.
+ * `RULES_FILE` still overrides, because `apps/web/app/pages.test.tsx` sets it; the override's
+ * precedence, including what an empty one means, is decided in one place rather than here.
  */
-const RULES_FILE = process.env.RULES_FILE ?? publishedRulesFileIn("rules");
+const RULES_FILE = rulesFileIn("rules");
 
 const RULESET = parseEngineRuleset(JSON.parse(readFileSync(RULES_FILE, "utf8")));
 
