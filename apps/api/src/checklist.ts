@@ -832,6 +832,27 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
       const eventId = req.params.id ?? "";
       if (rejectMalformedId(eventId, res, "event id")) return;
 
+      // WHICH PLAN THE ORGANIZER WAS LOOKING AT WHEN THEY PRESSED REVIEW. Required, not optional.
+      //
+      // Converting a plan into a checklist writes `checklist_acknowledgements`, and AC 6 reads
+      // that row to mean the organizer has reviewed the changed items. Choosing the plan
+      // server-side made that record unfalsifiable: a second tab regenerating between the render
+      // and the click left the acknowledgement pointing at a plan the organizer had never been
+      // shown, and nothing anywhere could tell the difference afterwards.
+      //
+      // A caller that does not say what it displayed cannot have that checked, so omitting this
+      // is refused rather than defaulted to the latest plan. Defaulting is precisely the old
+      // behaviour, and leaving it reachable would keep the defect one forgetful caller away.
+      const displayedPlanId: unknown = (req.body as { planId?: unknown } | undefined)?.planId;
+      if (typeof displayedPlanId !== "string" || !UUID.test(displayedPlanId)) {
+        res.status(400).json({
+          error:
+            "planId is required and must be the uuid of the plan being displayed; a review " +
+            "records which plan the organizer read, so the server will not choose one for it",
+        });
+        return;
+      }
+
       // The event row is locked for the decision so two clicks cannot both find the checklist
       // missing and both materialize it. The UNIQUE plan_item_id backs that up.
       const client = await database.connect();
@@ -861,6 +882,28 @@ export function createChecklistRouter(dependencies: ChecklistDependencies): Rout
           await client.query("ROLLBACK");
           res.status(409).json({
             error: `plan for event ${eventId} was generated against revision ${plan.eventRevision}, but the event is at revision ${plan.currentRevision}; regenerate the plan first`,
+          });
+          return;
+        }
+        // THE STALE TAB. The organizer is looking at a plan that is no longer the latest, because
+        // another tab or another device regenerated after this one rendered. Re-pointing the
+        // review at the newer plan is what the old code did silently, and it produced an
+        // acknowledgement asserting a review that did not happen.
+        //
+        // Refused and re-presented rather than refused flat: nothing is written, and the newer
+        // plan's checklist comes back in the same response so the organizer sees what changed and
+        // can press review again against a plan they have now actually been shown. A bare error
+        // would leave them re-reading a screen that still shows the superseded plan.
+        //
+        // Read under the same row lock as everything above, so a regeneration committing mid
+        // request lands either wholly before this comparison or wholly after it.
+        if (displayedPlanId !== plan.id) {
+          const current = await checklistView(client, eventId, plan);
+          await client.query("ROLLBACK");
+          res.status(409).json({
+            error: `plan ${displayedPlanId} is no longer the latest plan for event ${eventId}; nothing was recorded — review the current plan shown here and submit again`,
+            supersededPlanId: displayedPlanId,
+            checklist: current,
           });
           return;
         }
