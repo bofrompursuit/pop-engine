@@ -1241,6 +1241,53 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
     }
   });
 
+  it("does not promise email reminders to a contact that has no email", async () => {
+    // Both contact columns are nullable and the scheduler only takes channels that have a
+    // destination, so phone-only is a supported configuration in which NO email alert is scheduled.
+    // The unconditional sentence reassured that organizer about a delivery path they do not have,
+    // which is the worst version of it: read by exactly the person for whom it is false.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: "+15550000000" },
+      }),
+    });
+
+    await renderView();
+
+    expect(screen.queryByText(/reminders go to your email/)).toBeNull();
+    const lede = screen.getByText(/no deadline reminders will be delivered/);
+    expect(lede.textContent).toContain(
+      "Text messages are not being sent yet, and no email address is set, so no deadline " +
+        "reminders will be delivered. Add an email address to receive them.",
+    );
+    // The number is still stored rather than refused, because the schema permits phone-only.
+    expect(lede.textContent).toContain("stored for when text sending is switched on");
+    expect((screen.getByLabelText("Mobile number (optional)") as HTMLInputElement).value).toBe(
+      "+15550000000",
+    );
+  });
+
+  it("still says reminders go to the email when there is one", async () => {
+    // The other half, so the fix cannot be written as "never mention email". This is the sentence
+    // the phone field exists to qualify, and it is true whenever an address is set.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: "organizer@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    expect(screen.getByText(/reminders go to your email/).textContent).toContain(
+      "Text messages are not being sent yet, so reminders go to your email.",
+    );
+    expect(screen.queryByText(/no deadline reminders will be delivered/)).toBeNull();
+  });
+
   it("hides the contact controls while the plan is stale, because the api would refuse them", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({ created: true, planChanged: false, planStale: true }),

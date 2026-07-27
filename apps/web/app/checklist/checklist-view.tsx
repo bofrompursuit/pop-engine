@@ -561,10 +561,28 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           />
           {/* Said before they type it, not after a message fails to arrive. A number entered on
               the strength of an unqualified "mobile number" box would be one the organizer is
-              relying on, and text sending is not switched on yet. */}
+              relying on, and text sending is not switched on yet.
+
+              WRITTEN FROM THIS EVENT'S CONTACTS, NOT FROM WHAT THE FEATURE CAN DO. Both contact
+              columns are nullable and the scheduler only takes channels that have a destination, so
+              phone-only is a supported configuration in which NO email alert is scheduled at all.
+              The unconditional version reassured that organizer about a delivery path they do not
+              have, which is the worst version of this sentence: it is read by exactly the person
+              for whom it is false.
+
+              The alternative was to require an email before offering reminders, and it is the wrong
+              trade. The schema permits phone-only deliberately, and refusing to store a number
+              until an address exists would break a configuration the api supports in order to make
+              one sentence easier to write. Saying what the current pair produces costs nothing and
+              tells the organizer something they can act on.
+
+              Tense, since it differs from the two notices above: those describe what HAS happened
+              and read it off the alert rows, while this describes what the form will produce and
+              reads it off the inputs. Both are state; only the state differs. */}
           <p className="checklist__lede">
-            Text messages are not being sent yet, so reminders go to your email. A number entered
-            now is stored for when text sending is switched on.
+            {contacts.email.trim() === ""
+              ? "Text messages are not being sent yet, and no email address is set, so no deadline reminders will be delivered. Add an email address to receive them. A number entered now is stored for when text sending is switched on."
+              : "Text messages are not being sent yet, so reminders go to your email. A number entered now is stored for when text sending is switched on."}
           </p>
           {/* One endpoint, one button, because the conversion IS idempotent: posting the plan the
               page is showing when nothing has changed creates nothing and records the contact.
