@@ -1,6 +1,6 @@
 # F-203 · Deadline Alerts
 
-**Status:** APPROVED (2026-07-25; maximum reminder offset ratified 2026-07-26, product-owner approved, resolving the P1 on PR #125) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
+**Status:** APPROVED (2026-07-25; maximum reminder offset ratified 2026-07-26, product-owner approved, resolving the P1 on PR #125; outputs amended 2026-07-27 to name `event_alert_contacts`, product-owner approved on PR #131) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 2; happy path) · **Lane:** Dev 4 · **Depends on:** F-202 (scheduling happens at checklist creation) · **Feeds:** F-305/F-413 reuse the plumbing (post-MVP)
 
 ## User Story
@@ -14,7 +14,11 @@ As an independent organizer, I get an email/SMS before each filing deadline, inc
 
 ## Outputs
 
-`alerts` rows, sent by the in-process poller (60s tick, ARCHITECTURE):
+`alerts` rows, sent by the in-process poller (60s tick, ARCHITECTURE), plus one `event_alert_contacts` row per event holding where those alerts are sent (amended 2026-07-27, product-owner approved under governance §6; see `docs/BASELINE.md`).
+
+The contact is a separate table rather than columns on an existing row because `alerts.recipient` has to stay the immutable record of where one message actually went, while "where do this event's alerts go" is a single mutable value per channel that exists before any message does and must survive a correction; `checklist_acknowledgements` was the real alternative, being already one row per event written by the same conversion, and it was not taken because a row that records which plan an organizer reviewed is not the place to keep an address they can edit afterwards.
+
+`alerts` rows, by type:
 
 | alert_type          | When scheduled                                                                                      |
 | ------------------- | --------------------------------------------------------------------------------------------------- |
