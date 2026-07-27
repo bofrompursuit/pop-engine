@@ -899,6 +899,19 @@ describe("the fixture suite and the published ruleset agree", () => {
     // Asserted over the whole published ruleset (`ruleset.rules` is rules followed by advisories in
     // file order) rather than a fixture list, so a third OFFICIAL_CONFLICT rule added later is
     // covered without anyone remembering to extend a test.
+    //
+    // Two assertions, not one, because "the field is present" and "the field carries something a
+    // reader can see" are different claims and a note_text of " " satisfies the first while
+    // producing exactly the empty badge this guard exists to prevent. They are kept separate so the
+    // failure names which of the two happened: a missing field means the prose is somewhere else
+    // (probably the notes array), a blank one means the prose was never written.
+    //
+    // Non-whitespace is the strongest claim this check can honestly make. F-206 AC 2 wants BOTH
+    // readings with BOTH sources, and no length threshold tests for that: a one-character note_text
+    // passes any minimum, and a long one can still state a single reading. Whether two readings are
+    // actually present is a reading-comprehension judgement that belongs to the verification owner,
+    // not to a character count invented here. So this asserts renderability, which is mechanical,
+    // and deliberately stops short of adequacy, which is not.
     const conflictRules = ruleset.rules.filter(
       (rule) => rule.verificationStatus === "OFFICIAL_CONFLICT",
     );
@@ -916,6 +929,15 @@ describe("the fixture suite and the published ruleset agree", () => {
           `rule's prose is in the output.notes array, move it into note_text rather than changing ` +
           `the rule's verification status.`,
       ).not.toBeNull();
+
+      expect(
+        (rule.noteText ?? "").trim().length,
+        `${rule.id} is OFFICIAL_CONFLICT and its output.note_text is present but blank (whitespace ` +
+          `only), so findings.ts computes a non-null conflictText that renders as an empty ` +
+          `conflict badge. F-206 AC 2 requires the line to state BOTH readings with BOTH sources, ` +
+          `so write that prose into note_text; a present-but-empty field is the same defect as a ` +
+          `missing one from the reader's side.`,
+      ).toBeGreaterThan(0);
     }
   });
 
