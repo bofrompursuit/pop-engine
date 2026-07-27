@@ -1,6 +1,6 @@
 # PopEngine — Roadmap (Canonical)
 
-**Status:** APPROVED (2026-07-22; see `docs/BASELINE.md`).
+**Status:** APPROVED (2026-07-22; F-109 retitled "Scope-Support Classification" and its concept renamed from "coverage states" to "scope support states" 2026-07-26, product-owner approved, resolving a three-way overload of "coverage"; the five state values are unchanged; see `docs/BASELINE.md`).
 **Companion docs:** `PRD.md` (requirements) · `DESIGN.md` (lifecycle model, lanes, gates, demo plan, dependency graph) · `test-scenario-answer-key.md` (MVP ground truth).
 **Feature IDs:** F-xxx IDs are permanent shared vocabulary; once assigned, an ID's meaning never changes. Full ID policy in `DESIGN.md`.
 
@@ -85,7 +85,7 @@ Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fall
 
 - **F-207 · Multi-Jurisdiction Rules Architecture (activated)** — city #2 as a data import, not a rewrite. (Architecture requirement from day 1; activation is Phase 4.)
 - **F-108 · Location & Authority Resolution** — geocoding; park/plaza/precinct/community-board identification; confidence + manual correction.
-- **F-109 · Coverage-State Classification** — fully/partially supported, unsupported, ambiguous, awaiting-information states (required once intake goes open-ended via F-601).
+- **F-109 · Scope-Support Classification** — fully/partially supported, unsupported, ambiguous, awaiting-information states (required once intake goes open-ended via F-601). Retitled from "Coverage-State Classification" 2026-07-26: "coverage" named this, the per-rule `COVERAGE_GAP` verification status, and `ARCHITECTURE-FUTURE.md` §7.1's per-result completeness, with nothing distinguishing them. This is the pre-evaluation gate on the scope the organizer described; the five values are unchanged. The F-id and its meaning are unchanged, per the ID policy above.
 - **F-308 · Ticketing Integration** — integrate/export to established providers; no in-house payments.
 - **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook (deliberately last).
 - **F-601 · Free-Text Event Intake** — description → proposed structured answers; user confirms before evaluation.

@@ -1,6 +1,6 @@
 # PopEngine — Architecture Target (Phase 2+)
 
-**Status:** APPROVED (2026-07-25; see `BASELINE.md`) — the destination architecture for Phases 2–4 and a planning target only. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Approval does not activate workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway. Each requires its scheduled F-id, approved spec, and any named contract or ADR first.
+**Status:** APPROVED (2026-07-25; §7.1 renamed from "coverage status" to "result completeness" and its `CONDITIONAL` value replaced by `OPEN_FACTS_MAY_CHANGE_OUTCOME` 2026-07-26, resolving a three-way overload of "coverage" and a one-token-two-meanings collision with the shipped `Verdict`. That amendment carries TWO approvals, both given 2026-07-26 and recorded here because the approval class was itself questioned and resolved: the **product owner** approved the feature-meaning change, and because the amendment edits AD-07's row it is a **durable architecture decision** under `DOCUMENTATION-GOVERNANCE.md` §6, so it also carries an **Architecture ADR approval**, given by the product owner acting as architecture owner. §6's "shared enum" row was considered and does not apply, because §7.1's four values are implemented nowhere and nothing consumes them; PR #136 records that reasoning and the point at which it stops holding. See `BASELINE.md`) — the destination architecture for Phases 2–4 and a planning target only. **This document is NOT the build instruction for Phase 0–1.5; `ARCHITECTURE.md` is.** Approval does not activate workers, tenancy, event revisions, OpenAPI contracts, or the AI gateway. Each requires its scheduled F-id, approved spec, and any named contract or ADR first.
 **Origin:** delivered by an external documentation audit (2026-07-22, `docs/proposals/documentation-audit-2026-07-22.md`); section references to "the supplied rules file"/"v2 scenario suite" predate the corrected baseline and should be read as "the then-current draft."
 **Companion authority:** Product scope lives in `PRD.md`; phase assignment in `ROADMAP.md`; approved feature behavior in `/specs`; regulatory facts in approved primary sources and published rulesets.
 
@@ -26,7 +26,7 @@ PopEngine must:
 | AD-04 | Treat published rulesets as immutable artifacts. | Git is the publication workflow through Phase 3. The rules admin system in Phase 4 publishes the same immutable artifact format; it does not create a second runtime truth. |
 | AD-05 | Separate stable Event identity from immutable Event Revisions. | Editing intake answers creates a new revision. A plan always references one exact revision; staleness is computed server-side. |
 | AD-06 | Treat plans as immutable evaluations and findings as immutable snapshots. | Regeneration creates a new plan, preserves the old plan, and produces a diff. Active workflow data is never silently rewritten. |
-| AD-07 | Use a layered status model. | After its consuming migration, coverage, finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
+| AD-07 | Use a layered status model. | After its consuming migration, result completeness (§7.1), finding type, deadline status, and workflow status are separate fields and the flat verdict is retired. The Phase 0–1.5 four-state verdict remains authoritative until then. |
 | AD-08 | Represent conditions and calculations with validated typed data. | No `eval`, dynamic code, natural-language formulas, or jurisdiction-specific executable extensions. Rules use approved condition and calculation AST primitives; a missing primitive requires a separate reviewed schema/engine change. |
 | AD-09 | Use PostgreSQL as the system of record and S3-compatible object storage for file bytes. | File metadata and authorization stay in PostgreSQL; downloads use short-lived signed URLs. |
 | AD-10 | Use a durable PostgreSQL-backed jobs/outbox model. | Phase 1 alerts may share the API deployment, but job claiming and delivery are durable. Phase 2 runs the same code as a separate worker. Redis is not required. |
@@ -148,14 +148,32 @@ Derived classification values are stored in the evaluation trace, not trusted fr
 
 Do not compress all meaning into one verdict.
 
-### 7.1 Coverage status
+### 7.1 Result completeness
+
+Named **result completeness**, not "coverage status", as of 2026-07-26. "Coverage" named three different things in this repo and distinguished none of them: `VerificationStatus.COVERAGE_GAP` (per rule — "combination not modeled by this ruleset version; advisory asserts nothing", the published legend at `rules/nyc-rules.v2.8.json`; shipped and live), this section (per result, how complete is the plan we produced), and F-109's pre-evaluation states (per request, can we handle the scope the user described). This axis keeps the *result* sense; F-109 keeps the *scope* sense under its own name, **scope support states**.
+
+`COVERAGE_GAP` keeps its name — but **not for the reason first recorded here, and the difference matters more than the conclusion does.** The original framing called it the most literal use of "coverage", which rested on reading it as a missing *source*. That reading was wrong: the published legend makes "no primary source located" `RESEARCH_REQUIRED`, and `COVERAGE_GAP` is about what this ruleset version **models** — its scope, not its sources. The conclusion is unchanged and stands on the other ground given at the time: the value is shipped and live, and renaming a production value to settle a documentation conflict is the wrong trade. What changes is where `COVERAGE_GAP` sits relative to everything else on this page. Being a *scope* statement, it is not tidily outside this rename; it belongs to the open question below.
 
 | Value | Meaning |
 |---|---|
 | `COMPLETE_WITHIN_VALIDATED_COVERAGE` | Every material declared element is supported and sufficiently known for the published ruleset. |
-| `CONDITIONAL` | One or more identified facts can change the requirement or deadline outcome. |
+| `OPEN_FACTS_MAY_CHANGE_OUTCOME` | One or more identified facts can change the requirement or deadline outcome. |
 | `CANNOT_DETERMINE` | Authority/classification or another prerequisite cannot be resolved. |
 | `OUTSIDE_VALIDATED_COVERAGE` | A material event element is unsupported. Supported findings may be shown, but the plan is labeled incomplete. |
+
+`OPEN_FACTS_MAY_CHANGE_OUTCOME` was `CONDITIONAL` until 2026-07-26. That token is `Verdict`'s (`packages/engine/src/types.ts:128`, shipped), where it means something else. The two coexist only through the transition AD-07 describes — the flat verdict is retired once these layered fields land, so this is a replacement and not a permanent second axis — but the transition is exactly when both tokens are readable in one repository and a reader has to tell them apart. Spelling them differently is not enough when the failure being fixed is a reader conflating two axes, so the replacement differs in meaning and not only in token. No code changes: these four values are not implemented anywhere, and every `CONDITIONAL` in `packages/` and `apps/` is `Verdict`.
+
+`VALIDATED_COVERAGE` survives inside two value names, but **the reason first given for keeping it does not survive, and its collapse is informative.** That reason was that "validated coverage" names the *ruleset's validated scope* while `COVERAGE_GAP` names a per-rule *source* gap — two different senses, so no confusion. Where it came from is worth recording, because it did not merely sit in a draft: it was the ground on which this PR's original "no two of the three share a term" constraint was relaxed, and the ground on which that relaxation was put to the product owner. The argument that did not survive is the one that shaped the decision. The published legend says otherwise: `COVERAGE_GAP` is "combination not modeled by this ruleset version", which is a **scope** claim too. These are not two senses of "coverage". They are the same kind of claim at two levels — `COVERAGE_GAP` per rule, about a combination this ruleset version does not model; `VALIDATED_COVERAGE` per result, about an event element outside what the ruleset validly covers.
+
+Keeping the compound is still right, on the ground that survives: the two levels are genuinely distinct, a reader needs both, and one is shipped. But "they mean different things" was the wrong defence, and anyone who repeats it will conclude these axes are further apart than the published text supports.
+
+**Known downstream inconsistency, tracked and not resolved here.** What ships today describes `COVERAGE_GAP` as a missing *source* rather than an unmodeled *combination*: `specs/F-206` AC 2 requires that "a source-less `COVERAGE_GAP` line visibly says no source is published", its edge-case row specifies the copy "source not yet established", and `apps/web/app/plan/plan-line.tsx:198` renders exactly that. So the UI faithfully implements an approved criterion, and the criterion and the published legend do not agree. **This section does not decide which is right.** The legend is published and F-206 is approved, and choosing between two approved artifacts is the product owner's call, pending as of 2026-07-26. Recorded here so that a reader who checks §7.1 against the running product finds the discrepancy already known rather than newly discovered.
+
+**Left open deliberately, so a future reader knows it was seen and not missed.** `OUTSIDE_VALIDATED_COVERAGE`'s own gloss above is written in F-109's vocabulary — "a material event element is **unsupported**. **Supported** findings may be shown". If that is not a coincidence, then these values and F-109's `unsupported` are one axis measured at two points in the pipeline, before and after evaluation, rather than two axes. This pass disambiguated the **names**; it did not decide whether the two vocabularies describe one thing or two. Anyone proposing to merge them should start here.
+
+**The question is three-cornered, and that is now the better-founded half of this section rather than a caveat on it.** `COVERAGE_GAP` reads "combination not modeled by this ruleset version" — a statement about what the ruleset **models**, not about what it cites. So all three corners make the same kind of claim: a combination this ruleset version does not model (per rule), an event element outside validated coverage (per result), and a described scope that is unsupported (per request). The open question is therefore not whether they are related — on the published text they plainly are — but whether the three levels are one fact observed at three points in the pipeline or three facts that happen to rhyme. Nothing here establishes either, and `COVERAGE_GAP` is shipped either way, so this pass changes no name that production depends on. It is worth stating that the two earlier drafts of this section both understated this, because each rested on defining `COVERAGE_GAP` as a missing source; with the published definition in hand the three axes sit closer together, not further apart.
+
+**Someone has already argued the merge, and it was set aside on authority rather than on merits.** The `PROPOSED` draft of `specs/F-109` (PR #134) carries an acceptance criterion adopting this section's four values outright and stating that F-109 "does not define its own vocabulary", on the reasoning that a second set of state names in a spec that classifies coverage would put two incompatible vocabularies in one contract. That is the merge argument, made in full, and it is not a weak one. It was set aside because a `PROPOSED` spec's acceptance criterion cannot overrule two `APPROVED` artifacts — `PRD.md:225` and `ROADMAP.md:88` both publish F-109's five values verbatim, and `BASELINE.md` requires approval before a `PROPOSED` input is implementable. So the question above stays open on the merits: what settled it here was governance, not a finding that the two axes are distinct. Anyone reopening it should read F-109's criterion first rather than re-deriving it.
 
 ### 7.2 Finding disposition
 
@@ -208,7 +226,7 @@ evaluateEvent({
 - normalized/derived values with provenance;
 - findings with every triggering rule and answer;
 - per-facet source and epistemic status;
-- coverage status and coverage reasons;
+- result completeness (§7.1) and its reasons;
 - deadline summary and each finding's deadline calculation trace;
 - conflicts, missing material facts, and supported branch outcomes;
 - deterministic rescope candidates, each produced by a full re-evaluation;
@@ -260,13 +278,13 @@ Each finding snapshots:
 - reviewer and publication status;
 - separate status for scope, deadline, fee, required documents, and portal.
 
-A ruleset snapshot date means “published on,” not “all facts verified on.” The plan banner reads: **Rules snapshot [version], published [date]**. Qualification, conflict, research-required, and coverage states appear per finding.
+A ruleset snapshot date means “published on,” not “all facts verified on.” The plan banner reads: **Rules snapshot [version], published [date]**. Qualification, conflict, research-required, and `COVERAGE_GAP` states appear per finding — these are `VerificationStatus` values, the per-rule sense of "coverage", not §7.1's per-result completeness.
 
 ### 8.7 Failure behavior
 
 - Rules/artifact validation failure aborts boot and CI.
 - An unexpected evaluation error produces no plan and no “no permit” conclusion.
-- A supported partial result may be returned only with `OUTSIDE_VALIDATED_COVERAGE` or another incomplete coverage state visibly attached.
+- A supported partial result may be returned only with `OUTSIDE_VALIDATED_COVERAGE` or another incomplete result-completeness value visibly attached.
 - Same event revision + ruleset + engine + `today` + calendar produces byte-stable normalized output after canonical serialization.
 
 ## 9. Persistence model
@@ -279,7 +297,7 @@ A ruleset snapshot date means “published on,” not “all facts verified on.�
 | `event_revisions` | Immutable validated questionnaire versions. Unique `(event_id, revision_number)`. |
 | `rulesets` | Immutable metadata: jurisdiction, version, schema version, checksum, snapshot date, status, artifact location. |
 | `rules` | Read model keyed by `(ruleset_id, rule_id)`; never hand-edited. |
-| `permit_plans` | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes coverage and deadline summary. |
+| `permit_plans` | Immutable evaluation header referencing event revision, ruleset, engine, and calendar. Includes result-completeness (§7.1) and deadline summary. |
 | `plan_findings` | Generic immutable finding snapshot with kind, disposition, deadline status, source facets, trigger trace, and `payload_json`. |
 | `plan_diffs` | Added, removed, and materially changed findings between two plans. |
 | `checklist_items` | Workflow item linked to a plan finding; plan evidence remains immutable. |
@@ -501,7 +519,7 @@ Location/authority resolution becomes automatic with confidence plus manual corr
 - Unique IDs and explicit migration lineage.
 - Every trigger field/operator declared.
 - Every formula uses a supported AST; unsupported calculations block publication pending a separately approved generic primitive.
-- Every rule has review/publication metadata and source metadata unless an assertion-free `COVERAGE_GAP` deliberately records that no source is established.
+- Every rule has review/publication metadata and source metadata unless an assertion-free `COVERAGE_GAP` carries none — an advisory that asserts nothing makes no claim requiring a source. The exemption is real and shipped (`apps/web/app/plan/plan-line.tsx:197` renders that state on `COVERAGE_GAP` with zero sources); what changed 2026-07-26 is the wording, which used to say the value "records that no source is established". That is `RESEARCH_REQUIRED`'s job — "no primary source located in two research passes". A `COVERAGE_GAP` has no source because it asserts nothing, not because a search failed.
 - Every numerical boundary has below/equal/above fixtures.
 - Every material rule has positive, negative, and unknown fixtures.
 - No finding claims a verified portal/document/deadline facet without approved evidence.
@@ -529,7 +547,7 @@ Coverage percentage does not replace acceptance behavior. A feature is not done 
 ## 17. Observability and operations
 
 - Structured logs with request/job correlation IDs; no raw secrets, documents, or unredacted contact data.
-- Metrics: API error/latency, evaluation failure, job lag, send success/failure, webhook replay, ruleset version usage, and coverage-status distribution.
+- Metrics: API error/latency, evaluation failure, job lag, send success/failure, webhook replay, ruleset version usage, and result-completeness (§7.1) distribution.
 - Audit events for plan acceptance, rule publication, authorization/role changes, source review, document lifecycle, message send, and integration connection.
 - Health endpoints distinguish process liveness from database, artifact, and worker readiness.
 - Backups and restore rehearsal for PostgreSQL; lifecycle/versioning policy for object storage.
