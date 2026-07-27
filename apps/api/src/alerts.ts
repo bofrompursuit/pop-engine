@@ -668,6 +668,27 @@ function dependencyCopy(
  * "apply within N days" stays in the subject: that phrasing is fixed for FEASIBLE-AT-RISK by the
  * answer key's verdict model and `specs/F-102`, and `apps/web/app/plan/verdict-copy.ts` already
  * renders it. Restating it differently here would put two vocabularies on one verdict.
+ *
+ * AND IT IS ANCHORED TO THE DATE IT WAS MEASURED FROM, which is the whole of the :851 fix. `N` is
+ * frozen at plan generation, so a plan made with nine days of slack and converted eight days later
+ * sent "apply within 9 days" while the filing date was tomorrow, contradicting the reminder
+ * scheduled beside it. The body never had this problem: it says "measured from the plan's
+ * evaluation date", so it is a statement about a plan and stays true however late it arrives. The
+ * subject was the same claim with the anchor removed, which turned it into a present-tense
+ * instruction that decays. It now carries the anchor the body already had.
+ *
+ * RECOMPUTING N AGAINST TODAY WAS THE OBVIOUS FIX AND IS WRONG TWICE. `N` is the VERDICT's number,
+ * not a countdown: `verdict-copy.ts` renders the same figure on the plan page, so recomputing here
+ * would put two different numbers on one verdict, which is the thing the paragraph above exists to
+ * prevent. And `specs/F-102` fixes slack for a GATED finding as `latest_apply − apply_after`, the
+ * WIDTH of the filing window, so "days from today until the deadline" is a different quantity
+ * entirely — the paragraph above spends itself explaining that the number is not time remaining,
+ * and recomputing it as time remaining would make that explanation false.
+ *
+ * REQUIRING REGENERATION was the third option and costs the most: an organizer who converts late
+ * would be told nothing at all, suppressing a true at-risk signal to avoid a stale number in it.
+ *
+ * What the chosen fix costs is a longer subject line. That is the whole price.
  */
 const slackWarningCopy = (
   minSlackDays: number,
@@ -675,7 +696,7 @@ const slackWarningCopy = (
   evaluatedOn: string,
   planHasGatedFiling: boolean,
 ): { subject: string; body: string } => ({
-  subject: `At risk — apply within ${minSlackDays} days`,
+  subject: `At risk — apply within ${minSlackDays} days of ${evaluatedOn}`,
   body: [
     `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
       `${minSlackDays} days, measured from the plan's evaluation date ${evaluatedOn}.`,
@@ -741,7 +762,12 @@ async function plannedAlerts(
           late: sendOn < schedulingToday,
           // Named only while the upstream decision is still ahead of this reminder. Once the
           // window has opened the sequence is no longer news, and the unlock alert has said it.
-          pendingUpstream: openOn !== null && sendOn < openOn ? (upstream ?? null) : null,
+          // `<=`, not `<`. A reminder landing exactly ON the day the upstream decision is first
+          // expected still lands before that decision is known — the window opens that day, it
+          // does not close the day before. The strict form dropped the sequencing note on precisely
+          // the case where the two alerts arrive together and the organizer most needs to be told
+          // which one waits on the other.
+          pendingUpstream: openOn !== null && sendOn <= openOn ? (upstream ?? null) : null,
           openOn,
         });
         planned.push({
@@ -1403,7 +1429,28 @@ export function createAlertPoller(dependencies: {
           AND send_at <= current_timestamp
           AND (next_attempt_at IS NULL OR next_attempt_at <= current_timestamp)
           AND ${NOT_FROM_A_STALE_PLAN}
-        ORDER BY failure_count, send_at, id
+        -- SAME-INSTANT ROWS ARE ORDERED BY WHAT DEPENDS ON WHAT, not by uuid. A gated window
+        -- exactly one reminder offset wide puts the dependency alert and the filing reminder on the
+        -- same send_at, and the tiebreak then fell through to id, so which one an organizer saw
+        -- first was random. The unlock is what tells them the filing waits on another agency, so it
+        -- goes first.
+        --
+        -- STATED PLAINLY, BECAUSE THIS ORDERS THE CLAIM AND NOT THE DELIVERY: workers run
+        -- concurrently, so the two can still be in flight together. Serialising them would mean
+        -- holding a filing reminder behind a dependency alert that might be failing, trading a
+        -- missed deadline for a sequencing nicety, and that is the wrong way round. What makes the
+        -- remaining overlap harmless is the other half of this fix: at sendOn === openOn the
+        -- reminder now carries the sequencing note itself, so it names the dependency whichever
+        -- order the two arrive in.
+        --
+        -- NOT PINNED BY A TEST, and saying so is worth more than implying it is. Claim order is not
+        -- observable through any surface this suite can read: two due rows are taken by two
+        -- concurrent workers, and asserting which reached the provider first would be pinning a
+        -- race rather than a guarantee. What IS pinned is the sequencing note, which is the thing
+        -- an organizer actually receives. This line makes the order deterministic instead of
+        -- uuid-random, costs nothing, and is defence rather than demonstrated behaviour.
+        ORDER BY failure_count, send_at,
+                 CASE alert_type WHEN 'dependency_unlocked' THEN 0 ELSE 1 END, id
         LIMIT ${MAX_ALERTS_PER_TICK}`,
     );
     if (rows.length === MAX_ALERTS_PER_TICK) {
@@ -1414,6 +1461,51 @@ export function createAlertPoller(dependencies: {
           `next scan and may exceed the ${DELIVERY_BOUND_MS}ms delivery bound`,
       );
     }
+    // DELIVERY NOW CONSULTS THE OPINION THE SCHEDULER ALREADY HOLDS. `plannedAlerts` refuses to
+    // CREATE a reminder for a filing date that has passed, because "file by <a day that has gone>"
+    // is the one thing a missed window must never be dressed up as. The claim never asked the same
+    // question, so a provider outage spanning the deadline left the row eligible and the poller
+    // delivered exactly that copy on recovery. One question with two answers, and the one that
+    // shipped was the one that never asked.
+    //
+    // CANCELLED RATHER THAN HELD, which is the opposite of what round 14 does for a stale plan, and
+    // the difference is whether anything is still undecided. There, the event had been edited and
+    // the next review might legitimately schedule the identical alert, so the poller declining to
+    // send left the decision where the spec puts it. Here the window is shut: the scheduler will
+    // refuse to re-create this alert on every future review, so "PopEngine no longer intends to
+    // send this" is settled rather than pending. The poller is applying the scheduler's rule, not
+    // forming an opinion of its own. Leaving the row pending would also make it lie twice over,
+    // reported to the organizer as a delivery that is still being retried.
+    //
+    // A MISSED-DEADLINE ALERT INSTEAD was the other option and is not available here. Migration 001
+    // is shipped and immutable, and its CHECK admits exactly `deadline_reminder`, `slack_warning`
+    // and `dependency_unlocked`, so a new outcome needs a forward migration on a shipped table.
+    // Rewriting this row's payload in place would keep the type and make a `deadline_reminder` say
+    // something else, destroying both the type's meaning and the record of what was intended. The
+    // checklist is where a missed requirement is already reported, and it says so on every visit.
+    //
+    // THE DATE COMPARISON IS DELIBERATELY CONSERVATIVE. The poller has no jurisdiction setting —
+    // `todayInJurisdiction` belongs to the scheduler — so this compares against UTC yesterday
+    // rather than today. It can therefore leave a row deliverable for up to a day longer than the
+    // scheduler would, and can never cancel one on a day it is still valid. That asymmetry is the
+    // right way round: delivering a reminder a day late is a nuisance, cancelling a live one is a
+    // missed filing.
+    await database.query(
+      `UPDATE alerts SET status = 'cancelled'
+        WHERE status IN ('pending', 'failed')
+          AND alert_type IN ('deadline_reminder', 'dependency_unlocked')
+          AND coalesce(payload->>'test', 'false') <> 'true'
+          AND EXISTS (
+            SELECT 1
+              FROM checklist_items AS closed_checklist
+              JOIN permit_plan_items AS closed_item
+                ON closed_item.id = closed_checklist.plan_item_id
+             WHERE closed_checklist.id = alerts.checklist_item_id
+               AND closed_item.latest_apply_date IS NOT NULL
+               AND closed_item.latest_apply_date < (current_date - 1)
+          )`,
+    );
+
     let sent = 0;
     let failed = 0;
     let abandoned = 0;

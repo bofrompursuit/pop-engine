@@ -564,8 +564,13 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
       expect(warning?.checklist_item_id).toBeNull();
-      // The answer key pins Scenario D at "apply within 10 days".
-      expect(warning?.payload.subject).toBe("At risk — apply within 10 days");
+      // The answer key pins Scenario D at "apply within 10 days", and that phrase is intact: the
+      // number is the verdict's and is not recomputed. What is added is the date it was measured
+      // from, because a bare count decays and this subject is read whenever the alert arrives.
+      // `specs/F-102` AC 5 is about the VERDICT's rendering and is satisfied by
+      // `apps/web/app/plan/verdict-copy.ts`, which is untouched.
+      expect(warning?.payload.subject).toContain("apply within 10 days");
+      expect(warning?.payload.subject).toBe("At risk — apply within 10 days of 2026-07-22");
       expect(warning?.payload.body).toContain(
         "14-day threshold is PopEngine's internal planning buffer, not an official threshold",
       );
@@ -975,6 +980,38 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(unlock?.payload.body).toContain(
         "A strict issued-before-filed sequence is not confirmed by located primary text",
       );
+    });
+
+    it("names the sequence on a reminder that lands exactly on the expected decision day", async () => {
+      // The boundary. A gated window exactly one reminder offset wide puts the unlock and the
+      // reminder on the same day, and `sendOn < openOn` dropped the sequencing note on precisely
+      // the case where the two arrive together and the organizer most needs to be told which one
+      // waits on the other. The window OPENS that day; it does not close the day before.
+      const eventId = await createEvent(scenario("C"));
+      const offset = reminderOffsets[0] ?? 7;
+      const { planId } = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(30 - offset),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      const unlock = rows.find((row) => row.alert_type === "dependency_unlocked");
+      const reminder = rows.find(
+        (row) =>
+          row.alert_type === "deadline_reminder" &&
+          row.send_at.getTime() === unlock?.send_at.getTime(),
+      );
+      expect(reminder).toBeDefined();
+      expect(String(reminder?.payload.body)).toContain("This filing is sequenced after your");
     });
 
     it("names the sequence on a reminder that lands before the upstream decision is expected", async () => {
@@ -2826,6 +2863,51 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       }
 
       expect((await alertsOf(eventId)).some((row) => row.alert_type === "slack_warning")).toBe(true);
+    });
+
+    it("does not deliver a reminder for a filing date that passed during an outage", async () => {
+      // The system already holds this opinion: `plannedAlerts` refuses to CREATE a reminder for a
+      // filing date that has gone. The claim never asked the same question, so an outage spanning
+      // the deadline left the row eligible and the poller delivered "file by <a day that has
+      // passed>" on recovery. One question, two answers, and the one that shipped never asked.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const before = await alertsOf(eventId);
+      expect(before).toHaveLength(1);
+      // The provider was down while the deadline went by.
+      await pool.query("UPDATE alerts SET status = 'failed', failure_count = 2 WHERE id = $1", [
+        before[0]?.id,
+      ]);
+      await pool.query(
+        `UPDATE permit_plan_items SET latest_apply_date = current_date - 5
+          WHERE plan_id IN (SELECT plan_id FROM permit_plan_items WHERE id IN (
+            SELECT plan_item_id FROM checklist_items WHERE id = $1))`,
+        [before[0]?.checklist_item_id],
+      );
+      const provider = fakeProvider();
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect(provider.attempts).toHaveLength(0);
+      // Cancelled rather than held: unlike a stale plan, no future review can revive this, because
+      // the scheduler refuses to re-create an alert for a window that has shut. Leaving it pending
+      // would also report it to the organizer as a delivery still being retried.
+      expect((await alertsOf(eventId))[0]?.status).toBe("cancelled");
+    });
+
+    it("still delivers a reminder whose filing date is ahead", async () => {
+      // The mirror, so the guard cannot be written as "never deliver a failed reminder".
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      await pool.query("UPDATE alerts SET status = 'failed', failure_count = 2 WHERE event_id = $1", [
+        eventId,
+      ]);
+      const provider = fakeProvider();
+
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect(provider.delivered).toHaveLength(1);
+      expect((await alertsOf(eventId))[0]?.status).toBe("sent");
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {
