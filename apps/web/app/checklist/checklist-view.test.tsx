@@ -1164,6 +1164,83 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
     });
   });
 
+  it("shows a delivery failure that only happened after the page was rendered", async () => {
+    // THE ENTRY POINT TO EVERYTHING THE CONTACT WORK BUILT. The POST's response is assembled
+    // before the alerts it just scheduled have been attempted, so the poller can only record a
+    // failure after that state is on screen. With no reload path the warning never appeared, and
+    // an organizer who is never told there is a problem never corrects the address that caused it.
+    let failures: unknown[] = [];
+    const body = () =>
+      checklistBody({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: "typo@example.test", phone: null },
+        failedAlertDeliveries: failures,
+      });
+    stubApi({
+      [GET_CHECKLIST]: () => jsonResponse(200, body()),
+      [POST_CHECKLIST]: () => jsonResponse(200, body()),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await renderView();
+
+      await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+      await waitFor(() => expect(screen.queryByText(/failed to send/)).toBeNull());
+
+      // The poller runs and the send fails, which happens entirely after the render above.
+      failures = [{ channel: "email", failedCount: 1 }];
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      await waitFor(() =>
+        expect(screen.getByText(/failed to send/).textContent).toContain(
+          "1 email alert for this event has failed to send.",
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not keep re-reading when there is no contact for an alert to go to", async () => {
+    // With no address the api schedules nothing and says so, so there is no later delivery whose
+    // failure could arrive. Re-reading anyway would be this page polling for a fact that cannot
+    // change, which is the general behaviour the bounded version was chosen over.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: null },
+      }),
+      [POST_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: null },
+      }),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await renderView();
+      await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+      await waitFor(() =>
+        expect(
+          (global.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.some(
+            ([, init]) => init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      const before = (global.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(130_000);
+
+      expect((global.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(
+        before,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("hides the contact controls while the plan is stale, because the api would refuse them", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({ created: true, planChanged: false, planStale: true }),

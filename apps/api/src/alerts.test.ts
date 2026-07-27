@@ -2394,6 +2394,56 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(tookMs).toBeLessThan(POLL_INTERVAL_MS);
     });
 
+    it("does not deliver an alert whose plan the event has been edited past", async () => {
+      // THE WORST OF THEM, and different in kind from every other alert defect on this PR. The
+      // others were an alert missing, arriving twice, or arriving with a state left out. This one
+      // arrives on time, looking correct, carrying a filing date the current event does not have.
+      // Editing an event increments revision_counter and nothing else, so until the organizer
+      // regenerates AND reviews, the alert rows still point through their checklist items at the
+      // old plan.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      // The organizer edits the event. Nothing else happens: no regeneration, no review.
+      await pool.query("UPDATE events SET revision_counter = revision_counter + 1 WHERE id = $1", [
+        eventId,
+      ]);
+
+      const summary = await poller.tick();
+
+      expect(summary.sent).toBe(0);
+      expect(provider.attempts).toHaveLength(0);
+      // HELD, NOT CANCELLED: the spec gives the cancelling to regeneration (AC 2 and the Edge
+      // Cases row), so the poller declines to send and leaves the row for the review to decide.
+      expect((await alertsOf(eventId)).every((row) => row.status === "pending")).toBe(true);
+    });
+
+    it("delivers again once the review has caught the plan up", async () => {
+      // The other half: holding is not dropping. Once the checklist is reviewed against a plan
+      // evaluated at the current revision, the same alerts are deliverable again. Without this the
+      // fix would be indistinguishable from switching the organizer's reminders off.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      await pool.query("UPDATE events SET revision_counter = revision_counter + 1 WHERE id = $1", [
+        eventId,
+      ]);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+      expect((await poller.tick()).sent).toBe(0);
+
+      // The review: the plan the alerts hang off now names the event's current revision.
+      await pool.query(
+        `UPDATE permit_plans SET event_revision = (SELECT revision_counter FROM events WHERE id = $1)
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      expect((await poller.tick()).sent).toBe(1);
+      expect(provider.delivered).toHaveLength(1);
+    });
+
     it("keeps retrying through a provider outage without losing an alert", async () => {
       const eventId = await createEvent(scenario("C"));
       await schedulePastDue(eventId);

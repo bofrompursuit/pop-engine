@@ -124,6 +124,48 @@ const RETRY_BACKOFF = `CASE
  * connections was what pinned it at four; a dedicated pool removes the coupling, so the API keeps
  * every connection it had while a provider times out.
  */
+/**
+ * Alerts whose plan the event has been edited past, which must not go out.
+ *
+ * THE WORST FAILURE ON THIS PR, and unlike every other one it is not about an alert missing,
+ * duplicating or arriving incomplete. Editing an event increments `events.revision_counter` and
+ * nothing else; the alert rows still hang off checklist items pointing at the OLD plan, and they
+ * were delivered on time, looking entirely correct, carrying a filing date the current event does
+ * not have. Telling an organizer a deadline that is not theirs is the failure this product exists
+ * to prevent, and the exposure lasted until they happened to regenerate.
+ *
+ * HELD, NOT CANCELLED, and the spec decides that rather than a new principle. AC 2 says
+ * "regeneration cancels obsolete pending alerts (status `cancelled`)", and the Edge Cases row says
+ * "pending alerts recomputed on regeneration; stale pending alerts for removed items are
+ * cancelled". Both assign the cancelling to the REVIEW. A poller that cancelled here would be
+ * deciding on its own authority that PopEngine no longer intends to send something, when in fact
+ * the edit may not have touched the date at all and the next review may schedule the identical
+ * alert. So these rows stay pending and simply stop being claimable: the review then either
+ * confirms them, or the reconciler cancels them for not being in the recomputed set, which is where
+ * the spec puts that decision. If the organizer never regenerates, nothing is delivered either way
+ * — the difference is only whether the row lies about having been withdrawn.
+ *
+ * SCOPE, STATED BECAUSE IT IS NARROWER THAN THE FINDING. The plan is reachable from an alert only
+ * through `checklist_item_id`, and the plan-level slack warning has none, so this predicate cannot
+ * see it and does not claim to. Two reasons that is the right place to stop rather than a gap to
+ * paper over: a slack warning states a risk figure and an evaluation date but no agency deadline,
+ * so it cannot deliver a wrong regulatory date; and it is scheduled with `send_at` of now, so it
+ * goes out on the next tick seconds later, leaving almost no window for an edit to land inside.
+ * Covering it would mean carrying a plan reference on the alert row, which is a column and a
+ * migration, and that is a bigger claim than this finding supports. Test sends carry no checklist
+ * item either and are deliberately unaffected: a demo alert is an operator action against no
+ * deadline.
+ */
+const NOT_FROM_A_STALE_PLAN = `NOT EXISTS (
+       SELECT 1
+         FROM checklist_items AS stale_checklist
+         JOIN permit_plan_items AS stale_item ON stale_item.id = stale_checklist.plan_item_id
+         JOIN permit_plans AS stale_plan ON stale_plan.id = stale_item.plan_id
+         JOIN events AS stale_event ON stale_event.id = stale_plan.event_id
+        WHERE stale_checklist.id = alerts.checklist_item_id
+          AND stale_plan.event_revision < stale_event.revision_counter
+     )`;
+
 const SEND_CONCURRENCY = 8;
 /**
  * How long a tick waits between re-trying alerts a writer's lock made it skip, and for how long.
@@ -1126,10 +1168,15 @@ async function sendOne(
     // held before this reads, so what it reads is a state no review is midway through changing.
     // The lock supplies the safe point; the predicate is still needed to use it.
     const { rows } = await client.query<DueAlertRow>(
+      // The staleness check belongs HERE as well as in the scan, and for the same reason the due
+      // predicate is re-asked here: the event edit this guards against can commit in the window
+      // between the two. The event row is held by then, so what this reads is a revision no writer
+      // is midway through changing.
       `SELECT id, channel, recipient, idempotency_key, payload
          FROM alerts
         WHERE id = $1 AND status IN ('pending', 'failed') AND send_at <= current_timestamp
           AND (next_attempt_at IS NULL OR next_attempt_at <= current_timestamp)
+          AND ${NOT_FROM_A_STALE_PLAN}
         FOR UPDATE SKIP LOCKED`,
       [alertId],
     );
@@ -1197,10 +1244,16 @@ export function createAlertPoller(dependencies: {
       // only demoting it. `failure_count` ordering was the previous answer and cannot be the whole
       // one: it ranks rows within a scan, so a backlog that fails keeps being re-scanned and
       // re-attempted, and at ten seconds a send it consumes every scan indefinitely.
+      // Excluded from the SCAN too, not only from the claim. A stale event's alerts stay pending
+      // indefinitely, so leaving them selectable would have them consume a slot in every capped
+      // scan for as long as the organizer takes to regenerate, pushing deliverable alerts behind
+      // rows that can never be sent. Same reasoning as `next_attempt_at`, which removes a dead
+      // destination from the batch rather than only demoting it.
       `SELECT id FROM alerts
         WHERE status IN ('pending', 'failed')
           AND send_at <= current_timestamp
           AND (next_attempt_at IS NULL OR next_attempt_at <= current_timestamp)
+          AND ${NOT_FROM_A_STALE_PLAN}
         ORDER BY failure_count, send_at, id
         LIMIT ${MAX_ALERTS_PER_TICK}`,
     );

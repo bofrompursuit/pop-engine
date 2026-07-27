@@ -168,6 +168,34 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const writeEpoch = useRef(0);
   const appliedEpoch = useRef(0);
 
+  /**
+   * Re-reads scheduled after a conversion, so a delivery failure can reach the screen it is for.
+   *
+   * The warning below renders `failedAlertDeliveries` out of the POST's own response, and that
+   * response is assembled before the alerts it just scheduled have been attempted — the poller
+   * cannot record a failure until after the state on screen was rendered. With no reload path, a
+   * failed reminder stayed silent forever unless the organizer happened to refresh, which closed
+   * the entry point to everything the contact-correction work built: the address is correctable,
+   * the corrected one no longer inherits the old one's failures, it gets a fresh provider identity,
+   * the audit row is no longer rewritten, and none of it is reachable by someone who is never told
+   * there is anything to correct.
+   *
+   * BOUNDED RE-READS RATHER THAN A LIVE UPDATE PATH, and the window is taken from the criterion
+   * instead of chosen. AC 2 promises delivery within two minutes of `send_at`, and the slack
+   * warning and any already-due reminder are written with `send_at` of now, so two minutes after
+   * the conversion is exactly when "it was attempted and failed" has become knowable. Reading at
+   * the poller's interval and again at the bound covers it in two requests that stop by
+   * themselves. A subscription or a general poll would promise freshness this page does not
+   * otherwise offer and would keep running for a fact that becomes true once.
+   *
+   * What this does NOT cover, said rather than implied: a reminder that fails days later, on its
+   * own filing date, with nobody on the page. That needs a channel this product does not have, and
+   * the checklist shows it on the next visit.
+   */
+  const deliveryReads = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const ALERT_POLL_INTERVAL_MS = 60_000;
+  const ALERT_DELIVERY_BOUND_MS = 120_000;
+
   useEffect(() => {
     active.current = showing;
     let abandoned = false;
@@ -208,6 +236,8 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
 
     return () => {
       abandoned = true;
+      // One organizer's pending re-read must never land on another organizer's checklist.
+      for (const timer of deliveryReads.current.splice(0)) clearTimeout(timer);
     };
   }, [apiBaseUrl, eventId, showing]);
 
@@ -256,6 +286,21 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     // rule and an exception.
     setCreationFailure(await reload(requested));
     setCreating(false);
+
+    // Only when there is somewhere for an alert to go. With no contact the api schedules nothing
+    // and says so, and there is no delivery whose failure could arrive later.
+    if (contacts.email.trim() !== "" || contacts.phone.trim() !== "") {
+      for (const timer of deliveryReads.current.splice(0)) clearTimeout(timer);
+      for (const delay of [ALERT_POLL_INTERVAL_MS, ALERT_DELIVERY_BOUND_MS]) {
+        deliveryReads.current.push(
+          setTimeout(() => {
+            // Through the same epoch-ordered re-read as every other refresh, so a late one cannot
+            // put stale counts back over a status the organizer has changed since.
+            void reload(requested);
+          }, delay),
+        );
+      }
+    }
   };
 
   /**
