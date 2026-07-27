@@ -258,13 +258,21 @@ if (unsupportedGlobs.length > 0) {
 const CODE_EXTENSIONS = [".ts", ".tsx", ".mjs", ".js"];
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".next", ".git", "dist", "coverage", "build"]);
 
-/** Every executable source file in the repo, which is what this rule is scoped to. */
-function sourceFiles(directory, found = []) {
+/**
+ * Every file under `directory` that `matches`, skipping the trees that are not this repo's source.
+ *
+ * One walker for both rules, and `node_modules` is the reason it is shared rather than duplicated:
+ * a recursive read that does not skip it descends through pnpm's symlinked workspace copies and
+ * reports `node_modules/.pnpm/node_modules/api/.env.example` beside the real file. Observed, not
+ * anticipated — the config rule below found it on its first run.
+ */
+function filesUnder(directory, matches, found = []) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIPPED_DIRECTORIES.has(entry.name)) sourceFiles(join(directory, entry.name), found);
-    } else if (CODE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) {
-      found.push(join(directory, entry.name));
+      if (!SKIPPED_DIRECTORIES.has(entry.name)) filesUnder(full, matches, found);
+    } else if (matches(full.slice(repoRoot.length + 1), entry.name)) {
+      found.push(full);
     }
   }
   return found;
@@ -320,11 +328,73 @@ const existingRulesets = new Set([
 // boundary is exact and worth stating both ways: `const p = "rules/nyc-rules.v1.json"` fails, and
 // the same text in a comment does not.
 //
-// What this leaves uncovered, stated rather than implied: prose naming a superseded artifact goes
-// stale silently. Nothing else catches that today. If it ever matters enough, it is a documentation
-// lint and a different tool — not a widening of this one.
-const STRING_LITERAL = /"([^"\n]*)"|'([^'\n]*)'|`([^`\n]*)`/g;
-const RULESET_FILENAME = /nyc-rules\.[\w.-]+\.json/g;
+// WHAT THESE TWO RULES DO NOT COVER, kept current rather than written once and left to rot:
+//
+//   • Prose in code naming a superseded artifact goes stale silently. Deliberate, per the three
+//     reasons above. In a documentation lint, not here.
+//   • A path assembled by CONCATENATION — `"rules/nyc-rules.v" + version + ".json"` — is invisible.
+//     A multiline template literal used to be too, and no longer is, and the two are worth telling
+//     apart because they look like one gap: a template literal is a LEXICAL shape, so a scanner can
+//     see the whole path by matching across newlines, whereas concatenation needs the value of an
+//     expression, which needs real parsing and constant folding. One was a scanning bug; the other
+//     is a different tool. Half of this gap closed, and the half that did not is named.
+//   • A correct filename under a wrong directory, per the note on `existingRulesets` above.
+//
+// Covered as of this round and not before: the `RULES_FILE` override in `.env`, compose and
+// workflow files, which is where the only live stale reference in the repo actually was.
+// A backtick literal may span lines, and is matched across them: a path broken over two lines is
+// still one path. Quoted literals may not, which is the language's own rule.
+const STRING_LITERAL = /"[^"\n]*"|'[^'\n]*'|`[^`]*`/g;
+
+// The WHOLE filename token, compared exactly against what exists, rather than a prefix ending in
+// `.json`. A pattern that stopped at `.json` matched a prefix of `nyc-rules.v2.8.json.bak` and of
+// `nyc-rules.v2.8.jsonx`, found the prefix in the published set, and passed — accepting a reference
+// to a file that is not there. Taking the whole run and requiring an exact match closes both, and
+// requires the name to end at `.json` as a consequence rather than as a second rule: the set holds
+// only `.json` names. Trailing `.` and `-` are trimmed so a filename ending an English sentence
+// inside a string is not read as part of it.
+const RULESET_FILENAME = /nyc-rules\.[\w.-]*/g;
+
+/** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
+function danglingIn(text, insideStringsOnly) {
+  const found = [];
+  const lineOf = (index) => text.slice(0, index).split("\n").length;
+  const consider = (token, at) => {
+    const named = token.replace(/[.-]+$/, "");
+    if (!existingRulesets.has(named)) found.push({ line: lineOf(at), named });
+  };
+
+  if (!insideStringsOnly) {
+    for (const match of text.matchAll(RULESET_FILENAME)) consider(match[0], match.index);
+    return found;
+  }
+  for (const literal of text.matchAll(STRING_LITERAL)) {
+    for (const token of literal[0].matchAll(RULESET_FILENAME)) {
+      consider(token[0], literal.index + token.index);
+    }
+  }
+  return found;
+}
+
+/**
+ * Files that can set `RULES_FILE`, which is the override the resolver reads before its default.
+ *
+ * Scanned because the override is the one place a hardcoded version is invisible to the rule above:
+ * the mechanism built to point the resolver elsewhere was the mechanism no check could see through.
+ * `apps/api/.env.example` named `nyc-rules.v2.5.json` for three publications, and its own first line
+ * says "copy to .env for local dev" — so the documented way to run the api locally was to point it
+ * at a file deleted long ago.
+ *
+ * These are not JavaScript, and the JS rule's machinery is deliberately not stretched over them: a
+ * `KEY=value` line is not a string literal, and `#` is the comment marker in all three formats. So
+ * this is a second, narrower rule — every ruleset name anywhere in the file must exist.
+ *
+ * COMMENTS ARE SCANNED HERE, and that is the opposite of the JS rule on purpose. In code a comment
+ * is prose about the code; in a `.env` template a commented-out line is configuration waiting to be
+ * uncommented, which is exactly the thing that goes stale and then bites whoever enables it.
+ */
+const CONFIGURES_RULES_FILE =
+  /(^|\/)(\.env(\..+)?|docker-compose.*\.ya?ml)$|^\.github\/workflows\/.+\.ya?ml$/;
 
 /**
  * The file with its comments replaced by spaces, so offsets and line numbers still line up.
@@ -379,7 +449,10 @@ function withoutComments(source) {
   return out;
 }
 
-const scanned = sourceFiles(repoRoot);
+const scanned = filesUnder(repoRoot, (_relative, name) =>
+  CODE_EXTENSIONS.some((extension) => name.endsWith(extension)),
+);
+const configFiles = filesUnder(repoRoot, (relative) => CONFIGURES_RULES_FILE.test(relative));
 const danglingReferences = [];
 
 for (const file of scanned) {
@@ -395,20 +468,20 @@ for (const file of scanned) {
     );
     process.exit(1);
   }
-  const lines = scannable.split(/\r?\n/);
-  lines.forEach((line, index) => {
-    for (const literal of line.match(STRING_LITERAL) ?? []) {
-      for (const named of literal.match(RULESET_FILENAME) ?? []) {
-        if (!existingRulesets.has(named)) {
-          danglingReferences.push({ file: relative, line: index + 1, named });
-        }
-      }
-    }
-  });
+  for (const found of danglingIn(scannable, true)) {
+    danglingReferences.push({ file: relative, ...found });
+  }
+}
+
+for (const file of configFiles) {
+  const relative = file.slice(repoRoot.length + 1);
+  for (const found of danglingIn(readFileSync(file, "utf8"), false)) {
+    danglingReferences.push({ file: relative, ...found });
+  }
 }
 
 if (danglingReferences.length > 0) {
-  console.error("Executable code names a ruleset artifact that is not in the repo:\n");
+  console.error("A ruleset artifact is named that is not in the repo:\n");
   for (const reference of danglingReferences) {
     console.error(`  ✗ ${reference.file}:${reference.line} names ${reference.named}`);
   }
@@ -482,8 +555,8 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Ruleset reference check passed: ${scanned.length} source files scanned, every ruleset ` +
-    `path resolves, and ${pinFile} pins ${pinned[1]}.`,
+  `Ruleset reference check passed: ${scanned.length} source and ${configFiles.length} config ` +
+    `files scanned, every ruleset name exists, and ${pinFile} pins ${pinned[1]}.`,
 );
 console.log(`Baseline status check passed: ${checked.length} APPROVED artifacts consistent.`);
 for (const c of checked) console.log("  ✓ " + c);
