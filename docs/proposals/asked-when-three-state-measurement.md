@@ -316,9 +316,11 @@ The remaining routes to "in scope, unanswered" are:
 
    **It is not a verification-owner action alone, and rounds 4's wording implied it was.** An
    `asked_when` expression decides what a trigger resolves to, so widening one is rule-scoping
-   semantics: `DOCUMENTATION-GOVERNANCE.md` §94 requires "Verification owner plus engine owner" for
-   trigger, branch and formula semantics, and `AGENTS.md:29` says the same in the other direction.
-   So route 5 needs the engine owner's review as a mandatory safeguard, not just a publication.
+   semantics: `DOCUMENTATION-GOVERNANCE.md` §6 "Change classes and approvals" gives the row "Rule
+   trigger, dedupe, branch, deadline, or formula semantics" the approvers "Verification owner plus
+   engine owner", and `AGENTS.md` says the same in the other direction: "Rule-semantics changes
+   also need the engine owner's (Dev 1) review.". So route 5 needs the engine owner's review as a
+   mandatory safeguard, not just a publication.
 
    That does not make it a mistake-only route, which was the substantive point: it is a supported
    path, taken deliberately, by people entitled to take it. It does mean the path has a reviewer
@@ -698,8 +700,10 @@ was not reproducible.
     table**: attempt 2's unedited-fixture cell was 15 and is 0, carried across from attempt 1 rather
     than measured.
 15. **Route 5 was described as a verification-owner action alone** (section 3). It is rule-scoping
-    semantics, so `DOCUMENTATION-GOVERNANCE.md` §94 and `AGENTS.md:29` require the engine owner's
-    review too. Still a supported path rather than a mistake; now with its safeguard stated.
+    semantics, so the "Rule trigger, dedupe, branch, deadline, or formula semantics" row of
+    `DOCUMENTATION-GOVERNANCE.md` §6 "Change classes and approvals", and `AGENTS.md` on
+    rule-semantics changes, both require the engine owner's review too. Still a supported path
+    rather than a mistake; now with its safeguard stated.
 16. **The battery-row claim listed routes that cannot produce one** (section 5). Route 5 cannot
     reach `battery_present`, which has no `asked_when`, and route 3 is an in-memory record rather
     than a row. It is routes 1 and 2.
