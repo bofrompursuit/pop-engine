@@ -8,8 +8,28 @@ semantics question and says fixture impact needs measuring before it can be deci
 measurement, and the decision is the product owner's. The status above is the governance §3 state,
 which is about whether an artifact may be implemented, and there is nothing here to implement.
 
-Measured against `origin/main` at 46971a0, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, with the
-throwaway implementation described in section 2 reverted before publication.
+**Measurement basis.** Every number in this document was re-measured for round 5 on ONE tree:
+merge-base `481e1f6` with `origin/main`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, PostgreSQL
+16, suite size **1163**. The throwaway implementation described in section 2 is reverted before
+publication; this branch contains no engine change.
+
+**How to reproduce.** The provenance line has now been wrong or stale in three consecutive rounds,
+so the recipe is written down rather than implied:
+
+1. `git checkout 481e1f6` and `pnpm install --frozen-lockfile`.
+2. `pnpm --filter api migrate up` against an empty database. Omitting this produces a large false
+   failure count; the api suites are skipped without `DATABASE_URL` and fail against a stale schema.
+3. Apply one attempt from section 2. Attempts 1 and 2 differ only in the body of the `!isInScope`
+   branch of `resolveAnswer`; attempt 3 is attempt 1 plus the `verdict.ts` branching change.
+4. `pnpm vitest run` for the whole suite, and note that the fixture column in section 2's table
+   depends on whether `battery_present: false` has been added to the two fixture objects named
+   there.
+
+If a future reader gets a different number, the tree or step 2 is the first thing to check.
+
+**What has NOT been re-measured**, stated so nobody assumes otherwise: the answer-key impact of the
+ruleset alternative in section 6, which has never been measured at all and is flagged as such
+there.
 
 ---
 
@@ -92,11 +112,22 @@ requires every asked field that omits it. The schema claim is separate, and wher
 needs it, it is stated as a schema claim.
 
 **Three gates already express "unknown" as a real answer.** `obstructs_public_way`,
-`sapo_event_type` and `event_open_to_public` publish `unknown` in their `values`. For those, the
-distinction the issue asks for already exists and already works: `obstructs_public_way = unknown`
-satisfies `!= no`, so `sapo_event_type` is asked rather than scoped out. The gap is confined to
-gates whose type cannot carry the value: the 5 booleans, `location_type`, `headcount`, and
-`structure_types`.
+`sapo_event_type` and `event_open_to_public` publish `unknown` in their `values`. For those, an
+organizer who says so is handled correctly today: `obstructs_public_way = unknown` satisfies
+`!= no`, so `sapo_event_type` is asked rather than scoped out.
+
+**That does NOT confine the gap to the other eight, and rounds 1 to 4 said it did.** A published
+`unknown` only helps a row that actually STORES it. An in-scope NULL, or an answer that is simply
+missing, is a different state and the two-state `asked_when` collapses it exactly as it does for a
+boolean. This document contradicts itself on the point: section 4's chained-gate table shows a NULL
+`obstructs_public_way` scoping `sapo_event_type` out under today's semantics, and
+`obstructs_public_way` is one of the three gates that declares `unknown`. Route 5 in section 3 is
+the same fact again.
+
+So the three-state change reaches **all 11 gates**, not the 8 whose type cannot carry an explicit
+unknown. What the declared `unknown` value buys is a way for an organizer to SAY they do not know;
+what it does not buy is any handling of nobody having been asked. The two are different states and
+only the second is what issue #108 is about.
 
 ## 2. Which fixtures move
 
@@ -153,7 +184,7 @@ unknown set stopped shrinking.
 
 **Second attempt**, and rounds 1 and 2 of this document reported its result as the headline. It
 added a rule that an indeterminate field whose own value *is* present counts as answered. That
-terminates and passes 1161/1161, **but it is a different and narrower change than issue #108 asks
+terminates and passes 1163/1163, **but it is a different and narrower change than issue #108 asks
 for**, because under it the three states only diverge when the gate *and* the dependent are both
 unanswered. Reporting its number as "the answer key does not move" was measuring one thing and
 quoting it about another, and the number was relayed to the product owner and to an external
@@ -169,7 +200,7 @@ and there are finitely many gates.
 
 With that, plus the two fixture lines:
 
-> **Full suite: 1161/1161 pass, under the semantics issue #108 actually proposes. Zero answer-key
+> **Full suite: 1163/1163 pass, under the semantics issue #108 actually proposes. Zero answer-key
 > expectations move.**
 
 Verified live rather than inferred from a green suite, because a change that does nothing also
@@ -190,15 +221,20 @@ change at all (see the note under 4).
 2. The suite passing is evidence about the fixtures, not about production rows. Every failure the
    change produced came from a state that, as measured in section 3, the API cannot create.
 
-**Failure counts across the three attempts.** Every cell is measured on UNEDITED fixtures unless
-the column says otherwise, re-run together on one tree so they compare like with like (1163 tests
-after the round 4 rebase):
+**Failure counts across the three attempts.** All six cells re-measured for round 5 on the one tree
+named at the top, back to back, 1163 tests each:
 
-| Attempt | Semantics | Branching | Failures, fixtures unedited | After 2 fixture lines | Non-termination |
+| Attempt | Semantics | Branching | Fixtures unedited | After 2 fixture lines | Non-termination |
 | --- | --- | --- | --- | --- | --- |
-| 1 | as #108 asks | original | 15 (11 engine + 4 plan) | 5 | 5 fixtures |
-| 2 | narrower | original | 15 | 0 | none |
-| 3 | as #108 asks | on the gate | **6** (2 engine + 4 plan) | **0** | none |
+| 1 | as #108 asks | original | 15 fail | 5 fail | 5 fixtures |
+| 2 | narrower | original | **0 fail** | 0 fail | none |
+| 3 | as #108 asks | on the gate | 6 fail | **0 fail** | none |
+
+**Attempt 2's first cell was wrong in rounds 3 and 4**, which reported 15 there. It is 0: under the
+narrower rule a dependent that HAS a stored value counts as answered, and both fixture objects store
+`battery_system_kwh: 0`, so the fixture gap those two lines close never bites. The 15 was carried
+across from attempt 1 rather than measured. That is the fourth distinct defect found in this table,
+and it is why round 5 re-ran every cell instead of the changed ones.
 
 **Attempt 3's 6 is not attempt 1's 15 minus the 5 crashes, and that is worth being explicit about
 because the arithmetic invites the wrong inference.** The branching change is not semantics-neutral
@@ -277,6 +313,17 @@ The remaining routes to "in scope, unanswered" are:
    `sapo_event_type`. Widening either expression exposes every one of those rows.
    `battery_present` is the third schema-nullable gate but has no `asked_when` at all, so it cannot
    be widened; it is only reachable by route 1.
+
+   **It is not a verification-owner action alone, and rounds 4's wording implied it was.** An
+   `asked_when` expression decides what a trigger resolves to, so widening one is rule-scoping
+   semantics: `DOCUMENTATION-GOVERNANCE.md` §94 requires "Verification owner plus engine owner" for
+   trigger, branch and formula semantics, and `AGENTS.md:29` says the same in the other direction.
+   So route 5 needs the engine owner's review as a mandatory safeguard, not just a publication.
+
+   That does not make it a mistake-only route, which was the substantive point: it is a supported
+   path, taken deliberately, by people entitled to take it. It does mean the path has a reviewer
+   whose specific job is to notice this consequence, which is a real mitigation and belongs beside
+   the route rather than in a reader's assumptions.
 
 **So the state is not reachable through the API, and no route to it has ever been taken.** Routes 2
 and 3 are fixture mechanisms; they produced every failure this measurement observed, and none is a
@@ -413,7 +460,10 @@ rule in the ruleset whose trigger references the field.
 `battery_present` is itself NULL.** This is not a theoretical answer: the measurement produced
 precisely that finding, on precisely that rule, on the two fixtures where `battery_present` is
 absent. Since section 3 shows the API cannot produce a NULL `battery_present`, the reintroduction is
-confined to rows created by routes 1 to 3 and 5, none of which the API can produce.
+confined to rows created by **routes 1 and 2 only**, and rounds 1 to 4 listed more than that.
+Route 5 cannot reach it: `battery_present` has no `asked_when` to widen, as route 5's own entry
+says. Route 3 is an in-memory record and never a row at all, so it can reproduce the finding in a
+test but cannot put one in a database. Neither remaining route is something the API can do.
 
 So the argument against in the issue is correct in mechanism and narrow in reach: it is the same
 rule and the same shape, reachable only where an answer is genuinely missing.
@@ -486,9 +536,24 @@ What it buys: the distinction is expressible by an organizer who genuinely does 
 case the engine change does *not* address, because that change only helps where nobody was asked at
 all.
 
-What it does not do: help route 1. A row predating a column is still unanswered whatever the
-column's type, and neither does a widened `asked_when` under route 5. If either is the motivating
-case, only the engine change reaches it.
+**What it DOES do for route 1, which rounds 1 to 4 denied.** A gate introduced as an enum carrying
+`unknown` gives its migration a third option: write `unknown` for rows the registry puts in scope,
+and leave legitimately out-of-scope rows NULL. That is a real answer meaning "not known", which the
+engine already handles as an explicit unknown, so the uncertainty survives the migration instead of
+being asserted away. Migration 006 is the worked example running the other way: it had to write
+`false` for every NULL `battery_present` and says in its own comment that this asserts an answer
+nobody gave. Had `battery_present` been an enum with `unknown`, that backfill could have preserved
+the state, and `FDNY-GENERATOR-001` would have gone conditional rather than silently false.
+
+So the column type does bear on route 1, and the engine change is not the only option that
+preserves uncertainty there. The scope of that is narrow and worth stating exactly: it works for a
+gate introduced AS an enum, at the moment of introduction. It does nothing for the five booleans
+converted later, because their existing rows already hold `true` or `false` and there is no
+uncertainty left to preserve. And it does nothing for route 5, where the row's NULL predates any
+migration and no backfill is running.
+
+What it still does not reach: route 5, and any gate whose unanswered state arrives without a
+migration to write into.
 
 **On the corrected price this option is no longer the cheap one.** The engine change is **two
 files, `conditions.ts` +47/-3 and `verdict.ts` +18/-2**, with the answer key measured and unmoved
@@ -513,10 +578,12 @@ The two facts a decision should turn on, neither of which is about fixtures:
 
 - The state being protected against is **not reachable through the API today** (section 3), and no
   route to it has ever been taken. But **route 5, a widened `asked_when`, needs no migration and no
-  SQL**, so this is insurance against a routine ruleset publication rather than only against a
-  migration error. Rounds 1 to 3 of this document said the latter, and the product owner and an
-  external reviewer weighed it. No expression has ever been widened across six published versions,
-  so the gap is future rather than live.
+  SQL**, so this is insurance against a supported publication path rather than only against a
+  migration error. Rounds 1 to 3 said the latter, and the product owner and an external reviewer
+  weighed it. Two qualifiers, both of which cut against acting: no expression has ever been widened
+  across six published versions, so the gap is future rather than live; and the path requires the
+  engine owner's review as well as the verification owner's, so it has a mandatory reviewer whose
+  job includes noticing exactly this.
 - The change is **larger than the issue scopes it**: `verdict.ts` must change too, or the plan
   generator does not terminate (section 2). That is a correctness-critical file the issue does not
   mention, and it is where the whole difficulty of this change lives. The semantics are three lines;
@@ -562,14 +629,14 @@ evidence supports. Corrected, the two options are closer than the first version 
 
 Three more, and the first is the most serious error in the history of this document.
 
-5. **The headline number was measured on the wrong change.** 1161/1161 was the second attempt's
+5. **The headline number was measured on the wrong change.** The zero-failure result was the second attempt's
    result, which added a rule that a stored dependent answer overrides its unanswered gate. That is
    narrower than #108's semantics, the document said so in a later caveat, and the headline did not.
    It was quoted as the central fact to the product owner and to a cross-model reviewer.
 
    Round 3 took the option of fixing rather than qualifying: the recursion is fixed in `verdict.ts`
    by branching on the blocking gate, #108's semantics are preserved exactly, and the suite passes
-   1161/1161. So the headline survives, but it survives on a re-measurement rather than on the
+   with no failures. So the headline survives, but on a re-measurement rather than on the
    evidence originally offered for it, and the scope grew by a file. **The non-termination was
    never a property of the semantics.** It was a property of branching on a field that could not
    settle the unknown, and rounds 1 and 2 mistook the second for the first and weakened the
@@ -617,3 +684,33 @@ reasoning from.
 Finding 8 is the one that matters. Nine of the thirteen corrections in this document have run in
 the direction of its own conclusion, which is worth stating plainly given that its conclusion is
 "the measurement supports deferring".
+
+### Round 5
+
+Five more, and the first is the third consecutive round in which this document's primary evidence
+was not reproducible.
+
+14. **The provenance line and the headline count disagreed** (top of document). The line named the
+    pre-rebase base `46971a0` while section 2 described a post-rebase 1163-test tree, and the
+    headline still said 1161. Round 5 re-measured all six cells of section 2's table on ONE tree at
+    merge-base `481e1f6`, and added a reproduction recipe, because a number that has been wrong in
+    three different ways is not yet decidable evidence. **Re-running found a fourth defect in that
+    table**: attempt 2's unedited-fixture cell was 15 and is 0, carried across from attempt 1 rather
+    than measured.
+15. **Route 5 was described as a verification-owner action alone** (section 3). It is rule-scoping
+    semantics, so `DOCUMENTATION-GOVERNANCE.md` §94 and `AGENTS.md:29` require the engine owner's
+    review too. Still a supported path rather than a mistake; now with its safeguard stated.
+16. **The battery-row claim listed routes that cannot produce one** (section 5). Route 5 cannot
+    reach `battery_present`, which has no `asked_when`, and route 3 is an in-memory record rather
+    than a row. It is routes 1 and 2.
+17. **"The gap is confined to the eight gates whose type cannot carry unknown" was wrong**
+    (section 1), and contradicted section 4's own table. A published `unknown` helps a row that
+    STORES it; an in-scope NULL is a different state and collapses identically. The change reaches
+    all 11 gates.
+18. **"The enum option does not help route 1" was also wrong** (section 6), in the opposite
+    direction. A gate introduced as an enum with `unknown` lets its migration write `unknown` for
+    in-scope rows instead of inventing an answer, which is exactly what migration 006 could not do.
+
+17 and 18 are the same comparison wrong in both directions at once, which is worse than a lean.
+Across five rounds this document has taken 18 corrections, and eleven of them have favoured its own
+conclusion.
