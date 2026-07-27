@@ -710,45 +710,73 @@ function shiftDays(day: string, days: number): string {
 
 /**
  * The row's identity, per ARCHITECTURE's `{event_id}:{checklist_item_id}:{alert_type}:{send_at}`
- * with two deviations the schema forces and the example (an "e.g.") does not cover: the channel is
- * part of it, because `idempotency_key` is UNIQUE and the same alert on email and SMS is two rows;
- * and the plan-level slack warning is keyed on its plan instead of a send time it shares with the
- * clock.
+ * with three deviations the schema forces and the example (an "e.g.") does not cover: the channel
+ * is part of it, because `idempotency_key` is UNIQUE and the same alert on email and SMS is two
+ * rows; the plan-level slack warning is keyed on its plan instead of a send time it shares with the
+ * clock; and the DESTINATION is part of it, which is the third and is explained below.
+ *
+ * ONE ROW PER ALERT PER DESTINATION, because `alerts.recipient` is an audit fact and a row cannot
+ * hold two of them. `event_alert_contacts` exists on exactly this distinction: where this event's
+ * alerts GO is per-event and correctable, and where one MESSAGE went is per-row and immutable. The
+ * upsert then rewrote `recipient` in place, which is that argument's own sentence pointing the
+ * other way — a row that had already been attempted came out claiming the attempt targeted an
+ * address it was never sent to. Resend accepts a request, the api times out before it sees the
+ * response, the row is marked failed although a message may have reached the OLD address, and
+ * correcting the contact rewrote the only record of where that attempt went.
+ *
+ * Putting the destination in the key means a correction cannot rewrite anything: the corrected
+ * request finds no row to conflict with and INSERTs its own, and the row that was attempted keeps
+ * its recipient, its count and its error for good. The reconciler below then cancels it in the same
+ * statement it already used for every other superseded alert, because its key is no longer in the
+ * set the plan calls for. Cancelled is the right word rather than a new one — PopEngine intended to
+ * send it and no longer does, which is what that status has always meant here (AC 2). A SENT row is
+ * matched by neither the upsert nor the cancel, so the record of a delivered message is untouched.
+ *
+ * HASHED, NOT WRITTEN IN. The key is stored on every row and travels to the provider in a header,
+ * and an email address or a phone number in it would be contact data in two more places for no
+ * gain (AGENTS.md: do not log unredacted contact data). A digest changes exactly when the
+ * destination changes, which is all the key needs from it.
+ *
+ * No migration: this changes what goes IN the column, not the column or its UNIQUE constraint.
+ * Existing rows keep their keys and are superseded by the reconciler on the next review like any
+ * other stale alert, so there is nothing to backfill.
  */
-const idempotencyKey = (eventId: string, identity: string, channel: AlertChannel): string =>
-  `${eventId}:${identity}:${channel}`;
+const idempotencyKey = (
+  eventId: string,
+  identity: string,
+  channel: AlertChannel,
+  recipient: string,
+): string =>
+  `${eventId}:${identity}:${channel}:` +
+  createHash("sha256").update(recipient).digest("hex").slice(0, 12);
 
 /**
- * The key handed to the PROVIDER, which is the row's identity plus a fingerprint of the request.
+ * The key handed to the PROVIDER: the row's key plus a digest of the COPY that would be delivered.
  *
- * These were one value, and that conflation defeated the contact correction at the last layer it
- * could still be defeated at. An idempotency key means "this is the same request as before, do not
- * do it twice". The row's key does not mean that: it means "this is the same alert", and an alert
- * deliberately keeps its identity while its recipient is corrected — that is the whole point of
- * rounds 7 and 9. So a request the organizer had CHANGED reached Resend under the key of the one
- * it replaced.
+ * An idempotency key means "this is the same request as before, do not do it twice", and the row's
+ * key does not mean that on its own — it means "this is the same alert on the same channel to the
+ * same destination". An alert keeps that identity across regenerations while its subject and body
+ * are recomputed, so a payload the organizer would read as a different message reached Resend under
+ * the key of the one it replaced, and Resend was entitled to answer with its stored response for
+ * the original. A moved filing date is exactly that case: same requirement, same destination, new
+ * sentence, and the new sentence is the one that matters.
  *
- * The window is narrow and entirely real: Resend accepts an attempt, the api times out before it
- * sees the response, the row is marked failed with the provider already holding that key. The
- * organizer fixes the typo, and the retry arrives claiming to be a repeat of a request that had a
- * different recipient. Resend may serve its stored response for the original, or reject the
- * mismatch. Either way the corrected address gets nothing, and the row says failed with no
- * indication that the correction is the reason.
+ * NARROWED THIS ROUND, and the narrowing is the point rather than an omission. The digest used to
+ * cover the recipient too, because the recipient could change under a fixed row key. It cannot any
+ * more: the destination is part of the row key, so a corrected address is a different row with a
+ * different key before this function is reached. Covering it here as well would be a second
+ * mechanism for a case the first already decides, and two mechanisms for one case is how they drift
+ * apart. This one now has exactly one job: the copy.
  *
- * BOTH REQUIREMENTS HOLD AT ONCE, and neither is traded. The provider needs an identity that
- * changes when the request changes, and the audit record needs one that does not move: so the row
- * keeps `idempotency_key` untouched — same column, same UNIQUE constraint, same ON CONFLICT, same
- * value on a sent row forever — and the provider is given that key with a digest of the fields it
- * would actually deliver appended. Same request, same key, so the crash-window protection AD-13
- * depends on is exactly as strong as it was. Changed recipient, changed subject or changed body,
- * new key, so a corrected message is a new request to the provider because it IS one.
+ * Same copy, same key, so the crash-window protection AD-13 rests on is unchanged in strength — a
+ * lost mark-sent retries under the identical key and the provider delivers once.
  *
- * No column and no migration: the value is derived from the row at send time, which also means
- * there is no second place for it to fall out of step with what is being sent.
+ * No column and no migration: the value is derived from the row at send time, so there is no second
+ * place for it to fall out of step with what is being sent.
  */
 const providerKey = (row: DueAlertRow): string => {
-  const request = [row.recipient, row.payload.subject ?? "", row.payload.body ?? ""].join("\u0000");
-  return `${row.idempotency_key}:${createHash("sha256").update(request).digest("hex").slice(0, 16)}`;
+  const copy = [row.payload.subject ?? "", row.payload.body ?? ""].join("\u0000");
+  return `${row.idempotency_key}:${createHash("sha256").update(copy).digest("hex").slice(0, 16)}`;
 };
 
 /**
@@ -814,76 +842,50 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
     const keys: string[] = [];
     for (const alert of planned) {
       for (const channel of channels) {
-        const key = idempotencyKey(eventId, alert.identity, channel);
+        // Non-null: `channels` is filtered on exactly this.
+        const recipient = recipientFor(contacts, channel) ?? "";
+        const key = idempotencyKey(eventId, alert.identity, channel, recipient);
         keys.push(key);
         const { rows } = await client.query<{ inserted: boolean }>(
           `INSERT INTO alerts (id, event_id, checklist_item_id, alert_type, channel, recipient,
                                idempotency_key, send_at, status, payload)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9::jsonb)
            ON CONFLICT (idempotency_key) DO UPDATE
-             -- Same alert, recomputed. A pending row takes the new copy; a row cancelled by an
-             -- earlier regeneration comes back if the requirement did. A SENT row is matched by
-             -- the WHERE and left exactly as it is: AC 7's "sent alerts are never re-sent".
-             -- send_at moves with the payload now that an alert can keep its identity while its
-             -- date changes: the unlock is keyed on the requirement rather than on the date it
-             -- fires, so a regeneration that recomputes that date has to move the row it already
-             -- owns instead of leaving it pointing at the old day.
-             -- recipient too, and a failed row is in scope, which is what makes correcting a bad
-             -- address take effect. Without both, a typo could not be fixed: the pending copies
-             -- kept the old destination and the failed ones went on retrying to it forever. A
-             -- SENT row is still excluded and still immutable — that one is the audit record of
-             -- where a message actually went (AC 7).
+             -- SAME ALERT, SAME DESTINATION, RECOMPUTED — and the destination is now part of what
+             -- "same" means, because it is part of the key. A pending row takes the new copy; a row
+             -- cancelled by an earlier regeneration comes back if the requirement did. A SENT row is
+             -- matched by the WHERE and left exactly as it is: AC 7's "sent alerts are never
+             -- re-sent". send_at moves with the payload, because an alert keeps its identity while
+             -- its date changes: the unlock is keyed on the requirement rather than on the day it
+             -- fires, so a regeneration that recomputes that day has to move the row it already owns
+             -- instead of leaving it pointing at the old one.
              --
-             -- THE FAILURE EVIDENCE BELONGS TO THE DESTINATION, NOT TO THE ROW, and that is what
-             -- decides both lines below. failure_count and next_attempt_at exist to answer one
-             -- question — how much reason is there to believe this will not get through — and the
-             -- reason was always evidence about an address. Change the address and the evidence is
-             -- about something that is no longer there.
+             -- RECIPIENT IS NOT SET HERE, AND NOTHING ELSE NEEDS TO KEY ON IT EITHER. This clause
+             -- used to rewrite it, and to reset failure_count and next_attempt_at whenever it
+             -- changed, because a correction had to reach a row that already existed. It does not
+             -- any more: a corrected address hashes to a different key, so it INSERTs a fresh row
+             -- that starts at count 0 with no backoff by definition, and the row it replaces is
+             -- cancelled by the reconciler below and keeps every fact its attempts established.
+             -- Three mechanisms became one, and the two that went were not merely still-correct —
+             -- they were unreachable, since a row this statement conflicts with now necessarily has
+             -- the same recipient as the one being scheduled.
              --
-             -- Each line was wrong in the opposite direction. failure_count carried over, so a
-             -- corrected address inherited the old one's punishment: sorted behind fresh alerts by
-             -- the scan's ordering, and one transient failure at the NEW destination read the
-             -- retained count and jumped straight to the maximum backoff. That silently undid the
-             -- point of making the contact correctable at all. next_attempt_at was cleared
-             -- unconditionally, which is the same error mirrored: every checklist review wiped a
-             -- genuinely dead address's backoff and put it back at the head of the batch, which is
-             -- the monopolisation migration 010 exists to stop.
+             -- WHAT SURVIVES IS THE STATUS, and only the half of it that was never about the
+             -- recipient. A failed row whose review changed nothing must keep saying failed, or
+             -- failedDeliveries stops counting it and the organizer's warning disappears with no
+             -- new attempt made and the same dead address still in backoff. A cancelled row coming
+             -- back must go to pending. The recipient half of that condition is gone with the rest.
              --
-             -- So both now key on the same fact. A changed destination is a fresh start; an
-             -- unchanged one keeps everything the attempts against it established, however many
-             -- times the plan is reviewed.
+             -- Kept on the status rather than derived from failure_count in failedDeliveries: a row
+             -- that failed twice and then sent keeps a non-zero count forever, so a derived warning
+             -- would outlive the problem, and excluding sent rows to fix that just rebuilds status
+             -- out of two columns. One meaning for one word.
              --
-             -- AND THE STATUS IS PART OF THAT EVIDENCE, which retaining the other two exposed.
-             -- Pressing Save without touching the address flipped a failed row to pending while
-             -- keeping its failure_count and its future next_attempt_at, so failedDeliveries
-             -- stopped counting it and the organizer's warning vanished — with no new attempt
-             -- made and the same dead address still in backoff. Retaining the evidence and
-             -- discarding the word for it reports the opposite of what the row knows.
-             --
-             -- Kept on the status rather than derived from failure_count in failedDeliveries,
-             -- and the reason is that the derived version is worse where it differs: a row that
-             -- failed twice and then sent keeps a non-zero count forever, so the warning would
-             -- outlive the problem, and excluding sent rows to fix that just rebuilds status out
-             -- of two columns. One meaning for one word.
-             --
-             -- Every other reader already accepts 'failed' and is unaffected: the poller's scan
-             -- and claim both match ('pending', 'failed'), the reconciler's cancel matches both,
-             -- and this clause's own WHERE matches both. Checked rather than assumed.
+             -- Every other reader already accepts 'failed' and is unaffected: the poller's scan and
+             -- claim both match ('pending', 'failed'), the reconciler's cancel matches both, and
+             -- this clause's own WHERE matches both. Checked rather than assumed.
              SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at,
-                 status = CASE
-                   WHEN alerts.status = 'failed'
-                        AND alerts.recipient IS NOT DISTINCT FROM EXCLUDED.recipient THEN 'failed'
-                   ELSE 'pending'
-                 END,
-                 recipient = EXCLUDED.recipient,
-                 failure_count = CASE
-                   WHEN alerts.recipient IS DISTINCT FROM EXCLUDED.recipient THEN 0
-                   ELSE alerts.failure_count
-                 END,
-                 next_attempt_at = CASE
-                   WHEN alerts.recipient IS DISTINCT FROM EXCLUDED.recipient THEN NULL
-                   ELSE alerts.next_attempt_at
-                 END
+                 status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
            -- xmax = 0 is true only for a row this statement inserted, which is what separates a
            -- newly scheduled alert from one that already existed and was recomputed in place.
@@ -894,7 +896,7 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
             alert.checklistItemId,
             alert.alertType,
             channel,
-            recipientFor(contacts, channel),
+            recipient,
             key,
             alert.sendAt.toISOString(),
             JSON.stringify({ subject: alert.subject, body: alert.body }),
@@ -905,9 +907,13 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
     }
 
     // Everything still waiting to go out that the recomputed set no longer contains: a requirement
-    // the regeneration dropped, or a date it moved. Cancelled, never deleted — the row is the
-    // record that PopEngine intended to send it (AC 2). `failed` is included because a failed row
-    // is still queued for the next tick, and an obsolete alert must stop retrying too.
+    // the regeneration dropped, a date it moved, or — since the destination is part of the key — an
+    // address the organizer corrected. Cancelled, never deleted; the row is the record that
+    // PopEngine intended to send it, and for one that was attempted it is the record of where the
+    // attempt went (AC 2, AC 7). `failed` is included because a failed row is still queued for the
+    // next tick, and an alert nobody intends to send must stop retrying whether it is obsolete or
+    // superseded. This one statement is now the whole of what a contact correction does to the
+    // alerts that were already there.
     const { rowCount } = await client.query(
       `UPDATE alerts SET status = 'cancelled'
         WHERE event_id = $1

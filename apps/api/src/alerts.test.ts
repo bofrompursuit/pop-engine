@@ -1372,13 +1372,21 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       await materialize(eventId, { contactEmail: "organizer@example.test" });
 
-      const corrected = await alertsOf(eventId);
-      expect(corrected.every((row) => row.recipient === "organizer@example.test")).toBe(true);
+      // Round 11 changed HOW this holds and not WHETHER it does. The destination is part of the
+      // row key now, so the corrected address does not inherit a row at all — it gets its own,
+      // which starts at zero with no backoff by definition. The assertion is scoped to those rows
+      // because the superseded ones are still here on purpose, cancelled and carrying their
+      // evidence, which is the audit fact the test below this one covers.
+      const corrected = (await alertsOf(eventId)).filter(
+        (row) => row.recipient === "organizer@example.test",
+      );
+      expect(corrected.length).toBeGreaterThan(0);
       // Ordered as fresh: `ORDER BY failure_count, send_at, id` puts a non-zero count behind every
       // untried alert, so a corrected address would have queued behind them.
       expect(corrected.every((row) => row.failure_count === 0)).toBe(true);
       // And eligible now, rather than serving out a backoff the old address earned.
       expect(corrected.every((row) => row.next_attempt_at === null)).toBe(true);
+      expect(corrected.every((row) => row.status === "pending")).toBe(true);
     });
 
     it("keeps the evidence when a review changes nothing about the destination", async () => {
@@ -1418,13 +1426,60 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       await materialize(eventId, { contactEmail: "organizer@example.test" });
 
-      const after = new Map((await alertsOf(eventId)).map((row) => [row.id, row]));
+      const rows = await alertsOf(eventId);
+      const after = new Map(rows.map((row) => [row.id, row]));
       // The sent row is the record of where a message actually went, and does not move.
       expect(after.get(before[0]?.id ?? "")?.recipient).toBe("typo@example.test");
-      // Everything still to go — the failed one included, which was retrying to the bad address.
+      // Round 11: the correction reaches the same alerts, by superseding them rather than by
+      // rewriting them. Every row that was still to go is now cancelled and still says where it
+      // was addressed, and the same alerts exist again against the corrected address.
       for (const row of before.slice(1)) {
-        expect(after.get(row.id)?.recipient).toBe("organizer@example.test");
+        expect(after.get(row.id)?.recipient).toBe("typo@example.test");
+        expect(after.get(row.id)?.status).toBe("cancelled");
       }
+      const queued = rows.filter((row) => row.status === "pending");
+      expect(queued.every((row) => row.recipient === "organizer@example.test")).toBe(true);
+      // INCLUDING THE ONE THAT WAS ALREADY SENT, which is the consequence worth stating out loud
+      // rather than discovering. AC 7 says a sent alert is never re-sent, and with the destination
+      // in the key that reads as never re-sent TO THE SAME DESTINATION. A reminder that went to a
+      // typo did not reach the organizer, and refusing to deliver it to the address they just
+      // corrected would mean a correction can never repair anything already attempted — in a
+      // feature whose whole purpose is that a filing deadline does not pass unnoticed. The sent row
+      // itself is still immutable, and the same message can still never go twice to one address.
+      expect(queued.length).toBe(before.length);
+    });
+
+    it("never rewrites where an attempt was already made", async () => {
+      // THE AUDIT FACT A WHOLE TABLE EXISTS TO PROTECT. `event_alert_contacts` was justified on
+      // the distinction between where this event's alerts GO — per-event, correctable — and where
+      // one MESSAGE went — per-row, immutable. The upsert then rewrote `recipient` in place, which
+      // is that argument's own sentence pointing the other way.
+      //
+      // The damage is worst exactly where the row is least sure of itself: Resend accepts a
+      // request, the api times out before it sees the response, the row is marked failed although
+      // a message may have reached the old address. Rewriting the recipient there leaves the only
+      // record of that attempt naming an address it was never sent to.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "typo@example.test" });
+      const attempted = (await alertsOf(eventId))[0];
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 1,
+                           payload = payload || '{"last_error":"provider timed out"}'::jsonb
+          WHERE id = $1`,
+        [attempted?.id],
+      );
+
+      await materialize(eventId, { contactEmail: "organizer@example.test" });
+
+      const rows = new Map((await alertsOf(eventId)).map((row) => [row.id, row]));
+      const preserved = rows.get(attempted?.id ?? "");
+      // Where the attempt went, what it cost, and why it failed: all still true afterwards.
+      expect(preserved?.recipient).toBe("typo@example.test");
+      expect(preserved?.failure_count).toBe(1);
+      expect(preserved?.payload.last_error).toBe("provider timed out");
+      // And it stops retrying, because nobody intends to send it any more. Cancelled is the word
+      // this file already uses for that, rather than a new state for the same fact.
+      expect(preserved?.status).toBe("cancelled");
     });
 
     it("gives the provider a new identity when the address is corrected", async () => {
