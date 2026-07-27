@@ -17,7 +17,7 @@
 // 3. A HARD FLOOR IS NEVER SOFTENED (AC 3). A composite deadline's floor is a cliff, so reminder
 //    copy for one carries the floor sentence as well as the date.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 import { DEPENDENCY_SEQUENCING_BINDINGS } from "@pop-engine/engine";
@@ -477,6 +477,7 @@ function reminderCopy(
 function dependencyCopy(
   gated: PlanAlertRow,
   upstream: PlanAlertRow,
+  dependency: PlanAlertRow | undefined,
   gatedRendering: FindingRendering | undefined,
   dependencyNote: string | null,
   openOn: string,
@@ -487,6 +488,23 @@ function dependencyCopy(
     `${openOn} is the earliest a decision on your ${withAgency(upstream)} could come back` +
       (range === null ? "" : `, from its published ${range[0]}–${range[1]} day processing range`) +
       `. You can now pursue your ${withAgency(gated)}.`,
+    // THREE VERIFICATION STATES, because this alert is a claim about three published things and
+    // the reminder's single line does not cover it. AGENTS.md keeps those states visible END TO
+    // END and a notification is an end; the reminder builder was fixed for that and this builder
+    // was not, so the one alert that asserts a SEQUENCE between two agencies was the one arriving
+    // with no verification state at all.
+    //
+    // The third line is the one that matters most and the one a single-status shape cannot carry.
+    // `NYPD-SOUND-PARKS-DEP-001` publishes RESEARCH_REQUIRED on the sequencing itself: a strict
+    // issued-before-filed order is NOT confirmed. "You can now pursue" reads as a start date the
+    // agencies agree on, and without this line the unconfirmed part of the claim is the part the
+    // organizer cannot see. Every token is read off the plan item, never named here.
+    `Verification of your ${withAgency(gated)}: ${humanizeToken(gated.verification_status)}`,
+    `Verification of your ${withAgency(upstream)}: ${humanizeToken(upstream.verification_status)}`,
+    dependency === undefined
+      ? null
+      : `Verification of the sequencing between them: ` +
+        `${humanizeToken(dependency.verification_status)}`,
     ...filingRoute(gated, gatedRendering),
     dependencyNote,
   ].filter((line): line is string => line !== null);
@@ -607,12 +625,26 @@ async function plannedAlerts(
       }
     }
 
+    // A FILING DEADLINE THAT HAS PASSED CLOSES THE UNLOCK TOO, and the reminder guard above was
+    // not enough on its own. Materializing an older plan after the gated item's latest apply date
+    // correctly skips the reminder and then scheduled this anyway, on a day already behind, so the
+    // next tick sent "You can now pursue" about a window the same plan reports as missed. Two
+    // surfaces contradicting each other on one requirement, with the notification the one that is
+    // wrong.
+    //
+    // A NULL latest apply date is allowed through, deliberately. That is a gated requirement with
+    // no published filing deadline at all — nothing has closed, so there is nothing to contradict,
+    // and suppressing it would drop a true alert to guard against a state that cannot arise. The
+    // guard is about a date that has gone, not about the absence of one.
+    const filingStillOpen = applyBy === null || applyBy >= schedulingToday;
+
     // No binding or no upstream row means nothing published names what this waits on, and an
     // unlock alert that cannot name its dependency is not the alert AC 4 asks for.
-    if (openOn !== null && binding !== undefined && upstream !== undefined) {
+    if (openOn !== null && binding !== undefined && upstream !== undefined && filingStillOpen) {
       const { subject, body } = dependencyCopy(
         row,
         upstream,
+        byRuleId.get(binding.dependencyRuleId),
         rendering,
         renderings.get(renderingKey([binding.dependencyRuleId]))?.note_text ?? null,
         openOn,
@@ -685,6 +717,39 @@ function shiftDays(day: string, days: number): string {
  */
 const idempotencyKey = (eventId: string, identity: string, channel: AlertChannel): string =>
   `${eventId}:${identity}:${channel}`;
+
+/**
+ * The key handed to the PROVIDER, which is the row's identity plus a fingerprint of the request.
+ *
+ * These were one value, and that conflation defeated the contact correction at the last layer it
+ * could still be defeated at. An idempotency key means "this is the same request as before, do not
+ * do it twice". The row's key does not mean that: it means "this is the same alert", and an alert
+ * deliberately keeps its identity while its recipient is corrected — that is the whole point of
+ * rounds 7 and 9. So a request the organizer had CHANGED reached Resend under the key of the one
+ * it replaced.
+ *
+ * The window is narrow and entirely real: Resend accepts an attempt, the api times out before it
+ * sees the response, the row is marked failed with the provider already holding that key. The
+ * organizer fixes the typo, and the retry arrives claiming to be a repeat of a request that had a
+ * different recipient. Resend may serve its stored response for the original, or reject the
+ * mismatch. Either way the corrected address gets nothing, and the row says failed with no
+ * indication that the correction is the reason.
+ *
+ * BOTH REQUIREMENTS HOLD AT ONCE, and neither is traded. The provider needs an identity that
+ * changes when the request changes, and the audit record needs one that does not move: so the row
+ * keeps `idempotency_key` untouched — same column, same UNIQUE constraint, same ON CONFLICT, same
+ * value on a sent row forever — and the provider is given that key with a digest of the fields it
+ * would actually deliver appended. Same request, same key, so the crash-window protection AD-13
+ * depends on is exactly as strong as it was. Changed recipient, changed subject or changed body,
+ * new key, so a corrected message is a new request to the provider because it IS one.
+ *
+ * No column and no migration: the value is derived from the row at send time, which also means
+ * there is no second place for it to fall out of step with what is being sent.
+ */
+const providerKey = (row: DueAlertRow): string => {
+  const request = [row.recipient, row.payload.subject ?? "", row.payload.body ?? ""].join("\u0000");
+  return `${row.idempotency_key}:${createHash("sha256").update(request).digest("hex").slice(0, 16)}`;
+};
 
 /**
  * The addresses to schedule to: what the organizer just entered, falling back to what this event's
@@ -787,7 +852,29 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- So both now key on the same fact. A changed destination is a fresh start; an
              -- unchanged one keeps everything the attempts against it established, however many
              -- times the plan is reviewed.
-             SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at, status = 'pending',
+             --
+             -- AND THE STATUS IS PART OF THAT EVIDENCE, which retaining the other two exposed.
+             -- Pressing Save without touching the address flipped a failed row to pending while
+             -- keeping its failure_count and its future next_attempt_at, so failedDeliveries
+             -- stopped counting it and the organizer's warning vanished — with no new attempt
+             -- made and the same dead address still in backoff. Retaining the evidence and
+             -- discarding the word for it reports the opposite of what the row knows.
+             --
+             -- Kept on the status rather than derived from failure_count in failedDeliveries,
+             -- and the reason is that the derived version is worse where it differs: a row that
+             -- failed twice and then sent keeps a non-zero count forever, so the warning would
+             -- outlive the problem, and excluding sent rows to fix that just rebuilds status out
+             -- of two columns. One meaning for one word.
+             --
+             -- Every other reader already accepts 'failed' and is unaffected: the poller's scan
+             -- and claim both match ('pending', 'failed'), the reconciler's cancel matches both,
+             -- and this clause's own WHERE matches both. Checked rather than assumed.
+             SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at,
+                 status = CASE
+                   WHEN alerts.status = 'failed'
+                        AND alerts.recipient IS NOT DISTINCT FROM EXCLUDED.recipient THEN 'failed'
+                   ELSE 'pending'
+                 END,
                  recipient = EXCLUDED.recipient,
                  failure_count = CASE
                    WHEN alerts.recipient IS DISTINCT FROM EXCLUDED.recipient THEN 0
@@ -870,7 +957,7 @@ async function deliverClaimed(
       recipient: row.recipient,
       subject: row.payload.subject ?? "",
       body: row.payload.body ?? "",
-      idempotencyKey: row.idempotency_key,
+      idempotencyKey: providerKey(row),
     });
     await client.query(
       // `clock_timestamp()`, not `current_timestamp`: the latter is the TRANSACTION's start, and

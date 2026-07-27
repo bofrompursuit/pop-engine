@@ -343,6 +343,17 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           }),
         ],
       );
+      // The sequencing detail itself, which is a plan item like the two it sits between and is
+      // where the unlock alert's third verification state comes from. It becomes no checklist
+      // task, so it schedules nothing of its own — it is read, not alerted on.
+      await pool.query(
+        `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
+                                        sources, kind, disposition, deadline_status,
+                                        verification_status)
+         VALUES ($1, $2, ARRAY['NYPD-SOUND-PARKS-DEP-001'], '[]'::jsonb, 'Sound after Parks',
+                 'NYPD', '[]'::jsonb, 'dependency', 'required', 'on_track', 'RESEARCH_REQUIRED')`,
+        [randomUUID(), planId],
+      );
     }
     await pool.query(
       `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
@@ -1414,6 +1425,193 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       for (const row of before.slice(1)) {
         expect(after.get(row.id)?.recipient).toBe("organizer@example.test");
       }
+    });
+
+    it("gives the provider a new identity when the address is corrected", async () => {
+      // THE LAST LAYER THE CORRECTION COULD STILL BE DEFEATED AT, and the only one outside this
+      // database. Round 7 made the contact correctable, round 9 stopped the corrected address
+      // inheriting the old one's failures, and the request still reached Resend under the key of
+      // the message it replaced — so the provider was entitled to answer with its stored result
+      // for the original, or to reject the altered one. The corrected address received nothing.
+      //
+      // The window is reproduced exactly as reported: the provider ACCEPTS and records the key,
+      // the api never sees the response and marks the row failed. The fake dedupes on the key the
+      // way Resend does, which is what makes this test able to fail at all.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId);
+      const scheduleTo = async (email: string) => {
+        const client = await pool.connect();
+        try {
+          await schedulerWith()(client, eventId, planId, { email, phone: null });
+        } finally {
+          client.release();
+        }
+      };
+      await scheduleTo("typo@example.test");
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      await poller.tick();
+      expect(provider.delivered.some((sent) => sent.recipient === "typo@example.test")).toBe(true);
+
+      // The api timed out after the provider accepted: the mark-sent is lost, the key is not.
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', sent_at = NULL, failure_count = 1,
+                           next_attempt_at = NULL
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      await scheduleTo("organizer@example.test");
+      await poller.tick();
+
+      // Reusing the key, the fake deduplicates this away and nothing reaches the new address —
+      // which is precisely what the organizer would have experienced.
+      expect(provider.delivered.some((sent) => sent.recipient === "organizer@example.test")).toBe(
+        true,
+      );
+    });
+
+    it("keeps one identity across retries to an unchanged address", async () => {
+      // The half that must NOT change, and the reason the new key is derived rather than random.
+      // AC 2's crash requirement rests on the provider seeing the same key twice and delivering
+      // once; a key that rotated on every attempt would turn every lost mark-sent into a second
+      // message. This passes before the change as well as after — it is here to catch a fix that
+      // over-rotates, not as evidence for the one above.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const provider = fakeProvider();
+      provider.fail = "email provider unreachable: ECONNREFUSED";
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      await poller.tick();
+      await poller.tick();
+
+      const keys = new Set(provider.attempts.map((attempt) => attempt.idempotencyKey));
+      expect(provider.attempts.length).toBeGreaterThan(1);
+      expect(keys.size).toBe(1);
+    });
+
+    it("keeps warning about a failed channel when a review changes nothing", async () => {
+      // Round 9's consequence, and it landed on the one surface an organizer actually reads.
+      // Retaining failure_count and next_attempt_at while flipping the status to pending told
+      // `failedDeliveries` there was nothing to report — no new attempt had been made, the same
+      // dead address was still in backoff, and the warning disappeared because the row stopped
+      // using the word for what it knew.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 2,
+                           next_attempt_at = clock_timestamp() + interval '15 minutes'
+          WHERE event_id = $1`,
+        [eventId],
+      );
+      const warned = await failedDeliveries(pool, eventId);
+      expect(warned).toHaveLength(1);
+
+      // Save pressed, nothing changed.
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+
+      expect(await failedDeliveries(pool, eventId)).toEqual(warned);
+    });
+
+    it("stops warning once the address itself is corrected", async () => {
+      // The mirror, and what keeps the status honest in the other direction: a fresh destination
+      // has no attempts against it, so there is no failure to report. Same rule as the count and
+      // the backoff, applied to the word.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "typo@example.test" });
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 2 WHERE event_id = $1`,
+        [eventId],
+      );
+      expect(await failedDeliveries(pool, eventId)).toHaveLength(1);
+
+      await materialize(eventId, { contactEmail: "organizer@example.test" });
+
+      expect(await failedDeliveries(pool, eventId)).toEqual([]);
+    });
+
+    it("does not unlock a window whose filing deadline has already passed", async () => {
+      // Materializing an older plan: the reminder guard correctly skips a filing date behind us,
+      // and this scheduled the unlock anyway. The poller then sent "You can now pursue" about a
+      // window the same plan reports as missed, so the notification contradicted the checklist on
+      // one requirement and the notification was the surface that was wrong.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(-3),
+        applyAfterDate: dayFromToday(-10),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      expect(rows.some((row) => row.alert_type === "dependency_unlocked")).toBe(false);
+    });
+
+    it("still unlocks while the filing deadline is ahead", async () => {
+      // The guard is about a date that has gone, not about a gate that opened in the past: an
+      // organizer converting a plan a week late is exactly who the unlock is for, as long as they
+      // can still file. Here to stop the fix above being written as "no past apply_after_date".
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(7),
+        applyAfterDate: dayFromToday(-10),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      expect(rows.some((row) => row.alert_type === "dependency_unlocked")).toBe(true);
+    });
+
+    it("carries all three verification states on an unlock alert", async () => {
+      // AGENTS.md keeps these states visible END TO END and a notification is an end. The reminder
+      // builder was fixed for that; this builder was not, so the one alert that asserts a SEQUENCE
+      // between two agencies arrived with no verification state at all.
+      //
+      // The third line is the one a single status cannot carry. The sequencing rule publishes
+      // RESEARCH_REQUIRED on the order itself — issued-before-filed is not confirmed — and "You
+      // can now pursue" reads as a start date the agencies agree on. Without it, the unconfirmed
+      // part of the claim is the part the organizer cannot see.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(7),
+        applyAfterDate: dayFromToday(3),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const unlock = (await alertsOf(eventId)).find(
+        (row) => row.alert_type === "dependency_unlocked",
+      );
+      const body = unlock?.payload.body ?? "";
+      expect(body).toContain("Verification of your Sound Device Permit (NYPD): SOURCE CONFIRMED");
+      expect(body).toContain(
+        "Verification of your Special Event Permit (NYC Parks): SOURCE CONFIRMED",
+      );
+      expect(body).toContain("Verification of the sequencing between them: RESEARCH REQUIRED");
     });
 
     it("does not announce a second unlock when regeneration recomputes the same gate", async () => {
