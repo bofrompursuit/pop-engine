@@ -10,6 +10,7 @@ import {
   type PlanResult,
   type RulesMetaResponse,
 } from "./plan-api";
+import { InsurancePanel } from "./insurance-panel";
 import { PlanLine } from "./plan-line";
 import { compareToPinned, SnapshotBanner } from "./snapshot-banner";
 import { AT_RISK_BUFFER_NOTE, verdictCopy } from "./verdict-copy";
@@ -346,6 +347,11 @@ export function PlanView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId:
               {AT_RISK_BUFFER_NOTE}
             </p>
           )}
+
+          {/* F-205: a dedicated card for R10/R11's insurance findings, above the line items each
+              still renders from (AC 5). Nothing at all when none of the three rules triggered
+              (AC 3) — that silence is `InsurancePanel`'s own, not a state this page decides. */}
+          <InsurancePanel findings={plan.findings} eventId={eventId} />
 
           {plan.findings.length === 0 ? (
             /* F-201 AC 4 and ARCHITECTURE both make the near-empty result first-class, in those

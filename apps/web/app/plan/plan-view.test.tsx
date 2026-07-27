@@ -1119,7 +1119,12 @@ describe("a rule whose whole deadline is its type", () => {
     );
     renderPlan();
 
-    const line = within(await screen.findByRole("article"));
+    // F-205 also renders SAPO-INSURANCE-001 as its own dedicated card, so two articles now match
+    // this rule id; this test is about the plan LINE (F-206), scoped here by its own class.
+    await screen.findAllByRole("article");
+    const planLine = document.querySelector("article.line");
+    expect(planLine).not.toBeNull();
+    const line = within(planLine as HTMLElement);
     expect(line.getByText("before issuance")).toBeDefined();
   });
 
