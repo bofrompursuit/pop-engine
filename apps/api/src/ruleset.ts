@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,9 @@ const EXPECTED_ADVISORY_COUNT = 4;
 /** Published rulesets are `nyc-rules.v<version>.json`; `rules/proposals/` is drafts and excluded. */
 const PUBLISHED_RULESET = /^nyc-rules\.v.+\.json$/;
 
+/** The artifact family this api can read. `EXPECTED_SCHEMA` pins the exact token at validation. */
+const SCHEMA_FAMILY = "popengine-rules/";
+
 const RULES_DIRECTORY = fileURLToPath(new URL("../../../rules/", import.meta.url));
 
 /**
@@ -56,7 +59,63 @@ const RULES_DIRECTORY = fileURLToPath(new URL("../../../rules/", import.meta.url
  * contents are the ratified ones, so a bump that publishes v2.9 without updating that constant
  * still fails loudly at boot — which is the intended behaviour, not a gap.
  */
-function publishedRulesFile(): string {
+/**
+ * Asserts that `path` is a published ruleset, and nothing more than that.
+ *
+ * The cost of finding rather than naming. A named path failed loudly when the file was missing;
+ * discovery succeeds on any file whose NAME fits, so a truncated download, a merge artefact or a
+ * half-written publish would be found and booted from. The name is not evidence, so the file is
+ * asked to identify itself: it must parse as JSON, declare a `popengine-rules/*` schema, and carry
+ * a non-empty `ruleset_version`.
+ *
+ * It stops there deliberately. `validateRuleset` below already checks the schema token exactly, the
+ * version against `EXPECTED_RULESET_VERSION`, the rule and advisory counts, and every field of
+ * every rule — and `loadRuleset` runs it on whatever path this returns. Re-checking any of that
+ * here would be a second copy of the contract, free to drift from the one that boots the api. This
+ * answers "is this the artifact?"; `validateRuleset` answers "is it the approved artifact?".
+ */
+function assertPublishedRuleset(path: string): void {
+  let document: unknown;
+  try {
+    document = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `${path} matches the published-ruleset name pattern but is not readable JSON: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const record =
+    typeof document === "object" && document !== null
+      ? (document as Record<string, unknown>)
+      : null;
+  const schema = record?.schema;
+  if (typeof schema !== "string" || !schema.startsWith(SCHEMA_FAMILY)) {
+    throw new Error(
+      `${path} matches the published-ruleset name pattern but does not declare a ` +
+        `${SCHEMA_FAMILY}* schema (found ${JSON.stringify(schema)}); it is not a published ruleset`,
+    );
+  }
+  const version = record?.ruleset_version;
+  if (typeof version !== "string" || version === "") {
+    throw new Error(
+      `${path} declares a ${SCHEMA_FAMILY}* schema but carries no ruleset_version ` +
+        `(found ${JSON.stringify(version)}); it is not a published ruleset`,
+    );
+  }
+}
+
+/**
+ * The published artifact itself, ignoring any `RULES_FILE` override. Exported so the suites that
+ * assert against the real ruleset read the same one the api boots from rather than spelling their
+ * own path to it.
+ *
+ * A FUNCTION RATHER THAN A CONST, which is the whole of the override fix. As a module-scope const
+ * this scanned the directory at IMPORT, so a missing or ambiguous `rules/` threw before
+ * `rulesFilePath` ever looked at `RULES_FILE` — defeating the override in precisely the situation
+ * someone reaches for it, which is pointing the api at a file when the directory is not in the
+ * expected state. Nothing scans now until something actually needs the default.
+ */
+export function publishedRulesFile(): string {
   const published = readdirSync(RULES_DIRECTORY).filter((entry) => PUBLISHED_RULESET.test(entry));
   if (published.length !== 1) {
     throw new Error(
@@ -64,15 +123,10 @@ function publishedRulesFile(): string {
         (published.length === 0 ? "" : `: ${published.join(", ")}`),
     );
   }
-  return `${RULES_DIRECTORY}${published[0] as string}`;
+  const path = `${RULES_DIRECTORY}${published[0] as string}`;
+  assertPublishedRuleset(path);
+  return path;
 }
-
-/**
- * The published artifact itself, ignoring any `RULES_FILE` override. Exported so the suites that
- * assert against the real ruleset read the same one the api boots from rather than spelling their
- * own path to it.
- */
-export const PUBLISHED_RULES_FILE = publishedRulesFile();
 
 export const RULE_KINDS = new Set([
   "permit",
@@ -502,7 +556,14 @@ export function validateRuleset(value: unknown): PublishedRuleset {
 
 /** The published ruleset path the api boots from; the engine parses the same file (AD-2). */
 export function rulesFilePath(): string {
-  return process.env.RULES_FILE ? resolve(process.env.RULES_FILE) : PUBLISHED_RULES_FILE;
+  // The override is consulted BEFORE the directory is scanned. It used to be the other way round
+  // only by accident — the default was a module-scope const — and that made the escape hatch
+  // unusable exactly when it was needed: a caller who set RULES_FILE because `rules/` was empty,
+  // ambiguous or holding a bad artifact still got the scan's error, about a directory they had
+  // just said not to use. What the override names is the caller's explicit choice, so it is
+  // returned unexamined here; `loadRuleset` validates it in full either way.
+  const override = process.env.RULES_FILE;
+  return override !== undefined && override !== "" ? resolve(override) : publishedRulesFile();
 }
 
 export async function loadRuleset(filePath = rulesFilePath()): Promise<PublishedRuleset> {
