@@ -1,6 +1,6 @@
 # F-203 · Deadline Alerts
 
-**Status:** APPROVED (2026-07-25; maximum reminder offset ratified 2026-07-26, product-owner approved, resolving the P1 on PR #125; outputs amended 2026-07-27 to name `event_alert_contacts`, product-owner approved on PR #131) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
+**Status:** APPROVED (2026-07-25; maximum reminder offset ratified 2026-07-26, product-owner approved, resolving the P1 on PR #125; outputs amended 2026-07-27 to name `event_alert_contacts`, product-owner approved on PR #131; AC 7 and the `dependency_unlocked` row amended 2026-07-27 to carry the destination and null `latest_apply_date` qualifiers the implementation already had, product-owner approved on PR #131) · **Reviewer/approver:** product owner + affected lane owners via the approval PR · **Owner:** see Lane below · see `docs/BASELINE.md`.
 **Phase:** 1 (core, week 2; happy path) · **Lane:** Dev 4 · **Depends on:** F-202 (scheduling happens at checklist creation) · **Feeds:** F-305/F-413 reuse the plumbing (post-MVP)
 
 ## User Story
