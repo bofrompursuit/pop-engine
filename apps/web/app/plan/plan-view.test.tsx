@@ -422,7 +422,7 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     }
   });
 
-  it("renders the explicit source-not-established state for a source-less coverage gap", async () => {
+  it("renders the explicit not-covered-by-this-ruleset-version state for a source-less coverage gap", async () => {
     // ADV-ALCOHOL-PUBLIC-001 is a COVERAGE_GAP advisory: it asserts nothing and cites nothing.
     const line = await lineFor(
       finding({
