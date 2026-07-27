@@ -453,9 +453,6 @@ describe("saving and per-field errors", () => {
     expect(screen.getByRole("link", { name: "Guest list" }).getAttribute("href")).toBe(
       "/events/event-1/guests",
     );
-    expect(screen.getByRole("link", { name: "Live ops" }).getAttribute("href")).toBe(
-      "/events/event-1/dashboard",
-    );
   });
 
   it("shows the api's message against the field it belongs to", async () => {

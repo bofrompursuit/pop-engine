@@ -25,14 +25,6 @@ export type LoadEventStatsOptions = {
 
 const UNREACHABLE = "The API could not be reached.";
 
-async function readJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
-
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -66,6 +58,22 @@ function parseStats(body: unknown): EventStats | null {
   };
 }
 
+/**
+ * Read JSON with the request abort still armed. A stall after headers but mid-body must not
+ * leave DashboardView permanently `inFlight` (timeout cleared too early).
+ */
+async function readJsonBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<{ ok: true; body: unknown } | { ok: false }> {
+  try {
+    return { ok: true, body: await response.json() };
+  } catch {
+    if (signal.aborted) return { ok: false };
+    return { ok: true, body: null };
+  }
+}
+
 export async function loadEventStats(
   apiBaseUrl: string,
   eventId: string,
@@ -86,36 +94,44 @@ export async function loadEventStats(
     controller.abort();
   }, timeoutMs);
 
-  let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/api/events/${eventId}/stats`, {
-      ...CREDENTIALED,
-      signal: controller.signal,
-    });
-  } catch {
-    return { ok: false, message: UNREACHABLE };
+    let response: Response;
+    try {
+      response = await fetch(`${apiBaseUrl}/api/events/${eventId}/stats`, {
+        ...CREDENTIALED,
+        signal: controller.signal,
+      });
+    } catch {
+      return { ok: false, message: UNREACHABLE };
+    }
+
+    // Timeout stays active through body consumption — headers-only success can still hang on JSON.
+    const parsed = await readJsonBody(response, controller.signal);
+    if (!parsed.ok) {
+      return { ok: false, message: UNREACHABLE };
+    }
+    const body = parsed.body;
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: failureMessage(
+          body,
+          response.status === 404
+            ? "That event was not found."
+            : `Live ops stats could not be loaded (HTTP ${response.status}).`,
+        ),
+      };
+    }
+    const stats = parseStats(body);
+    if (stats === null) {
+      return { ok: false, message: "The API returned stats this page cannot read." };
+    }
+    return { ok: true, stats };
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", onExternalAbort);
   }
-
-  const body = await readJson(response);
-  if (!response.ok) {
-    return {
-      ok: false,
-      message: failureMessage(
-        body,
-        response.status === 404
-          ? "That event was not found."
-          : `Live ops stats could not be loaded (HTTP ${response.status}).`,
-      ),
-    };
-  }
-  const stats = parseStats(body);
-  if (stats === null) {
-    return { ok: false, message: "The API returned stats this page cannot read." };
-  }
-  return { ok: true, stats };
 }
 
 /** Polling interval from the F-402 spec (~5 seconds; no websockets in MVP). */
