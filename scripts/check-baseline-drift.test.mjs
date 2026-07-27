@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -916,5 +924,130 @@ describe("round 10: package scripts are executable entry points", () => {
 
     expect(status).toBe(1);
     expect(output).toContain("could not be parsed");
+  });
+});
+
+describe("round 11: a bump does not break the guard", () => {
+  const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const NEXT = ruleset("2.9");
+
+  /** The tree as it will look the day v2.9 ships: the new artifact published, the old one gone. */
+  const afterTheBump = (files) => {
+    const root = plant({ [`rules/${FIXTURE_RULESET}`]: null, ...files });
+    roots.push(root);
+    mkdirSync(join(root, "rules"), { recursive: true });
+    writeFileSync(join(root, "rules", NEXT), JSON.stringify({ ruleset_version: "nyc.v2.9" }));
+    writeFileSync(
+      join(root, "apps/api/src/ruleset.ts"),
+      `const EXPECTED_RULESET_VERSION = "nyc.v2.9";\n`,
+    );
+    return check(root);
+  };
+
+  // THE FINDING, and the reason it is a test rather than a fix to twelve lines. This PR exists
+  // because a bump left dangling paths and took main from 957 tests to 542 with 415 silently not
+  // running. A guard that then FAILS the next bump, loudly, on files that are correct, is the
+  // disabling-pressure case: whoever it blocks switches it off, and the class it was built to catch
+  // comes back with the guard disabled.
+  //
+  // The REAL file is read rather than a paraphrase of it, because a copy proves only that the copy
+  // is safe. A fixture name that spells the current version is a fixture that needs editing every
+  // bump, which is the maintenance this whole PR exists to end.
+  it("passes with the real rules-file.test.ts when the published artifact has moved on", () => {
+    const { status, output } = afterTheBump({
+      "apps/web/app/rules-file.test.ts": readFileSync(
+        join(repo, "apps/web/app/rules-file.test.ts"),
+        "utf8",
+      ),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
+  });
+
+  // The whole repo, not one file, since any source file may name the version that just went away.
+  it("passes with every real source file when the published artifact has moved on", () => {
+    const sources = {};
+    const collect = (directory) => {
+      for (const entry of readdirSync(join(repo, directory), { withFileTypes: true })) {
+        const relative = `${directory}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (!["node_modules", ".next", "dist", "coverage"].includes(entry.name)) collect(relative);
+        } else if (
+          // The replay fixtures come too. `engine.test.ts` points at
+          // `__fixtures__/nyc-rules.v2.3.json`, which is a superseded ruleset kept so old plans
+          // replay and is NOT affected by a bump; leaving it out of the planted tree would fail
+          // this test for a reason that has nothing to do with publishing.
+          (/\.(ts|tsx)$/.test(entry.name) && !relative.includes("/ruleset.ts")) ||
+          relative.includes("/__fixtures__/")
+        ) {
+          sources[relative] = readFileSync(join(repo, relative), "utf8");
+        }
+      }
+    };
+    collect("apps/web/app");
+    collect("packages/engine/src");
+
+    const { status, output } = afterTheBump(sources);
+
+    expect(Object.keys(sources).length).toBeGreaterThan(20);
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
+  });
+
+  // The pair, and it is what stops the two tests above from being satisfied by a check that has
+  // simply stopped looking. A file that really does point at the deleted artifact must still fail
+  // after the bump, which is the entire original purpose.
+  it("still fails a real path to the artifact the bump deleted", () => {
+    const { status, output } = afterTheBump({
+      "apps/web/app/reader.ts": `export const p = "rules/${FIXTURE_RULESET}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${FIXTURE_RULESET}`);
+  });
+});
+
+describe("round 11: cooked values are tokenized as values", () => {
+  // Round 9 unified the JS rule on cooked values and kept the class that had served the raw scan.
+  // In a cooked value the parser has already resolved the delimiters, so these are ordinary
+  // filename characters and the token was truncating to the published prefix: matched exactly,
+  // passed, and the runtime opens the whole thing and gets ENOENT. Same family as `.bak` and
+  // `?backup`, reached by a route the earlier fixes did not cover.
+  it.each([
+    ["an opening brace", "{backup"],
+    ["a closing brace", "}backup"],
+    ["a single quote", "'backup"],
+    ['a double quote', '\\"backup'],
+    ["a backtick", "`backup"],
+  ])("fails a published name with %s in a string literal", (_label, suffix) => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET}${suffix}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${FIXTURE_RULESET}`);
+  });
+
+  // The pair, and the reason the two classes are separate rather than merged onto the wider one.
+  // In raw config text those characters ARE delimiters: a quoted YAML value ends at its quote, and
+  // a name that ran through it would swallow the punctuation and report a file nobody wrote.
+  it("still reads a quoted name in a workflow file as ending at its quote", () => {
+    const { status, output } = runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/${MISSING}"\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`.github/workflows/ci.yml:4 names ${MISSING}`);
+    // The quote is not part of the name, which is what the raw-text class buys.
+    expect(output).not.toContain(`${MISSING}"`);
+  });
+
+  it("still accepts a quoted published name in a workflow file", () => {
+    const { status } = runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/${FIXTURE_RULESET}"\n`,
+    });
+
+    expect(status).toBe(0);
   });
 });

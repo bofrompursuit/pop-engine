@@ -508,33 +508,43 @@ function resolves(named, text, at) {
 // name. Taking the whole run is only a fix if the run ends where the FILENAME ends, and `?`, `#`,
 // `%`, `:` and the rest of that set are legal in one.
 //
-// So the class is stated as what a filename cannot contain here, not as a shortlist of what it can:
+// So the class is stated as what a filename cannot contain, not as a shortlist of what it can — and
+// there are TWO of them, because the two rules read two different kinds of text and the answer is
+// genuinely different. Keeping one set for both is what this round is fixing, so the split is
+// written out rather than left to be inferred:
+//
+// IN A COOKED VALUE the delimiters are already gone. The parser resolved them: by the time this
+// sees `rules/nyc-rules.v2.8.json{backup`, there is no quote, no backtick and no `${`, only the
+// string the runtime will hand to `readFileSync`. Every one of those characters is an ordinary
+// filename character there, so only two things can end the token:
 //
 //   • `/` ends the segment — the directory is read separately, by `resolves`;
-//   • whitespace ends the token in every format scanned;
-//   • `'`, `"`, backtick, `{` and `}` are delimiters and flow punctuation in the CONFIG text the
-//     second rule reads whole, so a name at the end of a quoted YAML value must stop before its
-//     closing quote.
+//   • whitespace, which ends a filename by universal convention and keeps a diagnostic readable
+//     when a value is prose rather than a path.
 //
-// The delimiter exclusions used to serve the JS rule too, back when it scanned raw literal text.
-// It scans COOKED VALUES now (see below), and a value has no delimiters in it, so there they cost
-// nothing and are simply never reached.
+// IN RAW CONFIG TEXT the delimiters are still present and still delimit. A `.env` or YAML file is
+// read whole, so a name at the end of a quoted value has to stop before its closing quote, and `{`
+// and `}` bound a YAML flow mapping. Those five exclusions earn their place there and only there.
 //
-// `\` WAS IN THIS SET AND IS NOT ANY MORE, which is a consequence of that move rather than a
-// separate decision. It was excluded as an escape lead-in, to stop a real `\n` written after a real
-// path being read as part of it — a hazard that only exists in raw source text. In a cooked value a
-// backslash is one ordinary character of the filename, and truncating there was reporting
-// `nyc-rules.v2.8` for a path that is nothing of the sort. Round 8 recorded the resulting false
-// NEGATIVE, `nyc-rules.v2.8.json\backup` reading as the published name, and missed that the same
-// truncation produces false POSITIVES in the other direction. Both close together: the token now
-// runs through the backslash and is compared whole, and a real newline is still excluded by `\s`.
-const RULESET_FILENAME = /nyc-rules\.[^\s/'"`{}]*/g;
+// WHY THIS WAS ONE SET AND WHY THAT WAS WRONG. Round 9 unified the JS rule on cooked values and
+// kept the raw-oriented class that had served the old raw scan. The exclusions were then describing
+// text the rule no longer read: `rules/nyc-rules.v2.8.json{backup` and the same with a quote
+// truncated to the published prefix, matched exactly, and passed, while the runtime opens the whole
+// token and gets ENOENT. That is the `.bak` and `?backup` family again, arriving by a route the
+// earlier fixes did not cover.
+//
+// `\` LEFT THE COOKED SET IN ROUND 9 for exactly this reason, one character early. It was excluded
+// as an escape lead-in, a hazard that only exists in raw source text, and truncating there reported
+// `nyc-rules.v2.8` for a path that is nothing of the sort. The reasoning was right and stopped at
+// the character that had been reported; the rest of the class needed the same treatment.
+const RULESET_FILENAME_IN_VALUE = /nyc-rules\.[^\s/]*/g;
+const RULESET_FILENAME_IN_TEXT = /nyc-rules\.[^\s/'"`{}]*/g;
 
 /** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
 function danglingIn(text) {
   const found = [];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
-  for (const match of text.matchAll(RULESET_FILENAME)) {
+  for (const match of text.matchAll(RULESET_FILENAME_IN_TEXT)) {
     if (!resolves(match[0], text, match.index)) {
       found.push({ line: lineOf(match.index), named: match[0] });
     }
@@ -582,7 +592,7 @@ function danglingInLiterals(sourceFile, literals) {
   const found = [];
   for (const literal of literals) {
     const valueAt = literal.raw.indexOf(literal.cooked);
-    for (const token of literal.cooked.matchAll(RULESET_FILENAME)) {
+    for (const token of literal.cooked.matchAll(RULESET_FILENAME_IN_VALUE)) {
       if (resolves(token[0], literal.cooked, token.index)) continue;
       if (literal.continues && token.index + token[0].length === literal.cooked.length) continue;
       const at =
@@ -597,12 +607,22 @@ function danglingInLiterals(sourceFile, literals) {
  * The one exemption, and the only one: a line in a TEST file that declares its ruleset names are
  * fixtures rather than paths.
  *
- * WHY IT EXISTS. `apps/web/app/rules-file.test.ts` builds `nyc-rules.v2.9.json` and
- * `nyc-rules.v3.0.json` as names for a temp directory it creates, to prove discovery returns the
- * one published ruleset WHATEVER VERSION IT NAMES. They are deliberately fictional and they must
- * stay fictional for the test to mean anything. This is the second file to need this: the check's
- * own suite got there first and assembled its names through a lexer blind spot that the parser
- * then closed. Two files reaching for the same trick is evidence about the trick.
+ * NOTHING IN THE REPO CLAIMS IT ANY MORE, and that is the outcome of the round it nearly broke.
+ * `apps/web/app/rules-file.test.ts` built fixture names for a temp directory it creates, marked
+ * three lines of them, and left twelve more unmarked. Those twelve passed only because the version
+ * they spelled happened to still be on disk: publishing v2.9 and deleting v2.8 turns every one into
+ * a dangling reference, so the guard written to make a bump safe would have failed the bump, loudly,
+ * on a file that is correct. Verified against that tree rather than argued.
+ *
+ * The line pair was the wrong unit and marking the other twelve was the wrong fix — it works until
+ * someone writes a thirteenth. That file now assembles its names from a version this repo will never
+ * publish, so it needs no exemption at all and nothing in it needs editing when a version ships.
+ * `A BUMP DOES NOT BREAK THE GUARD` in the suite plants a v2.9-only tree, drops the REAL file into
+ * it and asserts a pass, so the next publication finds out here rather than during the release.
+ *
+ * THE MECHANISM STAYS, for a test that genuinely needs a name that does not exist rather than one
+ * that merely needs A name. That distinction is the whole of when to reach for this: if any valid
+ * name would do, build one and do not mark anything.
  *
  * WHY A MARKER RATHER THAN A RULE. The tempting rule is "a literal that is exactly a filename is
  * not a path", which is elegant, needs no marker, and is wrong about a file that is not in front of
