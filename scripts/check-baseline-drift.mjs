@@ -477,16 +477,23 @@ function resolves(named, text, at) {
 //
 //   • `/` ends the segment — the directory is read separately, by `resolves`;
 //   • whitespace ends the token in every format scanned;
-//   • `'`, `"`, backtick and `\` are the delimiters and escape lead-in of the RAW literal text this
-//     runs over, so a name at the end of a literal must stop before its closing quote;
-//   • `{` and `}` bound a template span, so a name ending a `${`-terminated TemplateHead stops
-//     before the boundary rather than swallowing it.
+//   • `'`, `"`, backtick, `{` and `}` are delimiters and flow punctuation in the CONFIG text the
+//     second rule reads whole, so a name at the end of a quoted YAML value must stop before its
+//     closing quote.
 //
-// The residual gap, named rather than left to be found: a backslash INSIDE a filename truncates the
-// token, so `"nyc-rules.v2.8.json\\backup"` still reads as the published name. That is the Windows
-// separator and a character no path in this repo contains, and excluding it is what keeps a real
-// `\n` after a real path from being read as part of it.
-const RULESET_FILENAME = /nyc-rules\.[^\s/'"`\\{}]*/g;
+// The delimiter exclusions used to serve the JS rule too, back when it scanned raw literal text.
+// It scans COOKED VALUES now (see below), and a value has no delimiters in it, so there they cost
+// nothing and are simply never reached.
+//
+// `\` WAS IN THIS SET AND IS NOT ANY MORE, which is a consequence of that move rather than a
+// separate decision. It was excluded as an escape lead-in, to stop a real `\n` written after a real
+// path being read as part of it — a hazard that only exists in raw source text. In a cooked value a
+// backslash is one ordinary character of the filename, and truncating there was reporting
+// `nyc-rules.v2.8` for a path that is nothing of the sort. Round 8 recorded the resulting false
+// NEGATIVE, `nyc-rules.v2.8.json\backup` reading as the published name, and missed that the same
+// truncation produces false POSITIVES in the other direction. Both close together: the token now
+// runs through the backslash and is compared whole, and a real newline is still excluded by `\s`.
+const RULESET_FILENAME = /nyc-rules\.[^\s/'"`{}]*/g;
 
 /** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
 function danglingIn(text) {
@@ -503,30 +510,49 @@ function danglingIn(text) {
 /**
  * The same search, confined to the string literals the parser found.
  *
- * BOTH FORMS ARE SCANNED, and each catches what the other cannot. The raw text carries exact
- * offsets, so a name inside a multi-line template is reported on its own line rather than the line
- * the literal opened on. The cooked value is what the string IS at runtime: the parser reads
- * `"rules/nyc\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`, which names a file that is not
- * there while matching nothing a text search can see. An escape was the one way left to write a
- * path this check could not read and a runtime could. Findings are deduplicated by name within a
- * literal, so a reference visible in both forms is reported once, at its precise position.
+ * ONLY THE COOKED VALUE IS JUDGED, and the raw text is used only to locate what the value found.
+ * The previous round scanned both and reported from both, which is where the first false positive
+ * this check has ever produced came from: `"rules/nyc-rules.v2.8\x2ejson"` is the published
+ * artifact, and the raw scan stopped at the backslash, recorded `nyc-rules.v2.8` as a name that
+ * does not exist, and could not take it back when the cooked pass then resolved the real one. Two
+ * scans producing findings means one of them is looking at something that is not a filename.
+ *
+ * The cooked value is the right one to judge because it is what the string IS at runtime, and the
+ * runtime is what opens the file: the parser reads `"rules/nyc\x2drules.v9.9.json"` as
+ * `rules/nyc-rules.v9.9.json`, which names a file that is not there while matching nothing a text
+ * search can see. Nothing is lost by dropping the raw pass, because a name visible in the source
+ * but not in the value is not a name anything ever opens.
+ *
+ * WHAT THE RAW TEXT IS STILL FOR: the reported line. An unescaped literal is its delimiters plus
+ * its value, so the value appears verbatim in the source and the offset maps exactly, which is how
+ * a name inside a multi-line template still lands on its own line. An escape changes the length,
+ * the value stops being a substring of the source, and the literal's own line is then the honest
+ * answer rather than a computed one that would point at the wrong column.
+ *
+ * A FRAGMENT IS NOT A NAME. A TemplateHead's or TemplateMiddle's value is continued by the span
+ * that follows it, so a token running to the end of one is an unfinished path and not a missing
+ * file: `` `rules/nyc-rules.v${version}.json` `` was reported as naming `nyc-rules.v`, which is
+ * ordinary dynamic selection failing CI. Such a token is skipped. Note the shape of the rule, which
+ * is narrow on purpose: only a token that ENDS at the boundary is spared, so a complete name
+ * earlier in the same head is still reported.
+ *
+ * The cost of that, stated rather than left to be discovered: a dangling name written immediately
+ * before an interpolation, `` `rules/nyc-rules.v9.9.json${suffix}` ``, is not reported. It cannot
+ * honestly be, since the path is the name plus whatever the span evaluates to and this check does
+ * not evaluate expressions. That is the documented concatenation gap in template form rather than
+ * a new one; the previous behaviour looked like coverage only because a fragment happened to be
+ * spelled like a whole name.
  */
-function danglingInLiterals(source, sourceFile, literals) {
+function danglingInLiterals(sourceFile, literals) {
   const found = [];
   for (const literal of literals) {
-    const seen = new Set();
-    for (const token of literal.raw.matchAll(RULESET_FILENAME)) {
-      if (resolves(token[0], literal.raw, token.index)) continue;
-      seen.add(token[0]);
-      const at = literal.index + token.index;
-      found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
-    }
+    const valueAt = literal.raw.indexOf(literal.cooked);
     for (const token of literal.cooked.matchAll(RULESET_FILENAME)) {
-      if (seen.has(token[0]) || resolves(token[0], literal.cooked, token.index)) continue;
-      found.push({
-        line: sourceFile.getLineAndCharacterOfPosition(literal.index).line + 1,
-        named: token[0],
-      });
+      if (resolves(token[0], literal.cooked, token.index)) continue;
+      if (literal.continues && token.index + token[0].length === literal.cooked.length) continue;
+      const at =
+        valueAt === -1 ? literal.index : literal.index + valueAt + token.index;
+      found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
     }
   }
   return found;
@@ -649,13 +675,21 @@ function parseSource(relative, source) {
       node.kind === ts.SyntaxKind.TemplateTail;
     if (isLiteral) {
       const start = node.getStart(sourceFile);
-      // BOTH FORMS, because they answer different questions. `cooked` is what the string IS at
-      // runtime, with escapes resolved, and it is what a reference actually names: the parser
-      // reads `"rules/nyc\\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`, which names a
-      // file that is not there while matching nothing in the raw text. `index` is kept so the
-      // diagnostic still points at the literal in the source a person is reading, since an offset
-      // into the cooked value would land somewhere else once an escape has changed the length.
-      literals.push({ raw: source.slice(start, node.end), cooked: node.text, index: start });
+      // `cooked` is what the string IS at runtime, with escapes resolved, and it is the only form
+      // judged: the parser reads `"rules/nyc\\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`,
+      // which names a file that is not there while matching nothing in the raw text. `raw` and
+      // `index` are kept to locate a finding, not to make one.
+      //
+      // `continues` marks the two spans a template interpolation is appended to. Their values are
+      // fragments by construction, so a name running to the end of one is unfinished rather than
+      // missing, and reporting it blocks ordinary dynamic selection.
+      literals.push({
+        raw: source.slice(start, node.end),
+        cooked: node.text,
+        index: start,
+        continues:
+          node.kind === ts.SyntaxKind.TemplateHead || node.kind === ts.SyntaxKind.TemplateMiddle,
+      });
     }
     ts.forEachChild(node, visit);
   };
@@ -693,7 +727,31 @@ function parseSource(relative, source) {
  * diff, which is the difference between this and the earlier fixes — those were beaten by things
  * invisible in a diff, a comment and then a string. Closing the rest needs dataflow and is not
  * attempted.
+ *
+ * THE INITIALIZER IS UNWRAPPED FIRST, and since this is the fourth fix here it is aimed at the
+ * category rather than at what was reported. `("nyc.v2.8")` is a ParenthesizedExpression and
+ * `"nyc.v2.8" as const` is an AsExpression, so neither is a string literal and the pin read as
+ * ABSENT: a check blocking CI to say the constant disappeared, in front of a file that plainly
+ * declares it. Each of the three previous fixes closed the shape in the review comment and left
+ * the class behind, which is the habit this one is trying to break.
+ *
+ * The category is wrappers TypeScript ERASES. After compilation the initializer is the same string,
+ * so the value read here is exactly the value the api compares, which is what makes unwrapping
+ * sound rather than merely convenient — and it is the admission test for anything added to the list
+ * later. A wrapper that changes the value at runtime, a call or a concatenation or a conditional,
+ * is deliberately NOT here: those mean the pin is computed, this check cannot know it, and
+ * reporting no pin is then the correct answer rather than a false positive.
  */
+const ERASED_WRAPPERS = new Set([
+  ts.SyntaxKind.ParenthesizedExpression,
+  ts.SyntaxKind.AsExpression, // x as const, x as string
+  ts.SyntaxKind.SatisfiesExpression, // x satisfies string
+  ts.SyntaxKind.TypeAssertionExpression, // <string>x
+  ts.SyntaxKind.NonNullExpression, // x!
+]);
+const unwrapped = (node) =>
+  node !== undefined && ERASED_WRAPPERS.has(node.kind) ? unwrapped(node.expression) : node;
+
 function pinnedVersion(sourceFile) {
   let pinned = null;
   const atModuleScope = (declaration) =>
@@ -702,15 +760,15 @@ function pinnedVersion(sourceFile) {
     ts.isVariableStatement(declaration.parent.parent) &&
     declaration.parent.parent.parent === sourceFile;
   const visit = (node) => {
+    const initializer = ts.isVariableDeclaration(node) ? unwrapped(node.initializer) : undefined;
     if (
-      ts.isVariableDeclaration(node) &&
+      initializer !== undefined &&
       ts.isIdentifier(node.name) &&
       node.name.text === "EXPECTED_RULESET_VERSION" &&
-      node.initializer !== undefined &&
-      ts.isStringLiteralLike(node.initializer) &&
+      ts.isStringLiteralLike(initializer) &&
       atModuleScope(node)
     ) {
-      pinned = node.initializer.text;
+      pinned = initializer.text;
     }
     ts.forEachChild(node, visit);
   };
@@ -747,7 +805,7 @@ for (const file of scanned) {
 
   parsedSource.set(relative, sourceFile);
   const sourceLines = source.split(/\r?\n/);
-  for (const found of danglingInLiterals(source, sourceFile, literals)) {
+  for (const found of danglingInLiterals(sourceFile, literals)) {
     if (claimsFixtureExemption(relative, sourceLines, found.line)) continue;
     danglingReferences.push({ file: relative, ...found });
   }

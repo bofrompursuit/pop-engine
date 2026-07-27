@@ -643,3 +643,137 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
     expect(output).toContain(`apps/web/app/reader.test.ts:3 names ${ALSO_MISSING}`);
   });
 });
+
+// Every case above is the check letting something bad THROUGH. These are the opposite: the check
+// rejecting code that is correct. They are grouped because that direction needs its own attention.
+// A gate that blocks correct work gets switched off by whoever it blocks, and the class it was
+// built to catch then comes back with the gate disabled, so a false positive is not the mirror
+// image of a false negative here. Each one is paired with the true positive nearest to it, because
+// the way to make any of these pass is to stop catching something.
+describe("round 9: valid code the check used to reject", () => {
+  // Scanning raw text AND cooked values meant reporting from both, and the raw pass stopped at the
+  // backslash: a literal that IS the published artifact was reported as naming a file that does not
+  // exist, and the cooked pass could not retract a finding already made.
+  it("accepts an escaped literal that cooks to the published artifact", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET.replace(".json", "\\x2ejson")}";\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
+  });
+
+  // The pair. Judging only the cooked value must not stop an escape from hiding a real one, which
+  // is the whole reason cooked values are read at all.
+  it("still fails an escaped literal that cooks to a name that is not there", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "rules/${MISSING.replace("v9.9", "v9\\x2e9")}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // `\\` was excluded from the filename class as an escape lead-in, which is a hazard of RAW source
+  // text and not of a cooked value, where a backslash is one ordinary character of the name. The
+  // truncation cut both ways: round 8 recorded the false negative, and this suite's own outer
+  // literals then hit the false positive. The token runs through it now and is compared whole.
+  it("fails a published name with a backslash suffix, which names no file", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET}\\\\backup";\n`,
+    });
+
+    expect(status).toBe(1);
+    // The WHOLE token, not the published prefix of it, which is the point of the change.
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${FIXTURE_RULESET}\\backup`);
+  });
+
+  // A template head is a fragment by construction: its value is continued by the span that follows.
+  // Reporting `nyc-rules.v` as a missing file made ordinary dynamic selection fail CI.
+  it("accepts a version interpolated into the filename", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const p = `rules/" + ["nyc", "rules.v"].join("-") + "${version}.json`;\n",
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("Ruleset reference check passed");
+  });
+
+  // The pair, and the reason the rule is written as "ends AT the boundary" rather than "appears in
+  // a head": a complete name earlier in the same head is still a complete name.
+  it("still fails a complete dangling name earlier in the same template head", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const p = `rules/" + MISSING + "/${leaf}`;\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // A template TAIL is not continued by anything, so a name running to its end is finished and is
+  // judged normally. Only the two spans an interpolation is appended to are fragments.
+  it("still fails a dangling name in a template tail", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const p = `${dir}/" + MISSING + "`;\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // The cost of the fragment rule, pinned so it is not deniable. A name written immediately before
+  // an interpolation is not reported, because the path is that name plus whatever the span
+  // evaluates to and this check does not evaluate expressions. That is the documented concatenation
+  // gap in template form; the old behaviour looked like coverage only because a fragment happened
+  // to be spelled like a whole name.
+  it("does not report a name immediately before an interpolation, which is the cost it admits", () => {
+    const { status } = runOn({
+      "apps/web/app/reader.ts": "const p = `rules/" + MISSING + "${suffix}`;\n",
+    });
+
+    expect(status).toBe(0);
+  });
+
+  // Four fixes to the pin lookup, three of which closed the shape in the review comment and left
+  // the class. The category is wrappers TypeScript ERASES: after compilation the initializer is the
+  // same string, so the value read is the value the api compares.
+  it.each([
+    ["parentheses", `("${FIXTURE_VERSION}")`],
+    ["as const", `"${FIXTURE_VERSION}" as const`],
+    ["as string", `"${FIXTURE_VERSION}" as string`],
+    ["satisfies", `"${FIXTURE_VERSION}" satisfies string`],
+    ["a non-null assertion", `"${FIXTURE_VERSION}"!`],
+    ["both, nested", `("${FIXTURE_VERSION}" as const)`],
+  ])("reads a pin written with %s", (_label, initializer) => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = ${initializer};\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain(`pins ${FIXTURE_VERSION}`);
+  });
+
+  // The pair. Unwrapping must not lose the disagreement it exists to find.
+  it("still fails a wrapped pin that names the wrong version", () => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = ("nyc.v9.9") as const;\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("pins nyc.v9.9");
+  });
+
+  // The boundary of that category, and the admission test for anything added to it later. A
+  // wrapper that CHANGES the value at runtime means the pin is computed, this check cannot know it,
+  // and reporting no pin is the correct answer rather than a false positive.
+  it("still reports no pin when the value is computed rather than wrapped", () => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts":
+        `const versions = ["${FIXTURE_VERSION}"];\n` +
+        `const EXPECTED_RULESET_VERSION = versions[0];\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("no longer declares EXPECTED_RULESET_VERSION");
+  });
+});
