@@ -1279,6 +1279,35 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     expect(screen.getByLabelText("Email for deadline reminders")).toBeDefined();
   });
 
+  it("does not claim retries are running while the plan is stale", async () => {
+    // Round 14 made the api HOLD alerts whose plan the event has been edited past, so it cannot
+    // send a filing date the current event does not have. The count still reports those rows, and
+    // the notice went on saying PopEngine keeps retrying them, which stopped being true for as
+    // long as the organizer takes to regenerate.
+    //
+    // Qualified rather than hidden: dropping the rows would leave an organizer with failed alerts
+    // and no sign of them, which is the silence this notice exists to break. Correcting the
+    // address, which the ordinary sentence points at, does nothing until the plan is current, so
+    // the paused version names the action that actually resumes delivery.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planStale: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2 }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/failed to send/);
+    expect(notice.textContent).toContain("2 email alerts for this event have failed to send.");
+    expect(notice.textContent).toContain(
+      "Retrying is paused because this event changed after the plan was made: regenerate the plan " +
+        "and review the checklist to start it again.",
+    );
+    expect(notice.textContent).not.toContain("PopEngine keeps retrying them");
+  });
+
   it("agrees with itself on one failure", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({

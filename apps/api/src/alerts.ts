@@ -578,6 +578,25 @@ function reminderCopy(
  * ranks published rule above UI copy when they disagree, so the criterion's substance is kept —
  * the alert fires on the gated date and names the dependency at both ends — and its example
  * sentence is not.
+ *
+ * AND "YOU CAN NOW PURSUE" WAS THE SAME MISTAKE THE SAME COMMENT HAD JUST REJECTED. The paragraph
+ * above threw out the spec's example sentence for asserting an agency outcome nothing observed,
+ * and the copy then asserted the consequence of that outcome instead. It said the organizer may
+ * now go ahead, which is true only if a decision arrived AND the sequencing holds — and the
+ * published rule qualifies its own sequencing as RESEARCH_REQUIRED, saying a strict
+ * issued-before-filed order is not confirmed by located primary text. The alert therefore picked
+ * one reading of an unresolved question and stated it to an organizer as fact, three lines above
+ * the note that says it is unresolved.
+ *
+ * WHAT IS ACTUALLY SUPPORTED, and all this now says: a date computed from published numbers has
+ * arrived, that is not evidence a decision was made, and the published note's own instruction is
+ * to confirm with the agency. Every one of those is a fact the sources establish.
+ *
+ * IT DOES NOT SWING TO THE OTHER READING EITHER, which would be its own invention. Nothing here
+ * tells the organizer they may not file yet. `proposals.ts` is explicit that closing a window on
+ * the strength of an unconfirmed sequence would invent a blocker, so the copy asks them to confirm
+ * and stops. Neither "you may go" nor "you may not" is available; "here is the date, here is what
+ * it does and does not mean, confirm it" is.
  */
 function dependencyCopy(
   gated: PlanAlertRow,
@@ -592,7 +611,9 @@ function dependencyCopy(
   const body = [
     `${openOn} is the earliest a decision on your ${withAgency(upstream)} could come back` +
       (range === null ? "" : `, from its published ${range[0]}–${range[1]} day processing range`) +
-      `. You can now pursue your ${withAgency(gated)}.`,
+      `. That date has arrived. It is not confirmation that a decision has been made.`,
+    `Confirm the outcome with ${upstream.agency ?? "the agency"} before you file your ` +
+      `${withAgency(gated)}.`,
     // THREE VERIFICATION STATES, because this alert is a claim about three published things and
     // the reminder's single line does not cover it. AGENTS.md keeps those states visible END TO
     // END and a notification is an end; the reminder builder was fixed for that and this builder
@@ -613,7 +634,10 @@ function dependencyCopy(
     ...filingRoute(gated, gatedRendering),
     dependencyNote,
   ].filter((line): line is string => line !== null);
-  return { subject: `You can now pursue your ${requirementLabel(gated)}`, body: body.join("\n") };
+  return {
+    subject: `Check your ${requirementLabel(upstream)} before filing your ${requirementLabel(gated)}`,
+    body: body.join("\n"),
+  };
 }
 
 /**
@@ -786,7 +810,23 @@ async function plannedAlerts(
   }
 
   const minSlackDays = plan.verdict_detail.minSlackDays;
-  if (plan.verdict === "feasible_at_risk" && typeof minSlackDays === "number") {
+  // THE CALENDAR MOVES ON EVEN WHEN THE EVENT DOES NOT, which is the stale-plan class again keyed
+  // on dates rather than on revision. Round 14 covers "the event was edited past this plan"; the
+  // revision predicate cannot see this one, because nothing was edited. A plan generated while
+  // feasible-at-risk and materialized only after its filing dates have passed is still
+  // revision-current, the reminder loop correctly refuses every past date, and this branch then
+  // queued an immediate "apply within N days" over a window that has closed.
+  //
+  // The test is the same one the reminder loop already applies, asked of the plan as a whole: if
+  // no dated requirement can still be filed, there is nothing left for the organizer to be at risk
+  // about, and a countdown to a closed window is the one thing a missed deadline must not be
+  // dressed up as. A requirement with no `latest_apply_date` contributes no filing date either
+  // way, here as everywhere else in this file.
+  const anyFilingStillOpen = rows.some((row) => {
+    const applyBy = isoDate(row.latest_apply_date);
+    return applyBy !== null && applyBy >= schedulingToday;
+  });
+  if (plan.verdict === "feasible_at_risk" && typeof minSlackDays === "number" && anyFilingStillOpen) {
     // Whether any dated requirement in this plan waits on another agency, which decides whether
     // the number above can be read as a countdown at all.
     const planHasGatedFiling = rows.some(

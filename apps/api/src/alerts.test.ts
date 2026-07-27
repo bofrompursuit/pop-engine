@@ -914,10 +914,20 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       // come back, from the upstream rule's own published range. Not that one has come back.
       expect(unlock?.payload.body).toContain(
         "2026-08-12 is the earliest a decision on your Special Event Permit (NYC Parks) could " +
-          "come back, from its published 21–30 day processing range. You can now pursue your " +
-          "Sound Device Permit (NYPD).",
+          "come back, from its published 21–30 day processing range. That date has arrived. It " +
+          "is not confirmation that a decision has been made.",
+      );
+      expect(unlock?.payload.body).toContain(
+        "Confirm the outcome with NYC Parks before you file your Sound Device Permit (NYPD).",
       );
       expect(unlock?.payload.body).not.toContain("decision window has passed");
+      // NEITHER READING IS ASSERTED, and both halves of that are the finding. The alert must not
+      // say a decision arrived, because the date is the soonest one COULD, and it must not say the
+      // organizer may not file yet, because the published rule marks the sequencing itself
+      // RESEARCH_REQUIRED and closing a window on an unconfirmed sequence would invent a blocker.
+      expect(unlock?.payload.body).not.toContain("can now pursue");
+      expect(unlock?.payload.subject).not.toContain("can now pursue");
+      expect(String(unlock?.payload.body)).not.toMatch(/do not file|cannot file|must wait/i);
       // The published filing route, and the published caveat: the ordering itself is not confirmed.
       expect(unlock?.payload.body).toContain("File at the precinct where the device will be used");
       expect(unlock?.payload.body).toContain(
@@ -2671,6 +2681,54 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       },
       30_000,
     );
+
+    it("does not warn about slack once every filing date has passed", async () => {
+      // The stale-plan class again, keyed on DATES rather than on revision. Nothing was edited, so
+      // the plan is revision-current and round 14's predicate cannot see this. A plan generated
+      // while feasible-at-risk and materialized only after its filing dates have gone still queued
+      // an immediate "apply within N days" over a window that had closed.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(-3),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      expect(rows.some((row) => row.alert_type === "slack_warning")).toBe(false);
+      // The reminder loop already refused the past date, which is what left this branch alone.
+      expect(rows.some((row) => row.alert_type === "deadline_reminder")).toBe(false);
+    });
+
+    it("still warns about slack while a filing date is ahead", async () => {
+      // The other half, so the guard cannot be written as "never warn on an old plan".
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(30),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      expect((await alertsOf(eventId)).some((row) => row.alert_type === "slack_warning")).toBe(true);
+    });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {
       const eventId = await createEvent(scenario("C"));

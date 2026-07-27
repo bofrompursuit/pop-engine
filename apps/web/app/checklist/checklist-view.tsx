@@ -111,15 +111,34 @@ export function simulatedDeliveryNotice(delivery: { channel: string; sentCount: 
  * are NOT listed, because an absent failure count can equally mean nothing was attempted. What it
  * does say is the one thing that is both true and actionable: the address can be corrected below,
  * and correcting it redirects the alerts that have not gone out yet.
+ *
+ * EXCEPT WHILE THE PLAN IS STALE, when "PopEngine keeps retrying them" stops being true. The api
+ * holds alerts whose plan the event has been edited past — it will not send a filing date the
+ * current event does not have — so retrying is suspended until the plan is regenerated and the
+ * checklist reviewed, for however long the organizer takes to do it. The count is still real and
+ * still worth showing; the sentence about what happens next is not.
+ *
+ * QUALIFIED RATHER THAN HIDDEN, and that is the whole choice. Dropping these rows from the count
+ * would leave an organizer with failed alerts and no sign of them, which is the silence this
+ * notice exists to break. Telling them delivery is paused AND why names the one action that
+ * resumes it, which the contact correction alone would not do: correcting the address is useless
+ * here until the plan is current again. The version that leaves them able to act is the version
+ * that says both.
  */
-export function failedDeliveryNotice(failure: { channel: string; failedCount: number }): string {
+export function failedDeliveryNotice(
+  failure: { channel: string; failedCount: number },
+  planStale = false,
+): string {
   const name = CHANNEL_NAMES[failure.channel] ?? failure.channel;
   const alerts = failure.failedCount === 1 ? "alert" : "alerts";
   const have = failure.failedCount === 1 ? "has" : "have";
   return (
     `${failure.failedCount} ${name} ${alerts} for this event ${have} failed to send. ` +
-    `PopEngine keeps retrying them. If the ${name} address below is wrong, correcting it will ` +
-    `redirect the alerts that have not gone out.`
+    (planStale
+      ? `Retrying is paused because this event changed after the plan was made: regenerate the ` +
+        `plan and review the checklist to start it again.`
+      : `PopEngine keeps retrying them. If the ${name} address below is wrong, correcting it will ` +
+        `redirect the alerts that have not gone out.`)
   );
 }
 
@@ -503,7 +522,7 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           count is not evidence the channel works. */}
       {checklist.failedAlertDeliveries.map((failure) => (
         <p className="checklist__flag" role="alert" key={`failed-${failure.channel}`}>
-          {failedDeliveryNotice(failure)}
+          {failedDeliveryNotice(failure, checklist.planStale)}
         </p>
       ))}
 
