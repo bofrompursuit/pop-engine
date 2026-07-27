@@ -232,6 +232,185 @@ if (unsupportedGlobs.length > 0) {
   process.exit(1);
 }
 
+// ── Ruleset references in executable code ───────────────────────────────────────────────────────
+//
+// Invariant: every ruleset artifact that executable code names must exist, and the one constant
+// allowed to pin a version must pin the published one.
+//
+// This is a regression guard for the day main went red. `apps/web/app/checklist/checklist-fixtures.ts`
+// defaulted to `rules/nyc-rules.v2.7.json`; publishing v2.8 deleted that file; the read is at module
+// scope, so two suites failed to IMPORT rather than failing a test. Neither PR could have caught it
+// — each was green against a main that did not contain the other, and a version bump structurally
+// cannot grep for references that land after it runs. Only a check on the merged tree can.
+//
+// WHY THIS RULE AND NOT "flag any unpublished version string". A version string in code is very
+// often legitimate and cannot break on a bump: `compareToPinned("nyc.v2.3", "nyc.v2.1")` is test
+// data, and `packages/engine/src/ruleset.ts` deliberately keeps a table of the pre-v2.4 versions it
+// supplies defaults for, because old plans must still replay. Flagging those would be unsound and
+// would bury the real thing in noise. A PATH is different in kind: it is a claim about the
+// filesystem, and a publication can invalidate it silently. So paths are checked, and the sole
+// version constant is checked against the artifact rather than forbidden.
+//
+// Scope is executable code only. `docs/` and `specs/` cite superseded versions in prose everywhere,
+// and BASELINE's lineage rows cite them WITH their commits on purpose — that is the recovery trail,
+// and a check that broke it would be removing a feature to add a guard.
+
+const CODE_EXTENSIONS = [".ts", ".tsx", ".mjs", ".js"];
+const SKIPPED_DIRECTORIES = new Set(["node_modules", ".next", ".git", "dist", "coverage", "build"]);
+
+/** Every executable source file in the repo, which is what this rule is scoped to. */
+function sourceFiles(directory, found = []) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!SKIPPED_DIRECTORIES.has(entry.name)) sourceFiles(join(directory, entry.name), found);
+    } else if (CODE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) {
+      found.push(join(directory, entry.name));
+    }
+  }
+  return found;
+}
+
+/** What the repo actually publishes, so the message can say so rather than only what is wrong. */
+const publishedRulesets = readdirSync(join(repoRoot, "rules")).filter((entry) =>
+  /^nyc-rules\..+\.json$/.test(entry),
+);
+
+/**
+ * Every ruleset artifact that exists anywhere in the repo, by filename.
+ *
+ * Matched on the FILENAME rather than by resolving the path, and that is a deliberate weakening.
+ * The same artifact is named relative to three different bases here: to the source file
+ * (`new URL("../../../rules/…", import.meta.url)`), to the repo root (vitest's working directory),
+ * and to an app directory (`intake-page-props.ts` resolves against the Next app's cwd). Picking one
+ * base flags the other two, and enumerating every base a file might run under is guesswork. The
+ * filename is unambiguous, and it is what a publication changes.
+ *
+ * What this therefore does NOT catch is a correct filename under a wrong directory. That is worth
+ * stating rather than implying: this guards the class that broke main — a name a publication
+ * deleted — not every possible bad path.
+ */
+const existingRulesets = new Set([
+  ...publishedRulesets,
+  ...(existsSync(join(repoRoot, "packages/engine/src/__fixtures__"))
+    ? readdirSync(join(repoRoot, "packages/engine/src/__fixtures__"))
+    : []),
+]);
+
+// Ruleset artifacts named inside a STRING, which is the only place a name is load-bearing. A
+// comment may legitimately mention a version that has been superseded — the fix for this very bug
+// says in prose which path it used to hard-code, in markdown backticks that read exactly like a
+// template literal — and flagging prose would make the check punish the record of the thing it
+// exists to prevent. So comments are blanked first, preserving line numbers, and only what is left
+// is scanned.
+const STRING_LITERAL = /"([^"\n]*)"|'([^'\n]*)'|`([^`\n]*)`/g;
+const RULESET_FILENAME = /nyc-rules\.[\w.-]+\.json/g;
+
+/**
+ * The file with its comments replaced by spaces, so offsets and line numbers still line up.
+ *
+ * Quote state is tracked while scanning, so a `//` inside a string — a URL, most often — is not
+ * mistaken for the start of a comment. It is a scanner rather than a parser and does not need to be
+ * more: over-blanking would only make the check see less, and the failure mode of that is a missed
+ * reference rather than a false accusation.
+ */
+function withoutComments(source) {
+  let out = "";
+  let inBlock = false;
+  let quote = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const character = source[i];
+    const pair = source.slice(i, i + 2);
+    if (inBlock) {
+      if (pair === "*/") {
+        out += "  ";
+        i += 1;
+        inBlock = false;
+      } else {
+        out += character === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+    if (quote === null && pair === "/*") {
+      out += "  ";
+      i += 1;
+      inBlock = true;
+      continue;
+    }
+    if (quote === null && pair === "//") {
+      const lineEnd = source.indexOf("\n", i);
+      const stop = lineEnd === -1 ? source.length : lineEnd;
+      out += " ".repeat(stop - i);
+      i = stop - 1;
+      continue;
+    }
+    if (quote === null && (character === '"' || character === "'" || character === "`")) {
+      quote = character;
+    } else if (quote === character && source[i - 1] !== "\\") {
+      quote = null;
+    }
+    out += character;
+  }
+  return out;
+}
+
+const scanned = sourceFiles(repoRoot);
+const danglingReferences = [];
+
+for (const file of scanned) {
+  const relative = file.slice(repoRoot.length + 1);
+  const lines = withoutComments(readFileSync(file, "utf8")).split(/\r?\n/);
+  lines.forEach((line, index) => {
+    for (const literal of line.match(STRING_LITERAL) ?? []) {
+      for (const named of literal.match(RULESET_FILENAME) ?? []) {
+        if (!existingRulesets.has(named)) {
+          danglingReferences.push({ file: relative, line: index + 1, named });
+        }
+      }
+    }
+  });
+}
+
+if (danglingReferences.length > 0) {
+  console.error("Executable code names a ruleset artifact that is not in the repo:\n");
+  for (const reference of danglingReferences) {
+    console.error(`  ✗ ${reference.file}:${reference.line} names ${reference.named}`);
+  }
+  console.error(
+    `\nThe repo publishes: ${publishedRulesets.join(", ") || "(nothing under rules/)"}.\n` +
+      "If you are mid version bump, this file was written after the last one and its grep could " +
+      "not have found it. Point it at the published artifact — or better, stop naming a version: " +
+      "read the rules directory, or take the path from apps/api/src/ruleset.ts, which is the one " +
+      "place that is supposed to know.",
+  );
+  process.exit(1);
+}
+
+// The single constant allowed to name a version, checked against the artifact rather than banned.
+// If the file bumps and the pin does not, the api refuses to boot; this fails first and says why.
+const pinFile = "apps/api/src/ruleset.ts";
+const pinSource = readFileSync(join(repoRoot, pinFile), "utf8");
+const pinned = /EXPECTED_RULESET_VERSION\s*=\s*"([^"]+)"/.exec(pinSource);
+if (pinned === null) {
+  console.error(
+    `${pinFile} no longer declares EXPECTED_RULESET_VERSION, which this check reads as the one\n` +
+      "place allowed to pin a ruleset version. If it moved, point this check at its new home.",
+  );
+  process.exit(1);
+}
+if (publishedRulesets.length === 1) {
+  const publishedVersion = JSON.parse(
+    readFileSync(join(repoRoot, "rules", publishedRulesets[0]), "utf8"),
+  ).ruleset_version;
+  if (pinned[1] !== publishedVersion) {
+    console.error(
+      `${pinFile} pins EXPECTED_RULESET_VERSION ${pinned[1]}, but ${publishedRulesets[0]} ` +
+        `publishes ${publishedVersion}.\n\nThe api refuses to boot on that mismatch. Bump the pin ` +
+        "with the artifact, in the same PR.",
+    );
+    process.exit(1);
+  }
+}
+
 if (failures.length > 0) {
   console.error("Baseline status drift detected (docs/BASELINE.md vs file headers):\n");
   for (const f of failures) console.error("  ✗ " + f);
@@ -241,6 +420,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
+console.log(
+  `Ruleset reference check passed: ${scanned.length} source files scanned, every ruleset ` +
+    `path resolves, and ${pinFile} pins ${pinned[1]}.`,
+);
 console.log(`Baseline status check passed: ${checked.length} APPROVED artifacts consistent.`);
 for (const c of checked) console.log("  ✓ " + c);
 
