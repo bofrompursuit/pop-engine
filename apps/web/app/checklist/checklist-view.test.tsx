@@ -865,7 +865,7 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
     expect(within(row).getAllByRole("link", { name: /^source \d$/ })).toHaveLength(4);
   });
 
-  it("says no source is published on a source-less coverage gap", async () => {
+  it("says the combination is not covered on a coverage gap carrying no citation", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
