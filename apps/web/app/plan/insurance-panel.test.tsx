@@ -189,6 +189,21 @@ describe("AC 4: the card links to the checklist item", () => {
 
     expect(link.getAttribute("href")).toBe("/events/event-42/checklist");
   });
+
+  it("still links a may_be_required card (unknown event type) — the checklist row exists either way", () => {
+    // An unknown-triggered SAPO-INSURANCE-001 (e.g. sapo_event_type unanswered) renders
+    // `disposition: may_be_required` (UNKNOWN_TRIGGER_DISPOSITION), not `required` — but it is
+    // still a kind: insurance finding with a trackable checklist row underneath it, so the link
+    // must not depend on disposition the way the warning styling does.
+    const finding = findingFor(STREET_INSURANCE, { disposition: "may_be_required" });
+    render(<InsurancePanel findings={[finding]} eventId="event-42" />);
+    const card = screen.getByRole("article", { name: streetInsuranceName });
+
+    expect(card.className).not.toContain("required");
+    expect(within(card).getByText("may be required")).toBeTruthy();
+    const link = within(card).getByRole("link");
+    expect(link.getAttribute("href")).toBe("/events/event-42/checklist");
+  });
 });
 
 describe("AC 5: this is an addition, not a replacement", () => {

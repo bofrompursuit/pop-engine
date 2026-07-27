@@ -21,6 +21,19 @@ const INSURANCE_RULE_IDS: ReadonlySet<string> = new Set([
   "PARKS-INSURANCE-NOTE-001",
 ]);
 
+/**
+ * The subset of `INSURANCE_RULE_IDS` that is `kind: insurance` — a checklist item with a document
+ * slot (`apps/api/src/checklist.ts`'s `TRACKABLE_FINDING_KINDS`) — as opposed to
+ * `PARKS-INSURANCE-NOTE-001`, which is `kind: note` and read-only context with nothing to upload
+ * against. `kind` never softens: an `unknown`-triggered SAPO-INSURANCE-001 renders `disposition:
+ * may_be_required` (`UNKNOWN_TRIGGER_DISPOSITION`, `packages/engine/src/proposals.ts`) but is
+ * still the same trackable row, so link eligibility is keyed on the rule id, never on disposition.
+ */
+const TRACKABLE_INSURANCE_RULE_IDS: ReadonlySet<string> = new Set([
+  "SAPO-INSURANCE-001",
+  "SAPO-INSURANCE-BLOCK-PARTY-RIDE-001",
+]);
+
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
 /**
@@ -47,18 +60,22 @@ const deadlineTypeLabel = (finding: ConsumedFinding): string | null =>
  */
 const isRequired = (finding: ConsumedFinding): boolean => finding.disposition === "required";
 
+/** Whether a checklist row exists for this finding to receive the certificate against (AC 4). */
+const isTrackable = (finding: ConsumedFinding): boolean =>
+  finding.ruleIds.some((ruleId) => TRACKABLE_INSURANCE_RULE_IDS.has(ruleId));
+
 /**
- * One insurance card. Trackable (`kind: insurance`) findings are checklist items with a document
- * slot (`apps/api/src/checklist.ts`'s `TRACKABLE_FINDING_KINDS`); `PARKS-INSURANCE-NOTE-001`
- * (`kind: note`) is read-only context with nothing to upload against. `disposition === "required"`
- * is the same split without reading `kind`: both insurance-kind rules default to `required`, the
- * note rule to `no_new_requirement` (`packages/engine/src/proposals.ts`'s
- * `DEFAULT_DISPOSITION_BY_RULE_KIND`) — so the checklist link is offered exactly where a checklist
- * row exists to receive the certificate (AC 4), and withheld for the borough-office note.
+ * One insurance card. Styling is disposition-based (AC 1/2: required renders the warning
+ * treatment, anything else — `no_new_requirement` for the parks note, `may_be_required` for an
+ * unknown-triggered insurance rule — renders neutral). The checklist link is a separate question,
+ * gated on `isTrackable` rather than on disposition: a `may_be_required` insurance finding is
+ * still a trackable checklist row, and withholding the link there would leave an organizer with
+ * nowhere to put a certificate for a requirement that may well apply.
  */
 function InsuranceCard({ finding, eventId }: { finding: ConsumedFinding; eventId: string }) {
   const headingId = `insurance-${finding.ruleIds.join("-")}`;
   const required = isRequired(finding);
+  const trackable = isTrackable(finding);
   const deadlineLabel = deadlineTypeLabel(finding);
 
   return (
@@ -93,7 +110,7 @@ function InsuranceCard({ finding, eventId }: { finding: ConsumedFinding; eventId
         </p>
       ))}
 
-      {required && (
+      {trackable && (
         <p className="insurance__action">
           <a href={`/events/${eventId}/checklist`}>Track the certificate on your compliance checklist</a>
         </p>
