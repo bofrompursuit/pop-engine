@@ -53,7 +53,7 @@ These are drafted as criteria for adoption into F-202, in F-202's numbering styl
 | SOURCE_CONFIRMED  | the procedure with its citation                                         |
 | RESEARCH_REQUIRED | the procedure, plus "confirm with agency" **visibly**, not in a tooltip |
 | OFFICIAL_CONFLICT | **both readings with both sources**, never resolved to one              |
-| COVERAGE_GAP      | says no source is published and asserts nothing further                 |
+| COVERAGE_GAP      | says the combination is not covered by this ruleset version, and asserts nothing further |
 
 This is the same status vocabulary F-201 AC 2 and F-206 AC 2 use, deliberately, so a reader does not have to learn a second one. It is also the reason §5 needs field-level verification metadata: without it there is no status to render here, and AC-N+1's requirement to load procedure verification metadata has nothing to load.
 

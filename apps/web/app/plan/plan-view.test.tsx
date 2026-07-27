@@ -11,6 +11,7 @@ import PlanPage from "../events/[id]/plan/page";
 import { PlanView } from "./plan-view";
 import { SnapshotBanner, compareToPinned, formatSnapshotDate } from "./snapshot-banner";
 import { verdictCopy } from "./verdict-copy";
+import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 
 // Component tests for F-206. Regulatory prose in the assertions is read out of the published
 // ruleset rather than retyped here, so a rule edit moves the test the same way it moves the
@@ -421,7 +422,7 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
     }
   });
 
-  it("renders the explicit source-not-established state for a source-less coverage gap", async () => {
+  it("renders the explicit not-covered-by-this-ruleset-version state for a source-less coverage gap", async () => {
     // ADV-ALCOHOL-PUBLIC-001 is a COVERAGE_GAP advisory: it asserts nothing and cites nothing.
     const line = await lineFor(
       finding({
@@ -436,7 +437,7 @@ describe("per-line citations and status (AC 2, AC 3)", () => {
 
     expect(line.queryAllByRole("link")).toEqual([]);
     expect(line.getByText("COVERAGE GAP")).toBeDefined();
-    expect(line.getByText("source not yet established")).toBeDefined();
+    expect(line.getByText(NOT_COVERED_BY_RULESET)).toBeDefined();
   });
 
   it("omits the agency label on findings that publish no agency", async () => {

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import ChecklistPage from "../events/[id]/checklist/page";
 import PlanPage from "../events/[id]/plan/page";
 import { ChecklistView } from "./checklist-view";
+import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import {
   ALCOHOL_ADVISORY,
   checklistBody,
@@ -864,7 +865,7 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
     expect(within(row).getAllByRole("link", { name: /^source \d$/ })).toHaveLength(4);
   });
 
-  it("says no source is published on a source-less coverage gap", async () => {
+  it("says the combination is not covered on a coverage gap carrying no citation", async () => {
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
@@ -877,7 +878,7 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
     // rather than invent a citation for.
     const row = rowFor(ALCOHOL_ADVISORY);
     expect(within(row).getByTestId("verification-status").textContent).toBe("COVERAGE GAP");
-    expect(within(row).getByText("source not yet established")).toBeDefined();
+    expect(within(row).getByText(NOT_COVERED_BY_RULESET)).toBeDefined();
     expect(within(row).queryByRole("link")).toBeNull();
   });
 });

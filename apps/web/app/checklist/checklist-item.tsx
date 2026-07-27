@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
 import { formatSnapshotDate } from "../plan/snapshot-banner";
+import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import {
   ACCEPTED_DOCUMENT_TYPES,
   documentRejection,
@@ -178,8 +179,10 @@ export function PlanContextBody({
         </p>
       ))}
 
+      {/* Same copy as the plan line, for the same reason: COVERAGE_GAP is an unmodelled
+          combination, not a missing source. See apps/web/app/plan/plan-line.tsx. */}
       {context.verificationStatus === "COVERAGE_GAP" && context.sources.length === 0 && (
-        <p className="check-item__text">source not yet established</p>
+        <p className="check-item__text">{NOT_COVERED_BY_RULESET}</p>
       )}
       {context.sources.length > 0 && (
         <ul className="check-item__citations">
