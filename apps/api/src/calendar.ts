@@ -43,9 +43,10 @@ export class MissingHolidayCalendarError extends Error {
  * DIFFER. DOB-TENT-001 and DOB-ASSEMBLY-001 are New York CITY agency rules; SLA-ONEDAY-001 and
  * SLA-CATERING-001 are New York STATE agency rules. What was established is a divergence between
  * three EMPLOYEE holiday schedules — which days staff are off — and one statute enumerating legal
- * holidays. Not one of the four is a DOB or SLA FILING-OFFICE calendar, and no such calendar was
- * located. Each source is labelled below for what it actually is, because the labels are the whole
- * point:
+ * holidays. DOB also publishes an office-closings page, fetched in Round 5; it states when DOB is
+ * closed and does not mention TUP, TPA, filing deadlines, or business-day computation. No
+ * SLA-published closure source was fetched. Each source is labelled below for what it actually is,
+ * because the labels are the whole point:
  *   - Fri 2026-07-03 — on the city's PAYROLL holiday list ("07/03 - Independence Day (Observed)",
  *     nyc.gov/site/opa/my-payroll/list-of-holidays.page, Office of Payroll Administration) and on
  *     the federal EMPLOYEE schedule (opm.gov 2026, "Friday, July 03"). Not on the state's CIVIL
