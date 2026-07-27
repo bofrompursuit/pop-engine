@@ -610,10 +610,21 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(after[0]?.status).toBe("sent");
     });
 
-    it("warns again when the risk itself changed", async () => {
-      // The other half, and the reason the identity is the NUMBER rather than the event alone. An
-      // organizer whose narrowest slack fell from nine days to two has been told something new, and
-      // a warning that can only ever fire once would never tell them.
+    it("does not warn a second time when the slack value changes", async () => {
+      // The product owner's decision, and it reverses what this test used to assert. Keying the
+      // identity on the number looked like "warn again only when the risk changed" and is not:
+      // ungated slackDays is measured from the PLAN'S EVALUATION DATE, so regenerating an
+      // unchanged, still-at-risk event a week later yields a smaller number and a fresh identity.
+      // That re-warns on most regenerations, which is close to the plan-UUID defect it replaced.
+      //
+      // What settles it is what the alert is. The copy says the threshold is PopEngine's internal
+      // buffer and not an official one, and the warning names no agency deadline; the deadline
+      // reminders fire on their own dates regardless. So a suppressed duplicate cannot let a filing
+      // deadline pass unnoticed, and the repeat is what AC 7 forbids.
+      //
+      // The trade is real and is named in the code beside the identity: an organizer whose buffer
+      // genuinely worsens is not warned twice, and that case wants a designed escalation rather
+      // than an identity that happens to change.
       const eventId = await createEvent(scenario("C"));
       const warn = async (minSlackDays: number) => {
         const { planId } = await insertDuePlan(eventId, {
@@ -632,19 +643,28 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         }
       };
 
+      // The first warning is sent, so a second ROW would be a second delivery to one destination
+      // rather than a rewrite of something still pending.
       await warn(9);
       const first = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
-      await pool.query("UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1", [
-        first[0]?.id,
-      ]);
+      expect(first).toHaveLength(1);
+      expect(String(first[0]?.payload.body)).toContain("9 days");
+      await pool.query(
+        "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1",
+        [first[0]?.id],
+      );
 
       await warn(2);
 
       const after = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
-      expect(after).toHaveLength(2);
-      expect(after.some((row) => row.status === "pending" && /\b2 days\b/.test(String(row.payload.body)))).toBe(
-        true,
-      );
+      expect(after).toHaveLength(1);
+      expect(after[0]?.id).toBe(first[0]?.id);
+      expect(after[0]?.status).toBe("sent");
+      // NOT vacuous: the row is still the one that was sent, carrying the copy it was sent with.
+      // A suppression that worked by never producing the second warning at all would leave the same
+      // count, so the body is asserted too — under the previous identity a second row exists here
+      // saying 2 days, and this line is what refuses it.
+      expect(String(after[0]?.payload.body)).toContain("9 days");
     });
 
     it("does not warn about slack on a plan that is not at risk", async () => {

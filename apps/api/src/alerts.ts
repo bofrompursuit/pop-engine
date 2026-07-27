@@ -814,17 +814,35 @@ async function plannedAlerts(
       // its offset and day because a moved filing date makes it a different reminder, and an unlock
       // carries neither because "the window is open" can only be true once.
       //
-      // The evaluation date is deliberately NOT in here, though the copy quotes it. Regenerating on
-      // a later day with the same slack restates the same risk, and keying on the date would warn
-      // again every day the organizer touched the plan. It rides the payload instead, so a pending
-      // warning is rewritten with the current date and a sent one is left alone.
+      // NEITHER THE NUMBER NOR THE DATE IS IN HERE. One warning per event, full stop. Both were
+      // tried and both re-warn far more often than "the risk changed" suggests.
       //
-      // STATED PLAINLY: this CAN send a second warning to one destination, when the risk itself
-      // changed. That is a new statement rather than a repeat of an old one, and withholding it
-      // would mean an organizer whose slack fell from nine days to two is never told. If that
-      // reading of AC 7 is too loose, the stricter identity is `slack_warning` alone, one per event
-      // for good, and it is a one-line change.
-      identity: `slack_warning:${minSlackDays}`,
+      // The number is the sharper trap of the two, and the reason is a few lines up in this file:
+      // ungated `slackDays` is the distance from the PLAN'S EVALUATION DATE to the filing date, not
+      // from today. So regenerating an unchanged, still-at-risk event a week later yields a SMALLER
+      // number and a fresh identity, with nothing about the event having changed. The plan-UUID
+      // version re-warned on every regeneration; keying on the number re-warns on most of them.
+      // That is nearer the defect it replaced than it looks.
+      //
+      // WHAT DECIDES IT is what this alert is. The copy says in as many words that the threshold is
+      // PopEngine's internal planning buffer and NOT an official threshold, and the warning states
+      // no agency deadline. The deadline reminders fire on their own dates regardless of it. So a
+      // suppressed duplicate warning cannot cause a filing deadline to pass unnoticed, which is the
+      // thing F-203 exists to prevent — the cost of being strict is bounded, and the cost of being
+      // loose is the repeat AC 7 forbids.
+      //
+      // THE TRADE, NAMED RATHER THAN LOST: an organizer whose buffer genuinely worsens, nine days
+      // to two on an event that really did change, is not warned a second time. That case deserves
+      // a DESIGNED escalation — its own alert type, fired on a crossing the ruleset or the product
+      // defines, with an identity built for it — and not an identity that happens to change when a
+      // number does. Until that exists the worsening is visible where the numbers already live: the
+      // checklist shows the verdict and the slack figure on every visit, so the signal is unpushed
+      // rather than absent. Reaching for a cheap version of it here is what produced both of the
+      // identities this replaces.
+      //
+      // The evaluation date rides the payload, so a pending warning is rewritten with the current
+      // date and a sent one is left alone.
+      identity: "slack_warning",
     });
   }
 
