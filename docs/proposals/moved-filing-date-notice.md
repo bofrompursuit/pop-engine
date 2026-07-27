@@ -103,7 +103,7 @@ Those are different sets, and the trigger is neither sufficient nor necessary fo
 
 - a newer ruleset changes a lead time (`published_minimum`, `business_days_minimum`). This repository bumped its ruleset six times in one week;
 - a level or size input changes, so `published_minimum_by_level` resolves to a different number of days. `SAPO-PLAZA-001` is exactly this shape, and SAPO is the one agency for which an amendment procedure is established;
-- the pinned holiday calendar changes. This one is scheduled rather than hypothetical: `us-ny-business-days@2026.1` currently carries an **empty** holiday list, published as RESEARCH_REQUIRED. The day it is published, every `business_days_minimum` date moves at once, which is `DOB-TENT-001`, `SLA-ONEDAY-001` and `SLA-CATERING-001`, and every `submitted` row among them would be told to ask its agency about amending a date that never changed.
+- the pinned holiday calendar changes. This one is scheduled rather than hypothetical: `us-ny-business-days@2026.1` currently carries an **empty** holiday list, published as RESEARCH_REQUIRED. The day it is published, every `business_days_minimum` date moves at once, which is `DOB-TENT-001`, `DOB-ASSEMBLY-001`, `SLA-ONEDAY-001` and `SLA-CATERING-001`, and every `submitted` row among them would be told to ask its agency about amending a date that never changed.
 
 **Not necessary.** The inverse also holds. An event moved between two days that `subtractBusinessDays` maps to the same deadline leaves `latest_apply_date` identical, so the notice stays silent although the date on the application genuinely changed. That is the case the organizer most needs and the trigger cannot see it.
 
