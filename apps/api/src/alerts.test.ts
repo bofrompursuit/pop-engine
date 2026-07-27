@@ -33,6 +33,8 @@ import {
   createAlertPoller,
   createAlertScheduler,
   failedDeliveries,
+  DELIVERY_BOUND_MS,
+  POLL_INTERVAL_MS,
   type AlertScheduler,
 } from "./alerts";
 import { createApp } from "./app";
@@ -569,6 +571,80 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         "the number above is the width of the window it can be filed in, not the time remaining",
       );
       expect(warning?.payload.body).not.toContain("days away");
+    });
+
+    it("does not warn twice when an identical plan is regenerated", async () => {
+      // The slack warning used to carry the plan's UUID, which is minted fresh by every generation,
+      // so regenerating an IDENTICAL plan produced a second immediately-due warning to the same
+      // address while the first sat there already sent. That is a different attempt to one
+      // destination, which is what AC 7 forbids in the words this PR gave it.
+      const eventId = await createEvent(scenario("C"));
+      const atRisk = { verdict: "feasible_at_risk", minSlackDays: 9, latestApplyDate: dayFromToday(30) };
+      const warn = async (options: Record<string, unknown>) => {
+        const { planId } = await insertDuePlan(eventId, options);
+        const client = await pool.connect();
+        try {
+          await schedulerWith()(client, eventId, planId, {
+            email: "organizer@example.test",
+            phone: null,
+          });
+        } finally {
+          client.release();
+        }
+      };
+
+      await warn(atRisk);
+      const first = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
+      expect(first).toHaveLength(1);
+      // Sent, so a second row would be a second delivery rather than a rewrite of a pending one.
+      await pool.query("UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1", [
+        first[0]?.id,
+      ]);
+
+      // A new plan row, same event, same risk. Nothing an organizer would read as new.
+      await warn(atRisk);
+
+      const after = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
+      expect(after).toHaveLength(1);
+      expect(after[0]?.id).toBe(first[0]?.id);
+      expect(after[0]?.status).toBe("sent");
+    });
+
+    it("warns again when the risk itself changed", async () => {
+      // The other half, and the reason the identity is the NUMBER rather than the event alone. An
+      // organizer whose narrowest slack fell from nine days to two has been told something new, and
+      // a warning that can only ever fire once would never tell them.
+      const eventId = await createEvent(scenario("C"));
+      const warn = async (minSlackDays: number) => {
+        const { planId } = await insertDuePlan(eventId, {
+          verdict: "feasible_at_risk",
+          minSlackDays,
+          latestApplyDate: dayFromToday(30),
+        });
+        const client = await pool.connect();
+        try {
+          await schedulerWith()(client, eventId, planId, {
+            email: "organizer@example.test",
+            phone: null,
+          });
+        } finally {
+          client.release();
+        }
+      };
+
+      await warn(9);
+      const first = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
+      await pool.query("UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1", [
+        first[0]?.id,
+      ]);
+
+      await warn(2);
+
+      const after = (await alertsOf(eventId)).filter((row) => row.alert_type === "slack_warning");
+      expect(after).toHaveLength(2);
+      expect(after.some((row) => row.status === "pending" && /\b2 days\b/.test(String(row.payload.body)))).toBe(
+        true,
+      );
     });
 
     it("does not warn about slack on a plan that is not at risk", async () => {
@@ -2272,6 +2348,50 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       expect(provider.attempts).toHaveLength(2);
       expect((await alertsOf(eventId)).every((row) => row.status === "sent")).toBe(true);
+    });
+
+    it("delivers inside the bound when a review holds the event during a tick", async () => {
+      // THE BOUND, NOT THE MECHANISM. `SKIP LOCKED` returns nothing while a checklist review or an
+      // intake edit holds the event row, and the poller banked that as a completed alert. The row
+      // then waited a full 60-second interval, and with the interval's own wait ahead of the tick a
+      // perfectly healthy provider could deliver outside AC 2's two-minute window. A review that
+      // overlaps a tick is ordinary use, so this is reachable today rather than eventually.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const due = await alertsOf(eventId);
+      expect(due).toHaveLength(1);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+
+      // A review in progress: the event row is held exactly as `checklist.ts` holds it.
+      const reviewer = await pool.connect();
+      let summary;
+      // The bound is measured from when the tick began, because these fixture alerts are
+      // deliberately back-dated: `send_at` is days behind, so lateness against it measures the
+      // fixture rather than the poller. What AC 2 constrains here is how long the poller takes once
+      // the alert is claimable, and the failure being tested is a wait of one full interval.
+      const tickStartedAt = Date.now();
+      try {
+        await reviewer.query("BEGIN");
+        await reviewer.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
+        const ticking = poller.tick();
+        // The review commits while the tick is running, which is the ordinary case.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await reviewer.query("COMMIT");
+        summary = await ticking;
+      } finally {
+        reviewer.release();
+      }
+
+      // ONE tick delivered it. Without the fix the tick returns having sent nothing and the alert
+      // waits for the next interval.
+      expect(summary.sent).toBe(1);
+      const [delivered] = await alertsOf(eventId);
+      expect(delivered?.status).toBe("sent");
+      const tookMs = (delivered?.sent_at?.getTime() ?? 0) - tickStartedAt;
+      expect(tookMs).toBeLessThan(DELIVERY_BOUND_MS);
+      // And the sharper statement, which is the actual defect: it did not wait out an interval.
+      expect(tookMs).toBeLessThan(POLL_INTERVAL_MS);
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

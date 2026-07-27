@@ -125,6 +125,23 @@ const RETRY_BACKOFF = `CASE
  * every connection it had while a provider times out.
  */
 const SEND_CONCURRENCY = 8;
+/**
+ * How long a tick waits between re-trying alerts a writer's lock made it skip, and for how long.
+ *
+ * THE WINDOW IS SMALL ON PURPOSE, and it is what keeps this a recovery rather than a wait. Taking
+ * the event row with `SKIP LOCKED` instead of blocking is a deliberate choice made further down:
+ * a review in progress is about to decide the alert's fate, and queueing behind it is how the
+ * poller once delivered the very alert a cancellation existed to prevent. Retrying for the whole
+ * tick budget would quietly undo that and, worse, hold one tick hostage to one event's writer while
+ * every other event's alerts wait behind it.
+ *
+ * So this recovers the ORDINARY case — a review that commits in milliseconds, which is the case
+ * :1064 is about — and leaves a genuinely long-held lock costing one tick, exactly as before. Two
+ * seconds is sixty times shorter than `DELIVERY_BOUND_MS` and sixty times shorter than the interval
+ * the skip used to cost.
+ */
+const SKIPPED_RETRY_WAIT_MS = 250;
+const SKIPPED_RETRY_WINDOW_MS = 2_000;
 const TICK_BUDGET_MS = 30_000;
 
 /**
@@ -700,10 +717,31 @@ async function plannedAlerts(
       sendAt: now,
       subject,
       body,
-      // Keyed on the plan rather than on `send_at`, which is the clock and changes on every call.
-      // One warning per plan: re-materializing the same plan must not warn twice, and a
-      // regeneration is a different plan and does warn again.
-      identity: `plan:${planId}:slack_warning`,
+      // KEYED ON THE RISK, not on the plan row. A plan UUID is minted fresh by every generation,
+      // so an identical regeneration produced a second identity, a second immediately-due warning
+      // and a second send to the same address while the first sat there already sent. That is a
+      // different attempt to one destination, which is exactly what AC 7 forbids in the words this
+      // PR gave it: a re-send is legitimate when the DESTINATION differs, not when the attempt does.
+      //
+      // What makes this warning the warning it is, is the number it asserts. The copy says the
+      // narrowest slack across the plan's dated requirements is N days, so two generations that
+      // both say N days are the same statement however many times the plan is rebuilt, and a
+      // generation that says a different N is a different statement and worth sending. That is the
+      // same rule the other two identities already follow from opposite ends: a reminder carries
+      // its offset and day because a moved filing date makes it a different reminder, and an unlock
+      // carries neither because "the window is open" can only be true once.
+      //
+      // The evaluation date is deliberately NOT in here, though the copy quotes it. Regenerating on
+      // a later day with the same slack restates the same risk, and keying on the date would warn
+      // again every day the organizer touched the plan. It rides the payload instead, so a pending
+      // warning is rewritten with the current date and a sent one is left alone.
+      //
+      // STATED PLAINLY: this CAN send a second warning to one destination, when the risk itself
+      // changed. That is a new statement rather than a repeat of an old one, and withholding it
+      // would mean an organizer whose slack fell from nine days to two is never told. If that
+      // reading of AC 7 is too loose, the stricter identity is `slack_warning` alone, one per event
+      // for good, and it is a one-line change.
+      identity: `slack_warning:${minSlackDays}`,
     });
   }
 
@@ -1010,15 +1048,26 @@ async function deliverClaimed(
  * Claim one alert by id and send it. Returns null when another worker got there first or the row
  * stopped being due (cancelled by a regeneration between the scan and the claim).
  */
+type SendOutcome =
+  | { status: "sent" | "failed"; delivery: AlertDelivery | null; error: string | null }
+  /**
+   * The event row was held by a writer, so this alert was not attempted and is still due.
+   *
+   * Distinct from `null`, and the distinction is the whole of the :1064 fix. `null` means there was
+   * nothing for this worker to do — the row was cancelled, rescheduled, or already claimed by
+   * another worker who will finish it. A skip means the opposite: the work is outstanding and
+   * nobody is doing it. Returning the same value for both made the poller count a skipped alert as
+   * completed and leave it until the next 60-second tick, which with the interval's own wait can
+   * put a HEALTHY provider outside AC 2's two-minute bound. A checklist review that overlaps a tick
+   * is ordinary use, not scale, so this is reachable today rather than eventually.
+   */
+  | { status: "skipped" };
+
 async function sendOne(
   database: Pool,
   alertId: string,
   senders: AlertSenders,
-): Promise<{
-  status: "sent" | "failed";
-  delivery: AlertDelivery | null;
-  error: string | null;
-} | null> {
+): Promise<SendOutcome | null> {
   const client = await database.connect();
   try {
     await client.query("BEGIN");
@@ -1061,7 +1110,10 @@ async function sendOne(
     );
     if (owner[0] === undefined) {
       await client.query("ROLLBACK");
-      return null;
+      // Transient by construction: the writer holding this row commits in milliseconds, and when it
+      // does the alert is either cancelled or still due. Reported as a skip so the tick can come
+      // back to it rather than banking it as done.
+      return { status: "skipped" };
     }
     // DUE IS RE-ASKED HERE, not inherited from the scan. Between the two, a regeneration can
     // commit and move this row: an unlock alert keeps its identity across a recomputed
@@ -1163,6 +1215,8 @@ export function createAlertPoller(dependencies: {
     let sent = 0;
     let failed = 0;
     let abandoned = 0;
+    /** Alerts a writer's lock made this tick skip. Still due, and nobody else is sending them. */
+    const skipped: string[] = [];
 
     // ONE FLAT QUEUE OF ALERTS. This was grouped by event for a while, because ownership of an
     // event's alerts is taken on the event row and two workers on one event collided over it —
@@ -1194,13 +1248,43 @@ export function createAlertPoller(dependencies: {
           return null;
         });
         if (outcome === null) continue;
+        if (outcome.status === "skipped") {
+          skipped.push(id);
+          continue;
+        }
         if (outcome.status === "sent") sent += 1;
         else failed += 1;
       }
     };
-    await Promise.all(
-      Array.from({ length: Math.min(SEND_CONCURRENCY, queue.length) }, () => worker()),
-    );
+    const drain = async (): Promise<void> => {
+      await Promise.all(
+        Array.from({ length: Math.min(SEND_CONCURRENCY, queue.length) }, () => worker()),
+      );
+    };
+    await drain();
+
+    // A SKIPPED ALERT IS RETRIED INSIDE THIS TICK, not left for the next one. Waiting out the
+    // interval spends 60 seconds of a 120-second budget on a lock that is held for milliseconds,
+    // and with the interval's own wait before the tick a healthy provider could still miss AC 2.
+    //
+    // Bounded by its own short window rather than by the tick budget, per the note on
+    // `SKIPPED_RETRY_WINDOW_MS`: a writer that holds the row longer than that still costs one tick,
+    // which is the trade `SKIP LOCKED` was chosen for and is not being reopened here. Whatever is
+    // still skipped is counted as abandoned below and stays due, the same honest reporting an
+    // over-budget scan already gets.
+    const retryUntil = clock() + SKIPPED_RETRY_WINDOW_MS;
+    while (
+      skipped.length > 0 &&
+      !stopped &&
+      clock() < retryUntil &&
+      clock() - startedAt < TICK_BUDGET_MS
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, SKIPPED_RETRY_WAIT_MS));
+      queue.push(...skipped.splice(0));
+      await drain();
+    }
+    abandoned += skipped.length;
+
     if (abandoned > 0) {
       // Said out loud, because the alternative is a tick that quietly did a fraction of its work.
       console.warn(
