@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
+import { afterAll, describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -80,12 +80,24 @@ function plant(files = {}) {
   return root;
 }
 
+// ASYNCHRONOUS, and that is a correctness fix for the run rather than a style one. `spawnSync`
+// blocks the vitest worker's event loop for the whole of each run, and each run loads the
+// TypeScript compiler the check imports. At 110 cases that was 56 seconds of solid blocking in one
+// file; at 122 the worker could no longer answer the reporter and CI failed with a
+// `Timeout calling "onTaskUpdate"` while all 1122 tests passed. Awaiting leaves the loop free and
+// lets the runs overlap, so this file stops being the run's critical path and stops climbing
+// towards that ceiling every round.
 function check(root) {
-  const run = spawnSync(process.execPath, [scriptPath], {
-    encoding: "utf8",
-    env: { ...process.env, BASELINE_CHECK_ROOT: root },
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [scriptPath],
+      { encoding: "utf8", env: { ...process.env, BASELINE_CHECK_ROOT: root } },
+      (error, stdout, stderr) => {
+        resolve({ status: error === null ? 0 : (error.code ?? 1), output: `${stdout}${stderr}` });
+      },
+    );
   });
-  return { status: run.status, output: `${run.stdout}${run.stderr}` };
 }
 
 const roots = [];
@@ -95,22 +107,26 @@ const runOn = (files) => {
   return check(root);
 };
 
-afterEach(() => {
+// CLEANED UP AT THE END, not after each case, because the cases run CONCURRENTLY. A shared list
+// emptied by `afterEach` would have one test deleting the planted tree another was still running
+// against. Each root is its own `mkdtemp` directory, so holding them all costs a few kilobytes and
+// removes the race outright.
+afterAll(() => {
   while (roots.length > 0) rmSync(roots.pop(), { recursive: true, force: true });
 });
 
-describe("the baseline check's own guarantees", () => {
-  it("passes a tree with nothing wrong in it, so a failure below means something", () => {
-    const { status, output } = runOn({});
+describe.concurrent("the baseline check's own guarantees", () => {
+  it("passes a tree with nothing wrong in it, so a failure below means something", async () => {
+    const { status, output } = await runOn({});
 
     expect(status).toBe(0);
     expect(output).toContain("Ruleset reference check passed");
   });
 });
 
-describe("ruleset names in executable code", () => {
-  it("fails on a dangling name in a string literal, naming file, line and version", () => {
-    const { status, output } = runOn({
+describe.concurrent("ruleset names in executable code", () => {
+  it("fails on a dangling name in a string literal, naming file, line and version", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const a = 1;\nconst path = "rules/${MISSING}";\n`,
     });
 
@@ -130,8 +146,8 @@ describe("ruleset names in executable code", () => {
   // version of this case survived removing `withoutComments`, which is the guard it claims to
   // cover. Markdown backticks in a doc comment are also the real-world shape, since they read as a
   // template literal.
-  it("passes the same name in a comment, even quoted, which is the documented boundary", () => {
-    const { status, output } = runOn({
+  it("passes the same name in a comment, even quoted, which is the documented boundary", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         `// \`rules/${MISSING}\` used to be read here.\n` +
         `/* and "rules/${ALSO_MISSING}" before that */\n` +
@@ -143,8 +159,8 @@ describe("ruleset names in executable code", () => {
     expect(output).not.toContain(ALSO_MISSING);
   });
 
-  it("fails on a name split across lines in a template literal", () => {
-    const { status, output } = runOn({
+  it("fails on a name split across lines in a template literal", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const path = \`rules/\n${MISSING}\`;\n`,
     });
 
@@ -158,8 +174,8 @@ describe("ruleset names in executable code", () => {
   it.each([
     ["a .bak suffix", `${FIXTURE_RULESET}.bak`],
     ["a .jsonx suffix", FIXTURE_RULESET.replace(".json", ".jsonx")],
-  ])("fails on a published name with %s", (_label, named) => {
-    const { status, output } = runOn({
+  ])("fails on a published name with %s", async (_label, named) => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const path = "rules/${named}";\n`,
     });
 
@@ -176,8 +192,8 @@ describe("ruleset names in executable code", () => {
     ["a fragment suffix", `${FIXTURE_RULESET}#old`],
     ["a percent escape", `${FIXTURE_RULESET}%20`],
     ["a stream suffix", `${FIXTURE_RULESET}:2`],
-  ])("fails on a published name with %s, which names no file", (_label, named) => {
-    const { status, output } = runOn({
+  ])("fails on a published name with %s, which names no file", async (_label, named) => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const path = "rules/${named}";\n`,
     });
 
@@ -191,8 +207,8 @@ describe("ruleset names in executable code", () => {
   it.each([
     ["a trailing hyphen", `${FIXTURE_RULESET}-`],
     ["a trailing period", `${FIXTURE_RULESET}.`],
-  ])("fails a published name with %s, which names no file", (_label, named) => {
-    const { status, output } = runOn({
+  ])("fails a published name with %s, which names no file", async (_label, named) => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const path = "rules/${named}";\n`,
     });
 
@@ -200,8 +216,8 @@ describe("ruleset names in executable code", () => {
     expect(output).toContain(`apps/web/app/reader.ts:1 names ${named}`);
   });
 
-  it("costs a false positive on prose inside a literal, which is the accepted half of that trade", () => {
-    const { status } = runOn({
+  it("costs a false positive on prose inside a literal, which is the accepted half of that trade", async () => {
+    const { status } = await runOn({
       "apps/web/app/reader.ts": `const note = "Read from ${FIXTURE_RULESET}.";\n`,
     });
 
@@ -210,8 +226,8 @@ describe("ruleset names in executable code", () => {
 
   // Reproduced from review: a preceding literal ending in an escaped backslash used to leave the
   // quote open, so the next quote read as its close and a later `//` blanked a real path away.
-  it("fails on a path hidden after a literal that ends in an escaped backslash", () => {
-    const { status, output } = runOn({
+  it("fails on a path hidden after a literal that ends in an escaped backslash", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         'const a = "ends with a backslash \\\\";\n' +
         `const p = read("rules//${MISSING}"); // trailing comment\n`,
@@ -227,8 +243,8 @@ describe("ruleset names in executable code", () => {
     ["a double quote", '"', '\\"'],
     ["a single quote", "'", "\\'"],
     ["a backtick", "`", "\\`"],
-  ])("fails on a path after %s escaped inside its own literal", (_label, quote, escaped) => {
-    const { status, output } = runOn({
+  ])("fails on a path after %s escaped inside its own literal", async (_label, quote, escaped) => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = ${quote}prefix ${escaped} rules/${MISSING}${quote};\n`,
     });
 
@@ -243,8 +259,8 @@ describe("ruleset names in executable code", () => {
   // branch observable. So it is defence whose absence could not be demonstrated in this repo's
   // shapes, kept because the scan desyncs loudly rather than silently if it is ever needed, and
   // recorded here so nobody reads a passing suite as proof it earns its place.
-  it("still finds a path after a literal that ends in an escaped quote", () => {
-    const { status, output } = runOn({
+  it("still finds a path after a literal that ends in an escaped quote", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": 'const a = "x \\"";\n' + `const p = "rules/${MISSING}";\n`,
     });
 
@@ -255,8 +271,8 @@ describe("ruleset names in executable code", () => {
   // The scanner must know a regex from a division, or an apostrophe inside a character class
   // opens a string that is not there and the rest of the file goes unscanned. This repo really
   // contains such a regex, so the guard below is not hypothetical.
-  it("still finds a path after a regular expression containing a quote", () => {
-    const { status, output } = runOn({
+  it("still finds a path after a regular expression containing a quote", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         "const quoted = text.matchAll(/'([^']+)'/g);\n" + `const p = "rules/${MISSING}";\n`,
     });
@@ -269,8 +285,8 @@ describe("ruleset names in executable code", () => {
   // letter `n` as the end of an operand called it division and let the apostrophe open a string
   // that ran to end of file. The parser decides it from grammar position, so there is nothing to
   // get wrong.
-  it("still finds a path after a regex in return position", () => {
-    const { status, output } = runOn({
+  it("still finds a path after a regex in return position", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         "function quoted(text) {\n  return /'([^']+)'/.test(text);\n}\n" +
         `const p = "rules/${MISSING}";\n`,
@@ -286,8 +302,8 @@ describe("ruleset names in executable code", () => {
   // filenames then sit BETWEEN the pairs rather than inside them. The reported shape has two nested
   // templates, so the mispairing lands the names outside every recorded literal and the check
   // passed. Every span is its own node now, and `${}` depth is the parser's to track.
-  it("finds a path in a template literal that nests other template literals", () => {
-    const { status, output } = runOn({
+  it("finds a path in a template literal that nests other template literals", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         "const p = `${dir}/${legacy ? `" + MISSING + "` : `" + FIXTURE_RULESET + "`}`;\n",
     });
@@ -299,8 +315,8 @@ describe("ruleset names in executable code", () => {
   // JSX TEXT IS NOT STRING CONTENT, and an apostrophe in English prose between two tags is the
   // commonest character in the repo's web copy. Read as a quote it opened a literal that never
   // closed and silently swallowed the remainder of the file.
-  it("still finds a path after an apostrophe in JSX text", () => {
-    const { status, output } = runOn({
+  it("still finds a path after an apostrophe in JSX text", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.tsx":
         "export const Note = () => <p>don't file late</p>;\n" + `const p = "rules/${MISSING}";\n`,
     });
@@ -314,8 +330,8 @@ describe("ruleset names in executable code", () => {
   // A file the check cannot parse is a file it cannot vouch for, so it fails loudly rather than
   // scanning nothing and reporting a pass. Every source file in the repo parses clean, so this
   // costs nothing until it is real.
-  it("fails on a file it cannot parse rather than passing it unscanned", () => {
-    const { status, output } = runOn({
+  it("fails on a file it cannot parse rather than passing it unscanned", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const broken = (((;\n",
     });
 
@@ -325,14 +341,14 @@ describe("ruleset names in executable code", () => {
   });
 });
 
-describe("where a named ruleset has to exist, which is not just anywhere", () => {
+describe.concurrent("where a named ruleset has to exist, which is not just anywhere", () => {
   const FIXTURES = "packages/engine/src/__fixtures__";
 
   // Reproduced from review, and not a lexing bug: one flat set of every ruleset name anywhere let a
   // superseded REPLAY fixture vouch for a PRODUCTION path. The file the code would open is absent
   // and the check passed on the strength of a same-named file in a different directory.
-  it("does not let a replay fixture satisfy a path under rules/", () => {
-    const { status, output } = runOn({
+  it("does not let a replay fixture satisfy a path under rules/", async () => {
+    const { status, output } = await runOn({
       [`${FIXTURES}/${MISSING}`]: JSON.stringify({ ruleset_version: "nyc.v9.9" }),
       "apps/api/src/loader.ts": `const p = "rules/${MISSING}";\n`,
     });
@@ -343,8 +359,8 @@ describe("where a named ruleset has to exist, which is not just anywhere", () =>
 
   // The other half of the same rule, which is what makes it a resolution and not a blanket ban:
   // replay code pointing AT the fixture directory is correct and must keep passing.
-  it("accepts a fixture path that points at the fixture directory", () => {
-    const { status, output } = runOn({
+  it("accepts a fixture path that points at the fixture directory", async () => {
+    const { status, output } = await runOn({
       [`${FIXTURES}/${MISSING}`]: JSON.stringify({ ruleset_version: "nyc.v9.9" }),
       "packages/engine/src/replay.ts": `const p = "${FIXTURES}/${MISSING}";\n`,
     });
@@ -354,9 +370,9 @@ describe("where a named ruleset has to exist, which is not just anywhere", () =>
   });
 });
 
-describe("the RULES_FILE override, which no code scan can see through", () => {
-  it("fails on a stale ruleset pinned in a .env file", () => {
-    const { status, output } = runOn({
+describe.concurrent("the RULES_FILE override, which no code scan can see through", () => {
+  it("fails on a stale ruleset pinned in a .env file", async () => {
+    const { status, output } = await runOn({
       "apps/api/.env.example": `PORT=3001\nRULES_FILE=../../rules/${MISSING}\n`,
     });
 
@@ -368,8 +384,8 @@ describe("the RULES_FILE override, which no code scan can see through", () => {
   // configuration waiting to be uncommented, which is the thing that goes stale and then bites
   // whoever enables it. This test exists because that inversion is the most likely to be
   // "simplified" away by someone who sees the JS rule and assumes both work the same way.
-  it("fails on a stale ruleset in a COMMENTED OUT .env line", () => {
-    const { status, output } = runOn({
+  it("fails on a stale ruleset in a COMMENTED OUT .env line", async () => {
+    const { status, output } = await runOn({
       "apps/api/.env.example": `PORT=3001\n# RULES_FILE=../../rules/${MISSING}\n`,
     });
 
@@ -377,8 +393,8 @@ describe("the RULES_FILE override, which no code scan can see through", () => {
     expect(output).toContain(`apps/api/.env.example:2 names ${MISSING}`);
   });
 
-  it("fails on a stale ruleset in a workflow file", () => {
-    const { status, output } = runOn({
+  it("fails on a stale ruleset in a workflow file", async () => {
+    const { status, output } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: rules/${MISSING}\n`,
     });
 
@@ -387,12 +403,12 @@ describe("the RULES_FILE override, which no code scan can see through", () => {
   });
 });
 
-describe("how many rulesets are published", () => {
+describe.concurrent("how many rulesets are published", () => {
   // The state this fires in is mid bump, new version added and old one not yet deleted, which is
   // when the check is most needed. Standing down here would be a silent-failure path inside the
   // guard written to remove one.
-  it("fails on two published rulesets, naming every file and the one to keep", () => {
-    const { status, output } = runOn({
+  it("fails on two published rulesets, naming every file and the one to keep", async () => {
+    const { status, output } = await runOn({
       [`rules/${ruleset("0.1")}`]: JSON.stringify({ ruleset_version: "nyc.v0.1" }),
     });
 
@@ -403,27 +419,27 @@ describe("how many rulesets are published", () => {
     expect(output).toContain(`pins ${FIXTURE_VERSION}, so that is the one to keep`);
   });
 
-  it("fails when nothing is published at all", () => {
+  it("fails when nothing is published at all", async () => {
     const root = plant({ [`rules/${FIXTURE_RULESET}`]: null });
     roots.push(root);
     mkdirSync(join(root, "rules"), { recursive: true });
 
-    const { status, output } = check(root);
+    const { status, output } = await check(root);
 
     expect(status).toBe(1);
     expect(output).toContain("No published ruleset in rules/");
   });
 });
 
-describe("the version, which is spelled in three places", () => {
+describe.concurrent("the version, which is spelled in three places", () => {
   // Reproduced from review: comparing the JSON field against the pin checked two of the three and
   // left the filename free to disagree, so a rename with neither updated passed.
-  it("fails when the filename says one version and the file and pin say another", () => {
+  it("fails when the filename says one version and the file and pin say another", async () => {
     const root = plant({});
     roots.push(root);
     renameSync(join(root, "rules", FIXTURE_RULESET), join(root, "rules", ruleset("0.1")));
 
-    const { status, output } = check(root);
+    const { status, output } = await check(root);
 
     expect(status).toBe(1);
     expect(output).toContain(`${ruleset("0.1")} is named for nyc.v0.1`);
@@ -433,8 +449,8 @@ describe("the version, which is spelled in three places", () => {
 
   // Reproduced from review: an unanchored first match over raw source read a commented-out
   // assignment as the pin, so the check passed while the live constant said something else.
-  it("reads the live pin, not one quoted in a comment above it", () => {
-    const { status, output } = runOn({
+  it("reads the live pin, not one quoted in a comment above it", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts":
         `// const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}"\n` +
         `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n`,
@@ -447,8 +463,8 @@ describe("the version, which is spelled in three places", () => {
   // Blanking comments fixed the commented-out pin above and left the same bug one shape over: any
   // assignment-shaped TEXT still matched first, including one inside a string. The pin is read as a
   // variable DECLARATION now, so only a declaration can be one.
-  it("reads the live pin, not one quoted inside a string literal", () => {
-    const { status, output } = runOn({
+  it("reads the live pin, not one quoted inside a string literal", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts":
         `const banner = 'EXPECTED_RULESET_VERSION = "nyc.v9.9"';\n` +
         `const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
@@ -459,8 +475,8 @@ describe("the version, which is spelled in three places", () => {
     expect(output).toContain("Ruleset reference check passed");
   });
 
-  it("fails when the artifact moved and the pin did not", () => {
-    const { status, output } = runOn({
+  it("fails when the artifact moved and the pin did not", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n`,
     });
 
@@ -474,8 +490,8 @@ describe("the version, which is spelled in three places", () => {
   // afterwards: a check reading only the declaration's position confirms the initial value against
   // the artifact and passes, while `validateRuleset` compares the reassigned one and rejects the
   // published ruleset at boot.
-  it.each([["let"], ["var"]])("refuses a %s pin, which the const argument does not cover", (kind) => {
-    const { status, output } = runOn({
+  it.each([["let"], ["var"]])("refuses a %s pin, which the const argument does not cover", async (kind) => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts":
         `${kind} EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
         `EXPECTED_RULESET_VERSION = "nyc.v9.9";\n` +
@@ -486,8 +502,8 @@ describe("the version, which is spelled in three places", () => {
     expect(output).toContain("no longer declares EXPECTED_RULESET_VERSION");
   });
 
-  it("fails when the one constant allowed to name a version is gone", () => {
-    const { status, output } = runOn({
+  it("fails when the one constant allowed to name a version is gone", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts": `export const somethingElse = 1;\n`,
     });
 
@@ -496,16 +512,16 @@ describe("the version, which is spelled in three places", () => {
   });
 });
 
-describe("round 7: the rules the parser made reachable", () => {
+describe.concurrent("round 7: the rules the parser made reachable", () => {
   // The check restated the discoverers' pattern more broadly than they write it. A publication
   // without the `v` satisfied the guard and then found zero rulesets at boot, which is a green
   // check on a tree that cannot start.
-  it("refuses a published name the runtime's own pattern would not discover", () => {
+  it("refuses a published name the runtime's own pattern would not discover", async () => {
     // The bump REPLACES the published file, which is what a bump does. Every discoverer requires
     // the `v`, so this tree boots to zero rulesets; a check whose pattern was broader counted one
     // and went green on it.
     const withoutV = ["nyc", "rules.2.9.json"].join("-");
-    const { status, output } = runOn({
+    const { status, output } = await runOn({
       [`rules/${FIXTURE_RULESET}`]: null,
       [`rules/${withoutV}`]: JSON.stringify({ ruleset_version: FIXTURE_VERSION }),
     });
@@ -517,7 +533,7 @@ describe("round 7: the rules the parser made reachable", () => {
   // The copy this check keeps of that pattern is the thing that can drift, so the copies are
   // compared directly. Reading the repo rather than a planted tree on purpose: divergence is a fact
   // about the real files.
-  it("keeps its published-ruleset pattern identical to every runtime discoverer", () => {
+  it("keeps its published-ruleset pattern identical to every runtime discoverer", async () => {
     const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const declared = (relative) => {
       const text = readFileSync(join(repo, relative), "utf8");
@@ -535,8 +551,8 @@ describe("round 7: the rules the parser made reachable", () => {
 
   // A directory that holds no rulesets was treated as `rules/` merely for not being the fixtures
   // one, so a path to nowhere resolved against a file it does not point at.
-  it("fails a published name written in a directory that holds no rulesets", () => {
-    const { status, output } = runOn({
+  it("fails a published name written in a directory that holds no rulesets", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "elsewhere/${FIXTURE_RULESET}";\n`,
     });
 
@@ -548,8 +564,8 @@ describe("round 7: the rules the parser made reachable", () => {
   // Both are the published directory, so both must still resolve.
   it.each([["../../rules/"], ["./rules/"], ["rules//"]])(
     "resolves a published name written under %s",
-    (prefix) => {
-      const { status } = runOn({
+    async (prefix) => {
+      const { status } = await runOn({
         "apps/web/app/reader.ts": `const p = "${prefix}${FIXTURE_RULESET}";\n`,
       });
 
@@ -559,8 +575,8 @@ describe("round 7: the rules the parser made reachable", () => {
 
   // An escape is the one way to write a path that a text search cannot see and a runtime reads
   // perfectly. Matched on the cooked value, reported at the literal the reader is looking at.
-  it("fails on a name an escape hides from the raw text", () => {
-    const { status, output } = runOn({
+  it("fails on a name an escape hides from the raw text", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "rules/nyc\\x2drules.v9.9.json";\n`,
     });
 
@@ -570,8 +586,8 @@ describe("round 7: the rules the parser made reachable", () => {
 
   // A nested declaration shadows nothing the module uses, so reading it as the pin checks a
   // constant `validateRuleset` never sees.
-  it("reads the module-scope pin rather than a nested declaration of the same name", () => {
-    const { status, output } = runOn({
+  it("reads the module-scope pin rather than a nested declaration of the same name", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts":
         `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n` +
         `function helper() {\n  const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}";\n` +
@@ -585,8 +601,8 @@ describe("round 7: the rules the parser made reachable", () => {
 
   // Extensions the toolchain runs but the walker did not visit were a hole with no diagnostic:
   // a file naming a deleted ruleset simply was not read.
-  it.each([[".mts"], [".cts"], [".cjs"], [".jsx"]])("scans a %s file", (extension) => {
-    const { status, output } = runOn({
+  it.each([[".mts"], [".cts"], [".cjs"], [".jsx"]])("scans a %s file", async (extension) => {
+    const { status, output } = await runOn({
       [`apps/web/app/reader${extension}`]: `const p = "rules/${MISSING}";\n`,
     });
 
@@ -595,9 +611,9 @@ describe("round 7: the rules the parser made reachable", () => {
   });
 });
 
-describe("round 7: the fixture-name exemption, and what it does not cover", () => {
-  it("lets a TEST file declare that its ruleset names are fixtures", () => {
-    const { status } = runOn({
+describe.concurrent("round 7: the fixture-name exemption, and what it does not cover", () => {
+  it("lets a TEST file declare that its ruleset names are fixtures", async () => {
+    const { status } = await runOn({
       "apps/web/app/reader.test.ts":
         `// baseline-check: fixture ruleset names\n` +
         `const names = ["${MISSING}", "${ALSO_MISSING}"];\n`,
@@ -606,8 +622,8 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
     expect(status).toBe(0);
   });
 
-  it("accepts the marker on the same line as the names", () => {
-    const { status } = runOn({
+  it("accepts the marker on the same line as the names", async () => {
+    const { status } = await runOn({
       "apps/web/app/reader.test.ts": `const names = ["${MISSING}"]; // baseline-check: fixture ruleset names\n`,
     });
 
@@ -617,8 +633,8 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
   // The half that matters. A fixture BUILDER is not a test file, and PR #138's break was exactly
   // that shape: `checklist-fixtures.ts` hardcoding a ruleset path. Claiming the exemption there
   // would mean renaming the file into `*.test.*`, which changes what vitest runs.
-  it("refuses the marker in a file that is not a test", () => {
-    const { status, output } = runOn({
+  it("refuses the marker in a file that is not a test", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/checklist-fixtures.ts":
         `// baseline-check: fixture ruleset names\n` + `const p = "rules/${MISSING}";\n`,
     });
@@ -630,8 +646,8 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
   // Stated in the check's own comment and pinned here so the cost is not deniable: inside a test
   // file the marker silences a real dangling path too. Its defence is that it is greppable and
   // shows up in a diff, not that it is impossible to misuse.
-  it("silences a genuinely dangling path in a test file, which is the cost it admits", () => {
-    const { status } = runOn({
+  it("silences a genuinely dangling path in a test file, which is the cost it admits", async () => {
+    const { status } = await runOn({
       "apps/web/app/reader.test.ts":
         `// baseline-check: fixture ruleset names\n` + `const p = "rules/${MISSING}";\n`,
     });
@@ -639,8 +655,8 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
     expect(status).toBe(0);
   });
 
-  it("leaves an unmarked line in a test file checked", () => {
-    const { status, output } = runOn({
+  it("leaves an unmarked line in a test file checked", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.test.ts":
         `// baseline-check: fixture ruleset names\n` +
         `const ok = ["${MISSING}"];\n` +
@@ -658,12 +674,12 @@ describe("round 7: the fixture-name exemption, and what it does not cover", () =
 // built to catch then comes back with the gate disabled, so a false positive is not the mirror
 // image of a false negative here. Each one is paired with the true positive nearest to it, because
 // the way to make any of these pass is to stop catching something.
-describe("round 9: valid code the check used to reject", () => {
+describe.concurrent("round 9: valid code the check used to reject", () => {
   // Scanning raw text AND cooked values meant reporting from both, and the raw pass stopped at the
   // backslash: a literal that IS the published artifact was reported as naming a file that does not
   // exist, and the cooked pass could not retract a finding already made.
-  it("accepts an escaped literal that cooks to the published artifact", () => {
-    const { status, output } = runOn({
+  it("accepts an escaped literal that cooks to the published artifact", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET.replace(".json", "\\x2ejson")}";\n`,
     });
 
@@ -673,8 +689,8 @@ describe("round 9: valid code the check used to reject", () => {
 
   // The pair. Judging only the cooked value must not stop an escape from hiding a real one, which
   // is the whole reason cooked values are read at all.
-  it("still fails an escaped literal that cooks to a name that is not there", () => {
-    const { status, output } = runOn({
+  it("still fails an escaped literal that cooks to a name that is not there", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "rules/${MISSING.replace("v9.9", "v9\\x2e9")}";\n`,
     });
 
@@ -686,8 +702,8 @@ describe("round 9: valid code the check used to reject", () => {
   // text and not of a cooked value, where a backslash is one ordinary character of the name. The
   // truncation cut both ways: round 8 recorded the false negative, and this suite's own outer
   // literals then hit the false positive. The token runs through it now and is compared whole.
-  it("fails a published name with a backslash suffix, which names no file", () => {
-    const { status, output } = runOn({
+  it("fails a published name with a backslash suffix, which names no file", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET}\\\\backup";\n`,
     });
 
@@ -698,8 +714,8 @@ describe("round 9: valid code the check used to reject", () => {
 
   // A template head is a fragment by construction: its value is continued by the span that follows.
   // Reporting `nyc-rules.v` as a missing file made ordinary dynamic selection fail CI.
-  it("accepts a version interpolated into the filename", () => {
-    const { status, output } = runOn({
+  it("accepts a version interpolated into the filename", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const p = `rules/" + ["nyc", "rules.v"].join("-") + "${version}.json`;\n",
     });
 
@@ -709,8 +725,8 @@ describe("round 9: valid code the check used to reject", () => {
 
   // The pair, and the reason the rule is written as "ends AT the boundary" rather than "appears in
   // a head": a complete name earlier in the same head is still a complete name.
-  it("still fails a complete dangling name earlier in the same template head", () => {
-    const { status, output } = runOn({
+  it("still fails a complete dangling name earlier in the same template head", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const p = `rules/" + MISSING + "/${leaf}`;\n",
     });
 
@@ -720,8 +736,8 @@ describe("round 9: valid code the check used to reject", () => {
 
   // A template TAIL is not continued by anything, so a name running to its end is finished and is
   // judged normally. Only the two spans an interpolation is appended to are fragments.
-  it("still fails a dangling name in a template tail", () => {
-    const { status, output } = runOn({
+  it("still fails a dangling name in a template tail", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const p = `${dir}/" + MISSING + "`;\n",
     });
 
@@ -734,8 +750,8 @@ describe("round 9: valid code the check used to reject", () => {
   // evaluates to and this check does not evaluate expressions. That is the documented concatenation
   // gap in template form; the old behaviour looked like coverage only because a fragment happened
   // to be spelled like a whole name.
-  it("does not report a name immediately before an interpolation, which is the cost it admits", () => {
-    const { status } = runOn({
+  it("does not report a name immediately before an interpolation, which is the cost it admits", async () => {
+    const { status } = await runOn({
       "apps/web/app/reader.ts": "const p = `rules/" + MISSING + "${suffix}`;\n",
     });
 
@@ -752,8 +768,8 @@ describe("round 9: valid code the check used to reject", () => {
     ["satisfies", `"${FIXTURE_VERSION}" satisfies string`],
     ["a non-null assertion", `"${FIXTURE_VERSION}"!`],
     ["both, nested", `("${FIXTURE_VERSION}" as const)`],
-  ])("reads a pin written with %s", (_label, initializer) => {
-    const { status, output } = runOn({
+  ])("reads a pin written with %s", async (_label, initializer) => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = ${initializer};\n`,
     });
 
@@ -762,8 +778,8 @@ describe("round 9: valid code the check used to reject", () => {
   });
 
   // The pair. Unwrapping must not lose the disagreement it exists to find.
-  it("still fails a wrapped pin that names the wrong version", () => {
-    const { status, output } = runOn({
+  it("still fails a wrapped pin that names the wrong version", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = ("nyc.v9.9") as const;\n`,
     });
 
@@ -774,8 +790,8 @@ describe("round 9: valid code the check used to reject", () => {
   // The boundary of that category, and the admission test for anything added to it later. A
   // wrapper that CHANGES the value at runtime means the pin is computed, this check cannot know it,
   // and reporting no pin is the correct answer rather than a false positive.
-  it("still reports no pin when the value is computed rather than wrapped", () => {
-    const { status, output } = runOn({
+  it("still reports no pin when the value is computed rather than wrapped", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/ruleset.ts":
         `const versions = ["${FIXTURE_VERSION}"];\n` +
         `const EXPECTED_RULESET_VERSION = versions[0];\n`,
@@ -786,7 +802,7 @@ describe("round 9: valid code the check used to reject", () => {
   });
 });
 
-describe("round 10: the exemption is only for files vitest runs", () => {
+describe.concurrent("round 10: the exemption is only for files vitest runs", () => {
   // The property this design was chosen over a directory-shaped alternative to get: claiming the
   // exemption forces a rename into a file the suite EXECUTES, which cannot be done quietly. The
   // predicate was `.test.` anywhere in the basename, which is broader than vitest's include set in
@@ -795,8 +811,8 @@ describe("round 10: the exemption is only for files vitest runs", () => {
   it.each([
     ["a suffix vitest does not collect", "apps/web/app/reader.test.helper.ts"],
     ["a tree no include pattern covers", "tools/reader.test.ts"],
-  ])("refuses the marker in %s", (_label, path) => {
-    const { status, output } = runOn({
+  ])("refuses the marker in %s", async (_label, path) => {
+    const { status, output } = await runOn({
       [path]: `// baseline-check: fixture ruleset names\n` + `export const p = "rules/${MISSING}";\n`,
     });
 
@@ -811,8 +827,8 @@ describe("round 10: the exemption is only for files vitest runs", () => {
     ["apps/web/app/nested/deep/reader.test.tsx"],
     ["apps/api/src/reader.test.ts"],
     ["packages/engine/src/nested/reader.test.ts"],
-  ])("still lets %s claim it", (path) => {
-    const { status } = runOn({
+  ])("still lets %s claim it", async (path) => {
+    const { status } = await runOn({
       [path]: `// baseline-check: fixture ruleset names\n` + `export const p = "rules/${MISSING}";\n`,
     });
 
@@ -823,7 +839,7 @@ describe("round 10: the exemption is only for files vitest runs", () => {
   // directly. Reading the repo rather than a planted tree on purpose: divergence is a fact about
   // the real files. Reading the config at RUNTIME was not an option for the same reason reading
   // `ruleset.ts` was not in round 7 — the planted trees do not contain one.
-  it("keeps its copy of vitest's include patterns identical to the real config", () => {
+  it("keeps its copy of vitest's include patterns identical to the real config", async () => {
     const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     // Quoted entries between the brackets, NOT a comma split: `{apps,packages}` contains a comma
     // and splitting on it silently produced two half-patterns that happened to compare equal.
@@ -845,13 +861,13 @@ describe("round 10: the exemption is only for files vitest runs", () => {
   });
 });
 
-describe("round 10: pruning by basename pruned real source", () => {
+describe.concurrent("round 10: pruning by basename pruned real source", () => {
   // `build` was in a hand-written skip list and is in nobody's .gitignore, so `src/build/` is an
   // ordinary tracked source directory. The walker pruned it by basename at any depth: the file went
   // unscanned, the check exited 0, and the count it printed simply got smaller. A guard that
   // quietly scans less reads exactly like a clean repo.
-  it("scans a source directory whose name is not ignored", () => {
-    const { status, output } = runOn({
+  it("scans a source directory whose name is not ignored", async () => {
+    const { status, output } = await runOn({
       ".gitignore": "node_modules/\ndist/\n",
       "apps/api/src/build/reader.ts": `export const p = "rules/${MISSING}";\n`,
     });
@@ -863,8 +879,8 @@ describe("round 10: pruning by basename pruned real source", () => {
   // The pair. A tree the repo really does ignore is still pruned, because a gitignored directory
   // cannot hold a committed reference and descending into `node_modules` reports pnpm's symlinked
   // workspace copies beside the real files.
-  it.each([["node_modules"], ["dist"]])("still prunes %s, which is ignored", (ignored) => {
-    const { status } = runOn({
+  it.each([["node_modules"], ["dist"]])("still prunes %s, which is ignored", async (ignored) => {
+    const { status } = await runOn({
       ".gitignore": "node_modules/\ndist/\n",
       [`apps/api/src/${ignored}/reader.ts`]: `export const p = "rules/${MISSING}";\n`,
     });
@@ -875,8 +891,8 @@ describe("round 10: pruning by basename pruned real source", () => {
   // With no .gitignore the set falls back to the two names that are never source, and the direction
   // is the point: a smaller prune set scans MORE, so a missing file makes this noisier, never
   // quieter. The opposite fallback would be the same silent narrowing by another route.
-  it("scans an ignorable-looking directory when nothing declares it ignored", () => {
-    const { status, output } = runOn({
+  it("scans an ignorable-looking directory when nothing declares it ignored", async () => {
+    const { status, output } = await runOn({
       "apps/api/src/dist/reader.ts": `export const p = "rules/${MISSING}";\n`,
     });
 
@@ -885,14 +901,14 @@ describe("round 10: pruning by basename pruned real source", () => {
   });
 });
 
-describe("round 10: package scripts are executable entry points", () => {
+describe.concurrent("round 10: package scripts are executable entry points", () => {
   // A package script is a command CI and developers actually run, so a ruleset path in one breaks
   // on a publication exactly like the `.env` override did, and was invisible for the same reason:
   // not JavaScript source, and not a config format this check knew about.
   it.each([["package.json"], ["apps/api/package.json"], ["packages/engine/package.json"]])(
     "fails on a stale ruleset in %s",
-    (manifest) => {
-      const { status, output } = runOn({
+    async (manifest) => {
+      const { status, output } = await runOn({
         [manifest]: JSON.stringify({ name: "x", scripts: { seed: `node seed.mjs rules/${MISSING}` } }, null, 2),
       });
 
@@ -904,8 +920,8 @@ describe("round 10: package scripts are executable entry points", () => {
   // The boundary, and it is the reason this is scoped to one field rather than to JSON. The ruleset
   // artifacts ARE JSON and are full of ruleset names by definition, as are the replay fixtures, so
   // a blanket JSON rule would report the published artifact as a dangling reference to itself.
-  it("does not read ruleset names out of the rest of a manifest", () => {
-    const { status, output } = runOn({
+  it("does not read ruleset names out of the rest of a manifest", async () => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify(
         { name: "x", description: `supersedes rules/${MISSING}`, scripts: { build: "tsc" } },
         null,
@@ -919,15 +935,15 @@ describe("round 10: package scripts are executable entry points", () => {
 
   // A manifest this check cannot read is a manifest it cannot vouch for, the same rule the source
   // scan applies to a file that will not parse.
-  it("fails on a manifest it cannot parse rather than passing it unscanned", () => {
-    const { status, output } = runOn({ "package.json": "{ not json\n" });
+  it("fails on a manifest it cannot parse rather than passing it unscanned", async () => {
+    const { status, output } = await runOn({ "package.json": "{ not json\n" });
 
     expect(status).toBe(1);
     expect(output).toContain("could not be parsed");
   });
 });
 
-describe("round 11: a bump does not break the guard", () => {
+describe.concurrent("round 11: a bump does not break the guard", () => {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const NEXT = ruleset("2.9");
 
@@ -953,8 +969,8 @@ describe("round 11: a bump does not break the guard", () => {
   // The REAL file is read rather than a paraphrase of it, because a copy proves only that the copy
   // is safe. A fixture name that spells the current version is a fixture that needs editing every
   // bump, which is the maintenance this whole PR exists to end.
-  it("passes with the real rules-file.test.ts when the published artifact has moved on", () => {
-    const { status, output } = afterTheBump({
+  it("passes with the real rules-file.test.ts when the published artifact has moved on", async () => {
+    const { status, output } = await afterTheBump({
       "apps/web/app/rules-file.test.ts": readFileSync(
         join(repo, "apps/web/app/rules-file.test.ts"),
         "utf8",
@@ -966,7 +982,7 @@ describe("round 11: a bump does not break the guard", () => {
   });
 
   // The whole repo, not one file, since any source file may name the version that just went away.
-  it("passes with every real source file when the published artifact has moved on", () => {
+  it("passes with every real source file when the published artifact has moved on", async () => {
     const sources = {};
     const collect = (directory) => {
       for (const entry of readdirSync(join(repo, directory), { withFileTypes: true })) {
@@ -988,7 +1004,7 @@ describe("round 11: a bump does not break the guard", () => {
     collect("apps/web/app");
     collect("packages/engine/src");
 
-    const { status, output } = afterTheBump(sources);
+    const { status, output } = await afterTheBump(sources);
 
     expect(Object.keys(sources).length).toBeGreaterThan(20);
     expect(status).toBe(0);
@@ -998,8 +1014,8 @@ describe("round 11: a bump does not break the guard", () => {
   // The pair, and it is what stops the two tests above from being satisfied by a check that has
   // simply stopped looking. A file that really does point at the deleted artifact must still fail
   // after the bump, which is the entire original purpose.
-  it("still fails a real path to the artifact the bump deleted", () => {
-    const { status, output } = afterTheBump({
+  it("still fails a real path to the artifact the bump deleted", async () => {
+    const { status, output } = await afterTheBump({
       "apps/web/app/reader.ts": `export const p = "rules/${FIXTURE_RULESET}";\n`,
     });
 
@@ -1008,7 +1024,7 @@ describe("round 11: a bump does not break the guard", () => {
   });
 });
 
-describe("round 11: cooked values are tokenized as values", () => {
+describe.concurrent("round 11: cooked values are tokenized as values", () => {
   // Round 9 unified the JS rule on cooked values and kept the class that had served the raw scan.
   // In a cooked value the parser has already resolved the delimiters, so these are ordinary
   // filename characters and the token was truncating to the published prefix: matched exactly,
@@ -1020,8 +1036,8 @@ describe("round 11: cooked values are tokenized as values", () => {
     ["a single quote", "'backup"],
     ['a double quote', '\\"backup'],
     ["a backtick", "`backup"],
-  ])("fails a published name with %s in a string literal", (_label, suffix) => {
-    const { status, output } = runOn({
+  ])("fails a published name with %s in a string literal", async (_label, suffix) => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = "rules/${FIXTURE_RULESET}${suffix}";\n`,
     });
 
@@ -1032,8 +1048,8 @@ describe("round 11: cooked values are tokenized as values", () => {
   // The pair, and the reason the two classes are separate rather than merged onto the wider one.
   // In raw config text those characters ARE delimiters: a quoted YAML value ends at its quote, and
   // a name that ran through it would swallow the punctuation and report a file nobody wrote.
-  it("still reads a quoted name in a workflow file as ending at its quote", () => {
-    const { status, output } = runOn({
+  it("still reads a quoted name in a workflow file as ending at its quote", async () => {
+    const { status, output } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/${MISSING}"\n`,
     });
 
@@ -1043,8 +1059,8 @@ describe("round 11: cooked values are tokenized as values", () => {
     expect(output).not.toContain(`${MISSING}"`);
   });
 
-  it("still accepts a quoted published name in a workflow file", () => {
-    const { status } = runOn({
+  it("still accepts a quoted published name in a workflow file", async () => {
+    const { status } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/${FIXTURE_RULESET}"\n`,
     });
 
@@ -1056,7 +1072,7 @@ describe("round 11: cooked values are tokenized as values", () => {
 // the package-script and config rules reading bytes, so the same defect class kept arriving by a
 // route the previous fix had not covered. The rule they now share: every scanner judges the value a
 // runtime would see, and the tokenizer follows the VALUE rather than the file type.
-describe("round 12: every scanner judges the value a runtime would see", () => {
+describe.concurrent("round 12: every scanner judges the value a runtime would see", () => {
   // A package.json is raw bytes and the command inside it is a VALUE, because JSON.parse already
   // decoded it. Handed to the raw-text tokenizer, the token stopped at the brace and validated on
   // the published `.json` prefix while the runtime opens the whole thing.
@@ -1065,8 +1081,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
     ["a closing brace", "}backup"],
     ["a single quote", "'backup"],
     ["a backtick", "`backup"],
-  ])("fails a package script naming a published name with %s", (_label, suffix) => {
-    const { status, output } = runOn({
+  ])("fails a package script naming a published name with %s", async (_label, suffix) => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify(
         { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}${suffix}` } },
         null,
@@ -1079,8 +1095,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
   });
 
   // The pair. A script naming the real artifact is the ordinary case and must stay quiet.
-  it("still accepts a package script naming the published artifact", () => {
-    const { status, output } = runOn({
+  it("still accepts a package script naming the published artifact", async () => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify(
         { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}` } },
         null,
@@ -1098,8 +1114,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
   // YAML ONLY. This case had a second row asserting the same of `apps/api/.env.example`, and round
   // 13 removed it, because `--env-file` does not define `\x` at all and the row pinned the check
   // decoding a `.env` value with YAML semantics. See the dotenv cases below for what it does define.
-  it("fails on an escaped ruleset hidden in a quoted scalar in a workflow file", () => {
-    const { status, output } = runOn({
+  it("fails on an escaped ruleset hidden in a quoted scalar in a workflow file", async () => {
+    const { status, output } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/nyc\\x2drules.v9.9.json"\n`,
     });
 
@@ -1109,8 +1125,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
 
   // Same escape, resolving to the artifact that IS there. Decoding must find the real name too, not
   // only report on everything it decodes.
-  it("accepts an escaped quoted scalar that decodes to the published artifact", () => {
-    const { status, output } = runOn({
+  it("accepts an escaped quoted scalar that decodes to the published artifact", async () => {
+    const { status, output } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: "rules/nyc\\x2drules.v0.0.json"\n`,
     });
 
@@ -1120,8 +1136,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
 
   // A single-quoted scalar is literal in both formats, so it is NOT decoded. The quotes still come
   // off, which is what makes a brace inside one an ordinary filename character.
-  it("does not decode escapes inside a single-quoted scalar", () => {
-    const { status } = runOn({
+  it("does not decode escapes inside a single-quoted scalar", async () => {
+    const { status } = await runOn({
       "apps/api/.env.example": `RULES_FILE='rules/nyc\\x2drules.v9.9.json'\n`,
     });
 
@@ -1132,8 +1148,8 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
 
   // The pair for the segmentation itself. Outside a quoted scalar the text really is raw, and the
   // exclusions that belong there have to keep applying.
-  it("still reads an unquoted stale ruleset in a workflow file", () => {
-    const { status, output } = runOn({
+  it("still reads an unquoted stale ruleset in a workflow file", async () => {
+    const { status, output } = await runOn({
       ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: rules/${MISSING}\n`,
     });
 
@@ -1142,12 +1158,12 @@ describe("round 12: every scanner judges the value a runtime would see", () => {
   });
 });
 
-describe("round 12: a tagged template's value is the tag's to decide", () => {
+describe.concurrent("round 12: a tagged template's value is the tag's to decide", () => {
   // The one place "judge the cooked value" is wrong. The parser cooks `\x2e` to `.`, producing the
   // published name, which exists; `String.raw` returns the raw text and the runtime opens a file
   // that is not there.
-  it("fails String.raw whose raw value names a file that is not there", () => {
-    const { status, output } = runOn({
+  it("fails String.raw whose raw value names a file that is not there", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         "const p = readFileSync(String.raw`rules/" +
         FIXTURE_RULESET.replace(".json", "\\x2ejson") +
@@ -1161,8 +1177,8 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
   // The pair, and the reason String.raw is recognised rather than lumped in with the unknown tags:
   // its cooked text must NOT be judged, or an escape that cooks into the published name would be
   // reported as missing.
-  it("still accepts String.raw whose raw value is the published artifact", () => {
-    const { status, output } = runOn({
+  it("still accepts String.raw whose raw value is the published artifact", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const p = readFileSync(String.raw`rules/" + FIXTURE_RULESET + "`);\n",
     });
 
@@ -1172,8 +1188,8 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
 
   // An unrecognised tag is an arbitrary function, so neither candidate is authoritative and both
   // must resolve. Here the cooked value is the published artifact and the raw value is not.
-  it("fails an unknown tag when only one of its candidate values resolves", () => {
-    const { status, output } = runOn({
+  it("fails an unknown tag when only one of its candidate values resolves", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts":
         "const p = dedent`rules/" + FIXTURE_RULESET.replace(".json", "\\x2ejson") + "`;\n",
     });
@@ -1185,8 +1201,8 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
   // The pair, and the reason holding both candidates is not a blanket false positive: with no
   // escape the raw and cooked forms are identical, so this is one judgement, which is what almost
   // every tagged template in real code looks like.
-  it("still accepts an unknown tag naming the published artifact", () => {
-    const { status, output } = runOn({
+  it("still accepts an unknown tag naming the published artifact", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": "const p = dedent`rules/" + FIXTURE_RULESET + "`;\n",
     });
 
@@ -1197,8 +1213,8 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
   // A plain string inside an interpolation is the tag's ARGUMENT, not its template text, so it is
   // judged as the ordinary cooked value it is. Walking up from any literal to a tagged template
   // would have swept this in.
-  it("treats a string inside a tagged interpolation as an ordinary literal", () => {
-    const { status, output } = runOn({
+  it("treats a string inside a tagged interpolation as an ordinary literal", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": 'const p = dedent`x${"rules/' + MISSING + '"}y`;\n',
     });
 
@@ -1212,11 +1228,11 @@ describe("round 12: a tagged template's value is the tag's to decide", () => {
 // their escape or quoting rules, so the other half of the rule is: a value is decoded by the
 // semantics of the format it came FROM, and the tokenizer follows the value's ORIGIN rather than
 // the fact that it has been decoded at all.
-describe("round 13: each format decodes by its own rules", () => {
+describe.concurrent("round 13: each format decodes by its own rules", () => {
   // The parser told us exactly where the string ends, and treating whitespace as a delimiter
   // afterwards throws that away. The runtime opens the name WITH the trailing space.
-  it("fails a cooked path whose trailing whitespace is part of the filename", () => {
-    const { status, output } = runOn({
+  it("fails a cooked path whose trailing whitespace is part of the filename", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = readFileSync("rules/${FIXTURE_RULESET} ");\n`,
     });
 
@@ -1226,8 +1242,8 @@ describe("round 13: each format decodes by its own rules", () => {
 
   // The pair. The published artifact named cleanly is the ordinary case and must stay quiet, which
   // is what stops the fix above from being "report every string containing the name".
-  it("still accepts a cooked path naming the published artifact exactly", () => {
-    const { status, output } = runOn({
+  it("still accepts a cooked path naming the published artifact exactly", async () => {
+    const { status, output } = await runOn({
       "apps/web/app/reader.ts": `const p = readFileSync("rules/${FIXTURE_RULESET}");\n`,
     });
 
@@ -1242,8 +1258,8 @@ describe("round 13: each format decodes by its own rules", () => {
     ["single quotes", `cat 'rules/${FIXTURE_RULESET}'`],
     ["double quotes", `cat "rules/${FIXTURE_RULESET}"`],
     ["a quoted directory", `cat 'rules'/${FIXTURE_RULESET}`],
-  ])("accepts a package script that shell-quotes with %s", (_label, command) => {
-    const { status, output } = runOn({
+  ])("accepts a package script that shell-quotes with %s", async (_label, command) => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
     });
 
@@ -1259,8 +1275,8 @@ describe("round 13: each format decodes by its own rules", () => {
     // and that file is not there. Unquoting has to produce the name the shell would, not a
     // convenient one.
     ["an escaped space", `cat rules/${FIXTURE_RULESET}\\ copy`],
-  ])("still fails a shell-quoted script naming a file that is not there, with %s", (_label, command) => {
-    const { status, output } = runOn({
+  ])("still fails a shell-quoted script naming a file that is not there, with %s", async (_label, command) => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify({ name: "x", scripts: { seed: command } }, null, 2),
     });
 
@@ -1271,8 +1287,8 @@ describe("round 13: each format decodes by its own rules", () => {
   // An unterminated quote is not valid shell and would not run, so there are no words to speak of.
   // Dropping the stray quote would invent a value the shell never produces, so the command is
   // judged as written, which is what catches a quote appended to a published name.
-  it("judges a script with an unterminated quote as written rather than guessing", () => {
-    const { status, output } = runOn({
+  it("judges a script with an unterminated quote as written rather than guessing", async () => {
+    const { status, output } = await runOn({
       "package.json": JSON.stringify(
         { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}'backup` } },
         null,
@@ -1291,8 +1307,8 @@ describe("round 13: each format decodes by its own rules", () => {
   //
   // This case is the one the correction newly CATCHES: the escape sits after the `nyc-rules.`
   // prefix, so the token is visible and names a file that is not there.
-  it("fails a .env override whose escape is preserved and names no file", () => {
-    const { status, output } = runOn({
+  it("fails a .env override whose escape is preserved and names no file", async () => {
+    const { status, output } = await runOn({
       "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET.replace("v0.0", "v0\\x2e0")}"\n`,
     });
 
@@ -1302,8 +1318,8 @@ describe("round 13: each format decodes by its own rules", () => {
 
   // The one escape `--env-file` really does honour, pinned so a future simplification cannot quietly
   // drop it. The newline splits the value, so the name that remains is the published one.
-  it("honours the one escape --env-file defines, and only inside double quotes", () => {
-    const { status, output } = runOn({
+  it("honours the one escape --env-file defines, and only inside double quotes", async () => {
+    const { status, output } = await runOn({
       "apps/api/.env.example": `RULES_FILE="rules/${FIXTURE_RULESET}\\nTRAILING=x"\n`,
     });
 
@@ -1312,8 +1328,8 @@ describe("round 13: each format decodes by its own rules", () => {
   });
 
   // The same bytes in single quotes decode to nothing at all, in either format's rules.
-  it("decodes nothing inside a single-quoted .env value", () => {
-    const { status } = runOn({
+  it("decodes nothing inside a single-quoted .env value", async () => {
+    const { status } = await runOn({
       "apps/api/.env.example": `RULES_FILE='rules/${FIXTURE_RULESET}\\nTRAILING=x'\n`,
     });
 
@@ -1323,8 +1339,8 @@ describe("round 13: each format decodes by its own rules", () => {
 
   // The pair for the dotenv reader as a whole: an ordinary stale override must still be caught, and
   // an ordinary correct one must still pass. Neither involves an escape.
-  it("still fails a plain stale .env override", () => {
-    const { status, output } = runOn({
+  it("still fails a plain stale .env override", async () => {
+    const { status, output } = await runOn({
       "apps/api/.env.example": `PORT=3001\nRULES_FILE=../../rules/${MISSING}\n`,
     });
 
