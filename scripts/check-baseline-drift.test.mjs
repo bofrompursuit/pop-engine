@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,13 +159,84 @@ describe("ruleset names in executable code", () => {
     expect(output).toContain(`apps/web/app/reader.ts:1 names ${named}`);
   });
 
-  it("passes a filename that ends an English sentence inside a string", () => {
-    // The trailing period is punctuation, not part of the name.
+  // Trailing punctuation is no longer trimmed, in either rule. Both branches of that trade are
+  // pinned here: the typo it now catches, and the prose it now costs. An accepted typo is silent
+  // and breaks at runtime; a false positive on prose is loud and fixed in a minute.
+  it.each([
+    ["a trailing hyphen", `${FIXTURE_RULESET}-`],
+    ["a trailing period", `${FIXTURE_RULESET}.`],
+  ])("fails a published name with %s, which names no file", (_label, named) => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const path = "rules/${named}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${named}`);
+  });
+
+  it("costs a false positive on prose inside a literal, which is the accepted half of that trade", () => {
     const { status } = runOn({
       "apps/web/app/reader.ts": `const note = "Read from ${FIXTURE_RULESET}.";\n`,
     });
 
-    expect(status).toBe(0);
+    expect(status).toBe(1);
+  });
+
+  // Reproduced from review: a preceding literal ending in an escaped backslash used to leave the
+  // quote open, so the next quote read as its close and a later `//` blanked a real path away.
+  it("fails on a path hidden after a literal that ends in an escaped backslash", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        'const a = "ends with a backslash \\\\";\n' +
+        `const p = read("rules//${MISSING}"); // trailing comment\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:2 names ${MISSING}`);
+  });
+
+  // Reproduced from review: an escaped delimiter used to end the literal early, putting the
+  // filename outside every match.
+  it.each([
+    ["a double quote", '"', '\\"'],
+    ["a single quote", "'", "\\'"],
+    ["a backtick", "`", "\\`"],
+  ])("fails on a path after %s escaped inside its own literal", (_label, quote, escaped) => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": `const p = ${quote}prefix ${escaped} rules/${MISSING}${quote};\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+
+  // ESCAPE CONSUMPTION IS NOT PINNED BY THIS SUITE, and saying so is more useful than implying it
+  // is. Mutation testing deleted the escape branch outright and all of these still passed, this one
+  // included: handling comments before strings, and never deciding a close by looking backwards,
+  // already fixes both reported shapes on their own. Three fixtures were tried and none made the
+  // branch observable. So it is defence whose absence could not be demonstrated in this repo's
+  // shapes, kept because the scan desyncs loudly rather than silently if it is ever needed, and
+  // recorded here so nobody reads a passing suite as proof it earns its place.
+  it("still finds a path after a literal that ends in an escaped quote", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": 'const a = "x \\"";\n' + `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:2 names ${MISSING}`);
+  });
+
+  // The scanner must know a regex from a division, or an apostrophe inside a character class
+  // opens a string that is not there and the rest of the file goes unscanned. This repo really
+  // contains such a regex, so the guard below is not hypothetical.
+  it("still finds a path after a regular expression containing a quote", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        "const quoted = text.matchAll(/'([^']+)'/g);\n" + `const p = "rules/${MISSING}";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:2 names ${MISSING}`);
   });
 });
 
@@ -230,15 +301,43 @@ describe("how many rulesets are published", () => {
   });
 });
 
-describe("the version pin", () => {
+describe("the version, which is spelled in three places", () => {
+  // Reproduced from review: comparing the JSON field against the pin checked two of the three and
+  // left the filename free to disagree, so a rename with neither updated passed.
+  it("fails when the filename says one version and the file and pin say another", () => {
+    const root = plant({});
+    roots.push(root);
+    renameSync(join(root, "rules", FIXTURE_RULESET), join(root, "rules", ruleset("0.1")));
+
+    const { status, output } = check(root);
+
+    expect(status).toBe(1);
+    expect(output).toContain(`${ruleset("0.1")} is named for nyc.v0.1`);
+    expect(output).toContain(`the file's own ruleset_version is ${FIXTURE_VERSION}`);
+    expect(output).toContain(`pins ${FIXTURE_VERSION}`);
+  });
+
+  // Reproduced from review: an unanchored first match over raw source read a commented-out
+  // assignment as the pin, so the check passed while the live constant said something else.
+  it("reads the live pin, not one quoted in a comment above it", () => {
+    const { status, output } = runOn({
+      "apps/api/src/ruleset.ts":
+        `// const EXPECTED_RULESET_VERSION = "${FIXTURE_VERSION}"\n` +
+        `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("pins nyc.v9.9");
+  });
+
   it("fails when the artifact moved and the pin did not", () => {
     const { status, output } = runOn({
       "apps/api/src/ruleset.ts": `const EXPECTED_RULESET_VERSION = "nyc.v9.9";\n`,
     });
 
     expect(status).toBe(1);
-    expect(output).toContain("pins EXPECTED_RULESET_VERSION nyc.v9.9");
-    expect(output).toContain(`${FIXTURE_RULESET} publishes ${FIXTURE_VERSION}`);
+    expect(output).toContain(`${FIXTURE_RULESET} is named for ${FIXTURE_VERSION}`);
+    expect(output).toContain("pins nyc.v9.9");
   });
 
   it("fails when the one constant allowed to name a version is gone", () => {

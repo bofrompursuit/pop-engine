@@ -350,6 +350,11 @@ const existingRulesets = new Set([
 //     expression, which needs real parsing and constant folding. One was a scanning bug; the other
 //     is a different tool. Half of this gap closed, and the half that did not is named.
 //   • A correct filename under a wrong directory, per the note on `existingRulesets` above.
+//   • Escape consumption inside the scanner is not covered by a failing test. Deleting it changes
+//     no observable outcome in this repo's shapes, because handling comments before strings and
+//     never deciding a close by looking backwards already fix the reported cases. It is kept as
+//     defence, and its absence would show as a loud desync rather than a quiet miss, but nobody
+//     should read the suite as proof that it earns its place.
 //   • Compose v2's default filenames, `compose.yaml` and `compose.yml`, which drop the `docker-`
 //     prefix `CONFIGURES_RULES_FILE` requires. No compose file exists here, so this is prospective
 //     rather than live — but it is a silent miss in the config rule's OWN file set, which is the
@@ -361,35 +366,44 @@ const existingRulesets = new Set([
 //
 // Covered as of this round and not before: the `RULES_FILE` override in `.env`, compose and
 // workflow files, which is where the only live stale reference in the repo actually was.
-// A backtick literal may span lines, and is matched across them: a path broken over two lines is
-// still one path. Quoted literals may not, which is the language's own rule.
-const STRING_LITERAL = /"[^"\n]*"|'[^'\n]*'|`[^`]*`/g;
-
 // The WHOLE filename token, compared exactly against what exists, rather than a prefix ending in
 // `.json`. A pattern that stopped at `.json` matched a prefix of `nyc-rules.v2.8.json.bak` and of
 // `nyc-rules.v2.8.jsonx`, found the prefix in the published set, and passed — accepting a reference
 // to a file that is not there. Taking the whole run and requiring an exact match closes both, and
 // requires the name to end at `.json` as a consequence rather than as a second rule: the set holds
-// only `.json` names. Trailing `.` and `-` are trimmed so a filename ending an English sentence
-// inside a string is not read as part of it.
+// only `.json` names.
+//
+// TRAILING PUNCTUATION IS NOT TRIMMED, in either rule, and that is a decided trade rather than an
+// oversight. Trimming was added so a filename ending an English sentence would not be misread, and
+// it also silently accepted `nyc-rules.v2.8.json-` and `nyc-rules.v2.8.json.`, which are path typos
+// naming files that are not there. The two errors are not equal: a false positive on prose is loud
+// and fixed in a minute, an accepted typo is silent and breaks at runtime, and the second is the
+// class this check exists for. So the token is compared as written.
+//
+// The cost, stated: a string or a config line whose prose ends with the filename and a full stop
+// fails. Nothing in the repo does that today. If it becomes a nuisance the answer is to narrow what
+// is scanned, not to go back to accepting typos quietly.
 const RULESET_FILENAME = /nyc-rules\.[\w.-]*/g;
 
 /** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
-function danglingIn(text, insideStringsOnly) {
+function danglingIn(text) {
   const found = [];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
-  const consider = (token, at) => {
-    const named = token.replace(/[.-]+$/, "");
-    if (!existingRulesets.has(named)) found.push({ line: lineOf(at), named });
-  };
-
-  if (!insideStringsOnly) {
-    for (const match of text.matchAll(RULESET_FILENAME)) consider(match[0], match.index);
-    return found;
+  for (const match of text.matchAll(RULESET_FILENAME)) {
+    if (!existingRulesets.has(match[0])) found.push({ line: lineOf(match.index), named: match[0] });
   }
-  for (const literal of text.matchAll(STRING_LITERAL)) {
-    for (const token of literal[0].matchAll(RULESET_FILENAME)) {
-      consider(token[0], literal.index + token.index);
+  return found;
+}
+
+/** The same search, confined to the string literals the scanner found, at their real offsets. */
+function danglingInLiterals(source, literals) {
+  const found = [];
+  const lineOf = (index) => source.slice(0, index).split("\n").length;
+  for (const literal of literals) {
+    for (const token of literal.value.matchAll(RULESET_FILENAME)) {
+      if (!existingRulesets.has(token[0])) {
+        found.push({ line: lineOf(literal.index + token.index), named: token[0] });
+      }
     }
   }
   return found;
@@ -416,56 +430,116 @@ const CONFIGURES_RULES_FILE =
   /(^|\/)(\.env(\..+)?|docker-compose.*\.ya?ml)$|^\.github\/workflows\/.+\.ya?ml$/;
 
 /**
- * The file with its comments replaced by spaces, so offsets and line numbers still line up.
+ * One pass over a JavaScript source, returning what every rule below needs to read it correctly.
  *
- * Quote state is tracked while scanning, so a `//` inside a string — a URL, most often — is not
- * mistaken for the start of a comment. It is a scanner rather than a parser, which is proportionate
- * to the job, but it is also the one place in this check where a bug of MINE would degrade to
- * silence: over-blanking makes the scan see less, and seeing less looks exactly like passing.
+ * ONE SCANNER, NOT THREE. This script hand-rolled lexing in three places and was wrong in all
+ * three: an escape check that looked only at the previous character, so `"ends with \\\\"` left the
+ * quote open and a later `//` blanked a real path away; a literal regex that treated an escaped
+ * delimiter as the end of the literal, so `"prefix \\" rules/…json"` put the path outside every
+ * match; and a pin lookup run on raw source, which read a commented-out assignment instead of the
+ * live constant. Three separate patches would have been three more chances to be wrong the same
+ * way, so the lexing happens once, here, and every rule consumes the result.
  *
- * So the one invariant a correct blanking must hold is asserted by the caller — every comment
- * character becomes a space and every newline is kept, so the output is the same length as the
- * input. A scanner that loses or gains a character has a bug, and this fails on it rather than
- * quietly scanning a corrupted copy.
+ * Returns `commentFree`, the source with comments blanked and string contents intact, and
+ * `literals`, every string literal with the offset it starts at. Escapes are handled by consuming
+ * the escaped character rather than by looking backwards, which is what makes both the backslash
+ * parity case and the escaped delimiter case fall out rather than needing rules of their own.
+ *
+ * Regular-expression literals are recognised too, because they are not optional here: this repo
+ * contains `/'([^']+)'/g`, and a scanner that does not know a regex from a division reads that
+ * apostrophe as a string opening and loses sync for the rest of the file. Regex-versus-division is
+ * decided the standard way, by what precedes the slash, since a regex cannot follow a value.
+ *
+ * Known limit, since this is a scanner and not a parser, and pretending otherwise is how the last
+ * three bugs happened: a template substitution's contents are treated as literal text, so a quote
+ * or backtick inside `${...}` can confuse it. That is caught rather than silent. A scan that ends
+ * inside an unterminated literal fails loudly at the call site, because real source does not end
+ * that way, so a desync is reported instead of quietly narrowing what gets seen.
  */
-function withoutComments(source) {
-  let out = "";
-  let inBlock = false;
-  let quote = null;
-  for (let i = 0; i < source.length; i += 1) {
-    const character = source[i];
+function scanSource(source) {
+  let commentFree = "";
+  const literals = [];
+  /** The last code character that was not whitespace, which is what tells a regex from a division. */
+  let lastSignificant = null;
+  let i = 0;
+  while (i < source.length) {
     const pair = source.slice(i, i + 2);
-    if (inBlock) {
-      if (pair === "*/") {
-        out += "  ";
-        i += 1;
-        inBlock = false;
-      } else {
-        out += character === "\n" ? "\n" : " ";
-      }
+    if (pair === "/*") {
+      const close = source.indexOf("*/", i + 2);
+      const stop = close === -1 ? source.length : close + 2;
+      for (let j = i; j < stop; j += 1) commentFree += source[j] === "\n" ? "\n" : " ";
+      i = stop;
       continue;
     }
-    if (quote === null && pair === "/*") {
-      out += "  ";
-      i += 1;
-      inBlock = true;
-      continue;
-    }
-    if (quote === null && pair === "//") {
+    if (pair === "//") {
       const lineEnd = source.indexOf("\n", i);
       const stop = lineEnd === -1 ? source.length : lineEnd;
-      out += " ".repeat(stop - i);
-      i = stop - 1;
+      commentFree += " ".repeat(stop - i);
+      i = stop;
       continue;
     }
-    if (quote === null && (character === '"' || character === "'" || character === "`")) {
-      quote = character;
-    } else if (quote === character && source[i - 1] !== "\\") {
-      quote = null;
+    // A slash begins a regular expression unless it follows a value, which is the only place
+    // division can appear. Getting this wrong desyncs the scan, and the unterminated-literal
+    // invariant at the call site is what makes that loud rather than silent.
+    if (source[i] === "/" && !/[\w$)\]]/.test(lastSignificant ?? "")) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < source.length) {
+        const character = source[j];
+        if (character === "\\") {
+          j += 2;
+          continue;
+        }
+        if (character === "\n") break;
+        if (character === "[") inClass = true;
+        else if (character === "]") inClass = false;
+        else if (character === "/" && !inClass) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      commentFree += source.slice(i, j);
+      lastSignificant = "/";
+      i = j;
+      continue;
     }
-    out += character;
+
+    const quote = source[i];
+    if (quote === '"' || quote === "'" || quote === "`") {
+      const start = i;
+      let value = quote;
+      i += 1;
+      let terminated = false;
+      while (i < source.length) {
+        const character = source[i];
+        if (character === "\\") {
+          // The escaped character is consumed with its backslash, so a trailing `\\\\` cannot be
+          // mistaken for an escape of the closing quote, and an escaped quote cannot close it.
+          value += source.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        value += character;
+        i += 1;
+        if (character === quote) {
+          terminated = true;
+          break;
+        }
+        // A single-quoted or double-quoted literal cannot span lines; a template can.
+        if (character === "\n" && quote !== "`") break;
+      }
+      commentFree += value;
+      lastSignificant = quote;
+      if (terminated) literals.push({ value, index: start });
+      else return { commentFree, literals, unterminated: true };
+      continue;
+    }
+    if (!/\s/.test(source[i])) lastSignificant = source[i];
+    commentFree += source[i];
+    i += 1;
   }
-  return out;
+  return { commentFree, literals, unterminated: false };
 }
 
 const scanned = filesUnder(repoRoot, (_relative, name) =>
@@ -474,27 +548,43 @@ const scanned = filesUnder(repoRoot, (_relative, name) =>
 const configFiles = filesUnder(repoRoot, (relative) => CONFIGURES_RULES_FILE.test(relative));
 const danglingReferences = [];
 
+/** Every scanned source, kept so the pin lookup below reads the same comment-free text. */
+const scannedSource = new Map();
+
 for (const file of scanned) {
   const relative = file.slice(repoRoot.length + 1);
   const source = readFileSync(file, "utf8");
-  const scannable = withoutComments(source);
-  if (scannable.length !== source.length) {
+  const { commentFree, literals, unterminated } = scanSource(source);
+
+  // Two invariants a correct scan must hold, both failing loudly rather than scanning less. A
+  // scanner that loses sync sees fewer literals than the file has, and seeing less is
+  // indistinguishable from passing, which is the failure mode this whole check exists to remove.
+  if (unterminated) {
     console.error(
-      `The comment scanner corrupted ${relative}: ${source.length} characters in, ` +
-        `${scannable.length} out. That is a bug in this check, not in the file — and left ` +
-        "unreported it would make the scan see less than the file contains, which is " +
-        "indistinguishable from passing.",
+      `The source scanner reached the end of ${relative} inside an unterminated string literal. ` +
+        "Real source does not end that way, so this is the scanner losing sync — most likely on a " +
+        "template substitution or a regular-expression literal containing a quote. Reported " +
+        "rather than scanned past, because a desynced scan quietly stops finding things.",
     );
     process.exit(1);
   }
-  for (const found of danglingIn(scannable, true)) {
+  if (commentFree.length !== source.length) {
+    console.error(
+      `The source scanner corrupted ${relative}: ${source.length} characters in, ` +
+        `${commentFree.length} out. That is a bug in this check, not in the file.`,
+    );
+    process.exit(1);
+  }
+
+  scannedSource.set(relative, commentFree);
+  for (const found of danglingInLiterals(source, literals)) {
     danglingReferences.push({ file: relative, ...found });
   }
 }
 
 for (const file of configFiles) {
   const relative = file.slice(repoRoot.length + 1);
-  for (const found of danglingIn(readFileSync(file, "utf8"), false)) {
+  for (const found of danglingIn(readFileSync(file, "utf8"))) {
     danglingReferences.push({ file: relative, ...found });
   }
 }
@@ -518,7 +608,12 @@ if (danglingReferences.length > 0) {
 // If the file bumps and the pin does not, the api refuses to boot; this fails first and says why.
 // Read before the count is validated, so a repo holding two rulesets can be told which to keep.
 const pinFile = "apps/api/src/ruleset.ts";
-const pinSource = readFileSync(join(repoRoot, pinFile), "utf8");
+// Read from the COMMENT-FREE source the scanner already produced. An unanchored first match over
+// raw source found `// const EXPECTED_RULESET_VERSION = "nyc.v2.8"` in a comment and reported that
+// as the pin, so the check passed while the live constant said something else entirely.
+const pinSource =
+  scannedSource.get(pinFile) ??
+  scanSource(readFileSync(join(repoRoot, pinFile), "utf8")).commentFree;
 const pinned = /EXPECTED_RULESET_VERSION\s*=\s*"([^"]+)"/.exec(pinSource);
 if (pinned === null) {
   console.error(
@@ -552,14 +647,47 @@ if (publishedRulesets.length !== 1) {
   process.exit(1);
 }
 
-const publishedVersion = JSON.parse(
-  readFileSync(join(repoRoot, "rules", publishedRulesets[0]), "utf8"),
-).ruleset_version;
-if (pinned[1] !== publishedVersion) {
+// THE VERSION IS SPELLED IN THREE PLACES AND ALL THREE MUST AGREE: the artifact's filename, the
+// `ruleset_version` inside it, and the api's pin. Comparing the JSON against the pin alone checked
+// two of them and left the filename free to disagree, so a bump that renamed the file to
+// `nyc-rules.v2.9.json` while both the field and the pin still said `nyc.v2.8` passed everything.
+//
+// That is worse than it sounds and is why it is checked here rather than left to review. Plans
+// persist `ruleset_version` and replay against it (AD-7), and the snapshot banner reports it, so a
+// publication that identifies itself as the version before it corrupts replay and tells organizers
+// their plan came from rules it did not come from, with every check green.
+//
+// The filename is the anchor because it is what the manifest names and what a reader sees first.
+// `<jurisdiction>-rules.<version>.json` publishes `<jurisdiction>.<version>`, derived rather than
+// hardcoded so a second jurisdiction needs no change here.
+const published = publishedRulesets[0];
+const namedInFile = /^(.+)-rules\.(.+)\.json$/.exec(published);
+if (namedInFile === null) {
   console.error(
-    `${pinFile} pins EXPECTED_RULESET_VERSION ${pinned[1]}, but ${publishedRulesets[0]} ` +
-      `publishes ${publishedVersion}.\n\nThe api refuses to boot on that mismatch. Bump the pin ` +
-      "with the artifact, in the same PR.",
+    `${published} is not named <jurisdiction>-rules.<version>.json, so this check cannot derive ` +
+      "the version the file claims to publish. Rename it or teach this check the new shape.",
+  );
+  process.exit(1);
+}
+const expectedVersion = `${namedInFile[1]}.${namedInFile[2]}`;
+const publishedVersion = JSON.parse(
+  readFileSync(join(repoRoot, "rules", published), "utf8"),
+).ruleset_version;
+
+const disagreements = [
+  publishedVersion === expectedVersion
+    ? null
+    : `the file's own ruleset_version is ${publishedVersion}`,
+  pinned[1] === expectedVersion ? null : `${pinFile} pins ${pinned[1]}`,
+].filter(Boolean);
+
+if (disagreements.length > 0) {
+  console.error(
+    `${published} is named for ${expectedVersion}, but ${disagreements.join(", and ")}.\n\n` +
+      "The filename, the ruleset_version inside the file, and the api pin all name the same " +
+      "publication, so all three move together or none do. Plans persist ruleset_version and " +
+      "replay against it, so a file that identifies itself as an earlier version corrupts replay " +
+      "and the snapshot banner while every other check stays green.",
   );
   process.exit(1);
 }
