@@ -513,6 +513,23 @@ function resolves(named, text, at) {
 // genuinely different. Keeping one set for both is what this round is fixing, so the split is
 // written out rather than left to be inferred:
 //
+// ══ THE RULE, because this has now been settled in one scanner and left wrong in another THREE
+// TIMES: rounds 9 and 11 moved the JavaScript rule onto values while the package-script rule and
+// the config rule went on reading bytes.
+//
+//   EVERY SCANNER JUDGES THE VALUE A RUNTIME WOULD SEE, AND THE TOKENIZER FOLLOWS THE VALUE
+//   RATHER THAN THE FILE TYPE.
+//
+// "The tokenizer follows the value" is the operative half, and the half that kept being missed. It
+// is not a property of the file: a `package.json` is raw bytes, and the script command inside it is
+// a VALUE, because `JSON.parse` already decoded it. A `.github/workflows/*.yml` is raw bytes, and a
+// double-quoted scalar inside it is a VALUE, because the YAML loader will decode its escapes before
+// anything runs. Asking "what kind of file is this" gives the wrong answer in both. Asking "has
+// something already decoded this by the time it is used" gives the right one every time.
+//
+// Which is why `danglingIn` below SEGMENTS its input rather than picking one tokenizer for the
+// whole file, and why `danglingInScripts` uses the value tokenizer on text it read out of JSON.
+//
 // IN A COOKED VALUE the delimiters are already gone. The parser resolved them: by the time this
 // sees `rules/nyc-rules.v2.8.json{backup`, there is no quote, no backtick and no `${`, only the
 // string the runtime will hand to `readFileSync`. Every one of those characters is an ordinary
@@ -540,27 +557,103 @@ function resolves(named, text, at) {
 const RULESET_FILENAME_IN_VALUE = /nyc-rules\.[^\s/]*/g;
 const RULESET_FILENAME_IN_TEXT = /nyc-rules\.[^\s/'"`{}]*/g;
 
-/** Where `text` has a ruleset name that is not one of the files that exist, and on what line. */
+/**
+ * The escapes a double-quoted scalar resolves before anything reads the value.
+ *
+ * Not a YAML parser, and not trying to be: this decodes the numeric and single-character escapes
+ * that both YAML double-quoted scalars and `.env` double-quoted values define, which is what a
+ * ruleset path can be hidden behind. Anything else is left as written, because a wrong guess about
+ * an exotic escape would invent a filename rather than find one.
+ */
+const decodeEscapes = (value) =>
+  value.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)/g, (whole, escape) => {
+    if (escape[0] === "x" || escape[0] === "u")
+      return String.fromCharCode(parseInt(escape.slice(1), 16));
+    const simple = { n: "\n", t: "\t", r: "\r", 0: "\0", "\\": "\\", '"': '"', "/": "/" };
+    return simple[escape] ?? whole;
+  });
+
+/**
+ * Where `text` has a ruleset name that is not one of the files that exist, and on what line.
+ *
+ * SEGMENTED, not scanned whole, because a config file is not one kind of text. A quoted scalar is a
+ * VALUE: the loader strips its quotes and resolves its escapes before the process sees it, so
+ * `RULES_FILE: "rules/nyc\x2drules.v9.9.json"` names a file that does not exist while the bytes on
+ * disk never show the `nyc-rules.` prefix at all. Reading the file as raw bytes could not see it.
+ * Everything OUTSIDE a quoted scalar really is raw text, where a quote opens a scalar and `{` and
+ * `}` bound a flow mapping, so it keeps the text tokenizer.
+ *
+ * Single quotes are segmented too but NOT decoded, which is what both formats specify: a
+ * single-quoted scalar is literal. The quotes still come off, so a brace inside one is an ordinary
+ * filename character rather than punctuation.
+ */
 function danglingIn(text) {
   const found = [];
   const lineOf = (index) => text.slice(0, index).split("\n").length;
-  for (const match of text.matchAll(RULESET_FILENAME_IN_TEXT)) {
-    if (!resolves(match[0], text, match.index)) {
-      found.push({ line: lineOf(match.index), named: match[0] });
+  // `at` is where the segment starts in the file. A raw segment is the file's own text, so a match
+  // inside it keeps its exact offset; a decoded scalar is a different string, so every match in one
+  // is reported at the scalar.
+  const scan = (segment, pattern, at, exact) => {
+    for (const match of segment.matchAll(pattern)) {
+      if (!resolves(match[0], segment, match.index)) {
+        found.push({ line: lineOf(exact ? at + match.index : at), named: match[0] });
+      }
     }
+  };
+
+  let plainFrom = 0;
+  // A quoted scalar does not span lines in either format, so a run that reaches one is unterminated
+  // and is left to the raw pass rather than swallowing the rest of the file.
+  for (const quoted of text.matchAll(/(['"])([^'"\n]*)\1/g)) {
+    scan(text.slice(plainFrom, quoted.index), RULESET_FILENAME_IN_TEXT, plainFrom, true);
+    const value = quoted[1] === '"' ? decodeEscapes(quoted[2]) : quoted[2];
+    // The whole scalar is one value, so its offset is the scalar's, not the decoded token's: an
+    // escape changes the length and a computed column would point somewhere else in the line.
+    scan(value, RULESET_FILENAME_IN_VALUE, quoted.index, false);
+    plainFrom = quoted.index + quoted[0].length;
   }
+  scan(text.slice(plainFrom), RULESET_FILENAME_IN_TEXT, plainFrom, true);
   return found;
 }
 
 /**
  * The same search, confined to the string literals the parser found.
  *
- * ONLY THE COOKED VALUE IS JUDGED, and the raw text is used only to locate what the value found.
- * The previous round scanned both and reported from both, which is where the first false positive
- * this check has ever produced came from: `"rules/nyc-rules.v2.8\x2ejson"` is the published
- * artifact, and the raw scan stopped at the backslash, recorded `nyc-rules.v2.8` as a name that
- * does not exist, and could not take it back when the cooked pass then resolved the real one. Two
- * scans producing findings means one of them is looking at something that is not a filename.
+ * FOR AN UNTAGGED LITERAL ONLY THE COOKED VALUE IS JUDGED, and the raw text is used only to locate
+ * what the value found. The previous round scanned both and reported from both, which is where the
+ * first false positive this check has ever produced came from: `"rules/nyc-rules.v2.8\x2ejson"` is
+ * the published artifact, and the raw scan stopped at the backslash, recorded `nyc-rules.v2.8` as a
+ * name that does not exist, and could not take it back when the cooked pass then resolved the real
+ * one. Two scans producing findings means one of them is looking at something that is not a
+ * filename.
+ *
+ * A TAGGED TEMPLATE INVERTS THAT, and it is the one place in this file where "judge the cooked
+ * value" is the wrong answer. `String.raw`rules/nyc-rules.v2.8\x2ejson`` cooks to the published
+ * name, which exists, so the check passed — while `String.raw` returns the RAW value and the
+ * runtime opens `rules/nyc-rules.v2.8\x2ejson`, which is absent. The tag decides what the value is,
+ * and the parser's `.text` is only one candidate for it.
+ *
+ * So the tag is asked, and there are three answers:
+ *
+ *   • NO TAG — the cooked value IS the value. Unchanged, and it is almost every literal here.
+ *   • A TAG THIS RECOGNISES — `String.raw` is specified to return the raw text, so the raw text is
+ *     the value and the cooked text is not judged at all. Judging it too would report the published
+ *     artifact as missing whenever an escape happened to cook into it.
+ *   • ANY OTHER TAG — the value is UNKNOWN, so neither candidate is treated as authoritative and
+ *     BOTH must resolve. A tag is an arbitrary function: `sql`, `html` and `dedent` all return
+ *     something this check cannot compute, so picking one candidate would be a guess, and the
+ *     direction of the guess is exactly what let this through. Requiring both is the conservative
+ *     default because it can only over-report, never miss, and it over-reports only when raw and
+ *     cooked DIFFER — which means only when the literal contains an escape. With no escape the two
+ *     are identical and this is one judgement, which is the overwhelming majority of tagged
+ *     templates.
+ *
+ * WHAT THIS STILL CANNOT SEE, said rather than left: an alias. `const raw = String.raw` then
+ * `` raw`...` `` reads as an unrecognised tag, which is the safe direction (both candidates are
+ * held) but not recognition. And a raw value whose escape HIDES the prefix, `` String.raw`rules/
+ * nyc\x2drules.v2.8.json` ``, is invisible to a name scanner because the name is not spelled
+ * anywhere in it. That is the concatenation gap wearing a different hat: a name nothing spells
+ * cannot be found by looking for names.
  *
  * The cooked value is the right one to judge because it is what the string IS at runtime, and the
  * runtime is what opens the file: the parser reads `"rules/nyc\x2drules.v9.9.json"` as
@@ -591,13 +684,16 @@ function danglingIn(text) {
 function danglingInLiterals(sourceFile, literals) {
   const found = [];
   for (const literal of literals) {
-    const valueAt = literal.raw.indexOf(literal.cooked);
-    for (const token of literal.cooked.matchAll(RULESET_FILENAME_IN_VALUE)) {
-      if (resolves(token[0], literal.cooked, token.index)) continue;
-      if (literal.continues && token.index + token[0].length === literal.cooked.length) continue;
-      const at =
-        valueAt === -1 ? literal.index : literal.index + valueAt + token.index;
-      found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
+    for (const value of literal.values) {
+      // Where this candidate sits in the source, when it sits there at all. A candidate that
+      // appears verbatim gets an exact offset; one the parser rewrote is reported at its literal.
+      const valueAt = literal.raw.indexOf(value);
+      for (const token of value.matchAll(RULESET_FILENAME_IN_VALUE)) {
+        if (resolves(token[0], value, token.index)) continue;
+        if (literal.continues && token.index + token[0].length === value.length) continue;
+        const at = valueAt === -1 ? literal.index : literal.index + valueAt + token.index;
+        found.push({ line: sourceFile.getLineAndCharacterOfPosition(at).line + 1, named: token[0] });
+      }
     }
   }
   return found;
@@ -777,11 +873,17 @@ function danglingInScripts(relative, text) {
   const lines = text.split(/\r?\n/);
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command !== "string") continue;
-    for (const dangling of danglingIn(command)) {
+    // THE VALUE TOKENIZER, because `JSON.parse` above already decoded this. The command is a value
+    // by the time anything can run it, so `{`, `}` and the quote characters are ordinary filename
+    // characters here and not delimiters. Handing it to the raw-text tokenizer let
+    // `rules/nyc-rules.v2.8.json{backup` validate on its `.json` prefix and pass, which is the
+    // whole-token family again reached through a scanner that had not moved with the rule above.
+    for (const match of command.matchAll(RULESET_FILENAME_IN_VALUE)) {
+      if (resolves(match[0], command, match.index)) continue;
       // The command is one string with no line structure of its own, so the line reported is the
       // manifest line the script is declared on, which is what a reader needs to go and fix it.
       const declaredOn = lines.findIndex((line) => line.includes(`"${name}"`));
-      found.push({ line: declaredOn === -1 ? 1 : declaredOn + 1, named: dangling.named });
+      found.push({ line: declaredOn === -1 ? 1 : declaredOn + 1, named: match[0] });
     }
   }
   return found;
@@ -825,6 +927,47 @@ const SCRIPT_KINDS = {
   ".jsx": ts.ScriptKind.JSX,
 };
 
+/**
+ * The tag applied to a template literal part, or null if there is none.
+ *
+ * Walks only the template's own structure — quasi to span to expression to tag — so a plain string
+ * literal sitting INSIDE an interpolation is not mistaken for part of the template. `` tag`${
+ * "rules/x.json" }` `` contains an ordinary cooked string, and it is the tag's argument rather than
+ * its template text.
+ */
+function templateTag(node) {
+  if (ts.isNoSubstitutionTemplateLiteral(node)) {
+    return ts.isTaggedTemplateExpression(node.parent) ? node.parent.tag : null;
+  }
+  const template =
+    node.kind === ts.SyntaxKind.TemplateHead
+      ? node.parent
+      : ts.isTemplateSpan(node.parent)
+        ? node.parent.parent
+        : undefined;
+  if (template === undefined || !ts.isTemplateExpression(template)) return null;
+  return ts.isTaggedTemplateExpression(template.parent) ? template.parent.tag : null;
+}
+
+/** `String.raw`, the one tag whose return value this check can compute. */
+const returnsRawText = (tag) =>
+  ts.isPropertyAccessExpression(tag) &&
+  ts.isIdentifier(tag.expression) &&
+  tag.expression.text === "String" &&
+  tag.name.text === "raw";
+
+/**
+ * Every candidate for what a literal is at runtime. One entry when that is knowable, two when the
+ * tag makes it a guess. See `danglingInLiterals` for why an unrecognised tag holds both.
+ */
+function runtimeValues(node) {
+  const tag = ts.isStringLiteral(node) ? null : templateTag(node);
+  if (tag === null) return [node.text];
+  const raw = node.rawText ?? node.text;
+  if (returnsRawText(tag)) return [raw];
+  return raw === node.text ? [node.text] : [node.text, raw];
+}
+
 function parseSource(relative, source) {
   const extension = relative.slice(relative.lastIndexOf("."));
   const sourceFile = ts.createSourceFile(
@@ -844,17 +987,18 @@ function parseSource(relative, source) {
       node.kind === ts.SyntaxKind.TemplateTail;
     if (isLiteral) {
       const start = node.getStart(sourceFile);
-      // `cooked` is what the string IS at runtime, with escapes resolved, and it is the only form
-      // judged: the parser reads `"rules/nyc\\x2drules.v9.9.json"` as `rules/nyc-rules.v9.9.json`,
-      // which names a file that is not there while matching nothing in the raw text. `raw` and
-      // `index` are kept to locate a finding, not to make one.
+      // `values` is every candidate for what this literal IS at runtime, and judging candidates
+      // rather than one form is what the tag forced. Untagged, the parser's cooked text is the
+      // value and the only candidate: it reads `"rules/nyc\\x2drules.v9.9.json"` as
+      // `rules/nyc-rules.v9.9.json`, a file that is not there and that matches nothing in the raw
+      // text. `raw` and `index` are kept to locate a finding, not to make one.
       //
       // `continues` marks the two spans a template interpolation is appended to. Their values are
       // fragments by construction, so a name running to the end of one is unfinished rather than
       // missing, and reporting it blocks ordinary dynamic selection.
       literals.push({
         raw: source.slice(start, node.end),
-        cooked: node.text,
+        values: runtimeValues(node),
         index: start,
         continues:
           node.kind === ts.SyntaxKind.TemplateHead || node.kind === ts.SyntaxKind.TemplateMiddle,

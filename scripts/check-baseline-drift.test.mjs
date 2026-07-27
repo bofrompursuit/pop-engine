@@ -1051,3 +1051,155 @@ describe("round 11: cooked values are tokenized as values", () => {
     expect(status).toBe(0);
   });
 });
+
+// One root cause in two scanners. Rounds 9 and 11 moved the JavaScript rule onto values and left
+// the package-script and config rules reading bytes, so the same defect class kept arriving by a
+// route the previous fix had not covered. The rule they now share: every scanner judges the value a
+// runtime would see, and the tokenizer follows the VALUE rather than the file type.
+describe("round 12: every scanner judges the value a runtime would see", () => {
+  // A package.json is raw bytes and the command inside it is a VALUE, because JSON.parse already
+  // decoded it. Handed to the raw-text tokenizer, the token stopped at the brace and validated on
+  // the published `.json` prefix while the runtime opens the whole thing.
+  it.each([
+    ["an opening brace", "{backup"],
+    ["a closing brace", "}backup"],
+    ["a single quote", "'backup"],
+    ["a backtick", "`backup"],
+  ])("fails a package script naming a published name with %s", (_label, suffix) => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}${suffix}` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`package.json:4 names ${FIXTURE_RULESET}${suffix}`);
+  });
+
+  // The pair. A script naming the real artifact is the ordinary case and must stay quiet.
+  it("still accepts a package script naming the published artifact", () => {
+    const { status, output } = runOn({
+      "package.json": JSON.stringify(
+        { name: "x", scripts: { seed: `node seed.mjs rules/${FIXTURE_RULESET}` } },
+        null,
+        2,
+      ),
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A quoted scalar is decoded by the loader before the process sees it, so the bytes on disk never
+  // show the `nyc-rules.` prefix at all. Reading the file whole could not see this one.
+  it.each([
+    [".github/workflows/ci.yml", (v) => `jobs:\n  verify:\n    env:\n      RULES_FILE: ${v}\n`, 4],
+    ["apps/api/.env.example", (v) => `PORT=3001\nRULES_FILE=${v}\n`, 2],
+  ])("fails on an escaped ruleset hidden in a quoted scalar in %s", (file, shape, line) => {
+    const { status, output } = runOn({ [file]: shape(`"rules/nyc\\x2drules.v9.9.json"`) });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`${file}:${line} names ${MISSING}`);
+  });
+
+  // Same escape, resolving to the artifact that IS there. Decoding must find the real name too, not
+  // only report on everything it decodes.
+  it("accepts an escaped quoted scalar that decodes to the published artifact", () => {
+    const { status, output } = runOn({
+      "apps/api/.env.example": `RULES_FILE="rules/nyc\\x2drules.v0.0.json"\n`,
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A single-quoted scalar is literal in both formats, so it is NOT decoded. The quotes still come
+  // off, which is what makes a brace inside one an ordinary filename character.
+  it("does not decode escapes inside a single-quoted scalar", () => {
+    const { status } = runOn({
+      "apps/api/.env.example": `RULES_FILE='rules/nyc\\x2drules.v9.9.json'\n`,
+    });
+
+    // The value contains a literal backslash and no `nyc-rules.` prefix, so there is nothing to
+    // find. Decoding it would invent a name the loader never produces.
+    expect(status).toBe(0);
+  });
+
+  // The pair for the segmentation itself. Outside a quoted scalar the text really is raw, and the
+  // exclusions that belong there have to keep applying.
+  it("still reads an unquoted stale ruleset in a workflow file", () => {
+    const { status, output } = runOn({
+      ".github/workflows/ci.yml": `jobs:\n  verify:\n    env:\n      RULES_FILE: rules/${MISSING}\n`,
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`.github/workflows/ci.yml:4 names ${MISSING}`);
+  });
+});
+
+describe("round 12: a tagged template's value is the tag's to decide", () => {
+  // The one place "judge the cooked value" is wrong. The parser cooks `\x2e` to `.`, producing the
+  // published name, which exists; `String.raw` returns the raw text and the runtime opens a file
+  // that is not there.
+  it("fails String.raw whose raw value names a file that is not there", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        "const p = readFileSync(String.raw`rules/" +
+        FIXTURE_RULESET.replace(".json", "\\x2ejson") +
+        "`);\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("apps/web/app/reader.ts:1 names");
+  });
+
+  // The pair, and the reason String.raw is recognised rather than lumped in with the unknown tags:
+  // its cooked text must NOT be judged, or an escape that cooks into the published name would be
+  // reported as missing.
+  it("still accepts String.raw whose raw value is the published artifact", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const p = readFileSync(String.raw`rules/" + FIXTURE_RULESET + "`);\n",
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // An unrecognised tag is an arbitrary function, so neither candidate is authoritative and both
+  // must resolve. Here the cooked value is the published artifact and the raw value is not.
+  it("fails an unknown tag when only one of its candidate values resolves", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts":
+        "const p = dedent`rules/" + FIXTURE_RULESET.replace(".json", "\\x2ejson") + "`;\n",
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain("apps/web/app/reader.ts:1 names");
+  });
+
+  // The pair, and the reason holding both candidates is not a blanket false positive: with no
+  // escape the raw and cooked forms are identical, so this is one judgement, which is what almost
+  // every tagged template in real code looks like.
+  it("still accepts an unknown tag naming the published artifact", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": "const p = dedent`rules/" + FIXTURE_RULESET + "`;\n",
+    });
+
+    expect(status).toBe(0);
+    expect(output).toContain("check passed");
+  });
+
+  // A plain string inside an interpolation is the tag's ARGUMENT, not its template text, so it is
+  // judged as the ordinary cooked value it is. Walking up from any literal to a tagged template
+  // would have swept this in.
+  it("treats a string inside a tagged interpolation as an ordinary literal", () => {
+    const { status, output } = runOn({
+      "apps/web/app/reader.ts": 'const p = dedent`x${"rules/' + MISSING + '"}y`;\n',
+    });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`apps/web/app/reader.ts:1 names ${MISSING}`);
+  });
+});
