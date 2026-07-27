@@ -19,6 +19,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PUBLISHED_RULES_FILE } from "./__fixtures__/published-ruleset";
 import { evaluate, parseEngineRuleset, triggerFields } from "./index";
 import { UNCONSUMED_INTAKE_FIELDS } from "./ruleset";
 import type { EventIntake, Finding, HolidayCalendar, PermitPlan } from "./types";
@@ -39,7 +40,7 @@ type PublishedRule = {
 };
 
 const publishedRuleset: { rules: PublishedRule[]; advisories: PublishedRule[] } = JSON.parse(
-  readFileSync(repoFile("rules/nyc-rules.v2.8.json"), "utf8"),
+  readFileSync(PUBLISHED_RULES_FILE, "utf8"),
 );
 
 const ruleset = parseEngineRuleset(publishedRuleset);

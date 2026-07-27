@@ -12,8 +12,8 @@
 //     Fixture windows are pinned to periods the key states carry no contested holidays.
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PUBLISHED_RULES_FILE } from "./__fixtures__/published-ruleset";
 import { countBusinessDays, differenceInCalendarDays, evaluate, parseEngineRuleset } from "./index";
 import { SCENARIO_INTAKE_FIXTURES, fixtureSubmission } from "./intake/scenario-intake-fixtures";
 import type { EventIntake, Finding, PermitPlan, PublishedHolidayCalendar } from "./types";
@@ -23,7 +23,7 @@ const TODAY = "2026-07-22";
 const ruleset = parseEngineRuleset(
   JSON.parse(
     readFileSync(
-      fileURLToPath(new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url)),
+      PUBLISHED_RULES_FILE,
       "utf8",
     ),
   ),

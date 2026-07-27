@@ -285,7 +285,7 @@ Error principle: rule-evaluation failures return an explicit error; the API neve
 ## Deployment (Dev 4 lane)
 
 - Two services (web + api) on any node host (Railway / Render / Fly), managed Postgres (Neon / Supabase / host-provided), S3-compatible bucket (S3 / R2 / Supabase storage).
-- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path, defaults to `rules/nyc-rules.v2.8.json`), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
+- Environment variables per service: `DATABASE_URL`, `S3_*`, `TWILIO_*`, `SMTP_*`, `RULES_FILE` (path; unset or empty falls back to the one published ruleset in `rules/`, found rather than named, so a version bump moves no configuration), `API_BASE_URL` / `WEB_ORIGIN` (CORS).
 - Demo environment is seeded via script (scenario events pre-loaded as drafts) and never redeployed on demo day after final rehearsal.
 - **Access gate + synthetic data (AD-12):** the demo deploy sits behind a host-level gate (basic auth or IP allowlist); all data is synthetic; no real identity documents, applications, or attendee PII enter the system before the joint F-701/F-702/F-703 production gate ships. Public RSVP/check-in routes are enabled only for the rehearsal/demo window.
 

@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PUBLISHED_RULES_FILE } from "./__fixtures__/published-ruleset";
 import {
   addCalendarDays,
   countBusinessDays,
@@ -18,10 +19,7 @@ import type { EventIntake, HolidayCalendar, PermitPlan, PublishedHolidayCalendar
 
 const TODAY = "2026-07-22";
 const rawRuleset: Record<string, unknown> = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../../../rules/nyc-rules.v2.8.json", import.meta.url)),
-    "utf8",
-  ),
+  readFileSync(PUBLISHED_RULES_FILE, "utf8"),
 );
 const ruleset = parseEngineRuleset(rawRuleset);
 const calendar: PublishedHolidayCalendar = { id: ruleset.calendarId, holidays: [] };
