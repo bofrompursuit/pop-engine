@@ -262,6 +262,11 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
        * the collision under test cannot happen.
        */
       reuseChecklistItemId?: string;
+      /**
+       * A SECOND dated requirement with more slack than the first, for the case where the
+       * requirement that produced minSlackDays expires while a later one stays open.
+       */
+      laterDated?: { latestApplyDate: string; slackDays: number };
     } = {},
   ): Promise<{ planId: string; checklistItemId: string }> => {
     const {
@@ -273,6 +278,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       minSlackDays = null,
       conflictText = null,
       reuseChecklistItemId,
+      laterDated,
     } = options;
     const planId = randomUUID();
     const itemId = randomUUID();
@@ -296,7 +302,10 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
               note_text: null,
               conflict_text: conflictText,
               deadline_display: "file at least 5 days before use",
-              slack_days: null,
+              // The engine's own per-finding slack, which is what identifies the requirement the
+              // plan's minSlackDays came from. Null here would make the fixture incoherent: a
+              // verdict quoting a number no finding claims.
+              slack_days: minSlackDays,
               deadline_unknown_fields: [],
               timeline_unresolved_reason: null,
               portal_instructions: null,
@@ -316,11 +325,44 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
                     portal_instructions: null,
                   },
                 ]),
+            ...(laterDated === undefined
+              ? []
+              : [
+                  {
+                    rule_ids: ["PARKS-EVENT-001"],
+                    notes: [],
+                    note_text: null,
+                    conflict_text: null,
+                    deadline_display: "apply at least 21 days ahead",
+                    slack_days: laterDated.slackDays,
+                    deadline_unknown_fields: [],
+                    timeline_unresolved_reason: null,
+                    portal_instructions: null,
+                  },
+                ]),
           ],
         }),
         verdict,
       ],
     );
+    const laterItemId = randomUUID();
+    if (laterDated !== undefined) {
+      // A second dated requirement, later and with more slack than the one the verdict quotes.
+      await pool.query(
+        `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
+                                        latest_apply_date, sources, kind, disposition,
+                                        deadline_status, verification_status)
+         VALUES ($1, $2, ARRAY['PARKS-EVENT-001'], '[]'::jsonb, 'Special Event Permit',
+                 'NYC Parks', $3, '[]'::jsonb, 'permit', 'required', 'on_track',
+                 'SOURCE_CONFIRMED')`,
+        [laterItemId, planId, laterDated.latestApplyDate],
+      );
+      // It becomes a task like any other dated permit, so it really does schedule reminders.
+      await pool.query(
+        "INSERT INTO checklist_items (id, plan_item_id, cohort_position) VALUES ($1, $2, 1)",
+        [randomUUID(), laterItemId],
+      );
+    }
     if (applyAfterDate !== null) {
       // The upstream half of the dependency. An unlock alert is only scheduled when the plan
       // carries the requirement the gated one waits on — `DEPENDENCY_SEQUENCING_BINDINGS` names
@@ -2707,6 +2749,62 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(rows.some((row) => row.alert_type === "slack_warning")).toBe(false);
       // The reminder loop already refused the past date, which is what left this branch alone.
       expect(rows.some((row) => row.alert_type === "deadline_reminder")).toBe(false);
+    });
+
+    it("does not warn when the requirement the number describes has expired", async () => {
+      // Round 17 asked whether ANY window is open. The number in the copy comes from ONE
+      // requirement, so on a plan with several dated ones the requirement that PRODUCED the
+      // minimum can expire while a later one holds the guard true, and the warning goes out
+      // counting down a deadline already missed.
+      //
+      // Here the controlling requirement had 9 days of slack and its filing date has gone; a
+      // second requirement with 40 days of slack is still open. "Apply within 9 days" describes
+      // the expired one.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(-3),
+        laterDated: { latestApplyDate: dayFromToday(40), slackDays: 40 },
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      expect(rows.some((row) => row.alert_type === "slack_warning")).toBe(false);
+      // Not vacuous: the later requirement really is open, so the round 17 guard passes here and
+      // reminders for it really are scheduled. Only the warning is withheld.
+      expect(rows.some((row) => row.alert_type === "deadline_reminder")).toBe(true);
+    });
+
+    it("warns when the requirement the number describes is the one still open", async () => {
+      // The mirror, so the narrowing cannot be rewritten as "never warn on a plan with a passed
+      // date". Here the controlling requirement is the one that is still ahead.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(9),
+        laterDated: { latestApplyDate: dayFromToday(40), slackDays: 40 },
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      expect((await alertsOf(eventId)).some((row) => row.alert_type === "slack_warning")).toBe(true);
     });
 
     it("still warns about slack while a filing date is ahead", async () => {

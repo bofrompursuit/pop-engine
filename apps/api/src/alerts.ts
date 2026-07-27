@@ -810,23 +810,50 @@ async function plannedAlerts(
   }
 
   const minSlackDays = plan.verdict_detail.minSlackDays;
-  // THE CALENDAR MOVES ON EVEN WHEN THE EVENT DOES NOT, which is the stale-plan class again keyed
-  // on dates rather than on revision. Round 14 covers "the event was edited past this plan"; the
-  // revision predicate cannot see this one, because nothing was edited. A plan generated while
-  // feasible-at-risk and materialized only after its filing dates have passed is still
-  // revision-current, the reminder loop correctly refuses every past date, and this branch then
-  // queued an immediate "apply within N days" over a window that has closed.
+  // WHAT HAS TO BE TRUE FOR THIS SENTENCE TO BE HONEST, asked once rather than approached again.
   //
-  // The test is the same one the reminder loop already applies, asked of the plan as a whole: if
-  // no dated requirement can still be filed, there is nothing left for the organizer to be at risk
-  // about, and a countdown to a closed window is the one thing a missed deadline must not be
-  // dressed up as. A requirement with no `latest_apply_date` contributes no filing date either
-  // way, here as everywhere else in this file.
-  const anyFilingStillOpen = rows.some((row) => {
-    const applyBy = isoDate(row.latest_apply_date);
-    return applyBy !== null && applyBy >= schedulingToday;
-  });
-  if (plan.verdict === "feasible_at_risk" && typeof minSlackDays === "number" && anyFilingStillOpen) {
+  // Three rounds have narrowed this guard and each was right: which identity the warning uses, then
+  // whether a window is open, now WHICH window. That is a sign worth naming rather than a fourth
+  // condition to add quietly. The three are not three problems. They are one question — is the
+  // plan's conclusion still the conclusion? — asked about three different inputs, and the guard has
+  // been approximating it a clause at a time.
+  //
+  // The body is a statement ABOUT A PLAN and is true forever: as of the evaluation date, the
+  // narrowest slack was N. The SUBJECT is a present-tense instruction, "apply within N days", and
+  // that is what decays. So the condition is not about the plan's provenance, it is that the
+  // requirement the number DESCRIBES must still be one the organizer can act on. Everything else
+  // this guard has accumulated follows from that, which is why the shape can express it: one
+  // question about one number, not a conjunction of freshness tests.
+  //
+  // `rows.some(open)` was too weak for exactly that reason. It asked whether ANY window is open
+  // while the number comes from ONE requirement, so on a plan with several dated requirements the
+  // one that PRODUCED the minimum could expire while a later one held the guard true, and the
+  // warning went out counting down a deadline already missed.
+  //
+  // The engine's own per-finding `slackDays` is already in hand — `renderingsForPlan` loads it for
+  // the reminder copy — so the controlling requirement is identified rather than recomputed. That
+  // matters beyond cost: `findings.ts` replaces a GATED finding's slack with the width of its
+  // filing window rather than the distance to its deadline, so re-deriving slack here from dates
+  // would quietly disagree with the number in the copy.
+  //
+  // Expressed as "the tightest still-open requirement is the one the number describes" rather than
+  // by picking a row, which handles ties without choosing between them: if the controlling
+  // requirement has expired, the minimum across what remains is necessarily larger than the number
+  // the copy states.
+  const openSlackDays = rows
+    .filter((row) => {
+      const applyBy = isoDate(row.latest_apply_date);
+      return applyBy !== null && applyBy >= schedulingToday;
+    })
+    .map((row) => renderings.get(renderingKey(row.rule_ids))?.slack_days)
+    .filter((slack): slack is number => typeof slack === "number");
+  const controllingFilingStillOpen =
+    openSlackDays.length > 0 && Math.min(...openSlackDays) === minSlackDays;
+  if (
+    plan.verdict === "feasible_at_risk" &&
+    typeof minSlackDays === "number" &&
+    controllingFilingStillOpen
+  ) {
     // Whether any dated requirement in this plan waits on another agency, which decides whether
     // the number above can be read as a countdown at all.
     const planHasGatedFiling = rows.some(
