@@ -183,6 +183,22 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     expect(response.status).toBe(201);
   };
 
+  /**
+   * Press review the way the page does: naming the plan the caller is currently being shown.
+   *
+   * The endpoint requires that id and refuses to choose one itself, because the acknowledgement it
+   * writes is the record that the organizer reviewed THAT plan. Reading it off a GET first is
+   * exactly what the browser does — it renders from a GET and hands back the id it rendered — so
+   * these tests exercise the same two-step the real client performs rather than a shortcut only
+   * the tests can take. A test that wants to review a DIFFERENT plan passes `planId` explicitly,
+   * which is the stale-tab case.
+   */
+  const review = async (api: Express, eventId: string, planId?: string) => {
+    const shown =
+      planId ?? ((await request(api).get(`/api/events/${eventId}/checklist`)).body.planId as string);
+    return request(api).post(`/api/events/${eventId}/checklist`).send({ planId: shown });
+  };
+
   /** The published name of a rule, so a hand-built plan item states no permit fact of its own. */
   const publishedName = (ruleId: string): string | null => {
     const rule = ruleset.rules.find((candidate) => candidate.id === ruleId);
@@ -298,7 +314,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
   }> => {
     const eventId = await createEvent(scenario(scenarioId));
     await generatePlan(eventId);
-    const response = await request(appWith(storage)).post(`/api/events/${eventId}/checklist`);
+    const response = await review(appWith(storage), eventId);
     expect(response.status).toBe(201);
     return { eventId, body: response.body };
   };
@@ -404,7 +420,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         1,
         { rulesetVersion: "test.v1", snapshotDate: "2026-07-20" },
       );
-      await request(api).post(`/api/events/${eventId}/checklist`);
+      await review(api, eventId);
 
       await insertPlan(
         eventId,
@@ -453,7 +469,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         1,
         { rulesetVersion: "test.v1", snapshotDate: "2026-07-20" },
       );
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      const created = await review(api, eventId);
       expect(created.status).toBe(201);
       const before = (created.body.items as ChecklistItemView[])[0];
 
@@ -489,7 +505,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     it("returns the existing checklist instead of duplicating it when called twice", async () => {
       const { eventId, body } = await checklistFor("A");
 
-      const second = await request(appWith(fakeStorage())).post(`/api/events/${eventId}/checklist`);
+      const second = await review(appWith(fakeStorage()), eventId);
 
       expect(second.status).toBe(200);
       expect((second.body.items as ChecklistItemView[]).map((item) => item.id)).toEqual(
@@ -533,9 +549,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         "2026-07-22T10:00:00Z",
       );
 
-      const response = await request(appWith(fakeStorage())).post(
-        `/api/events/${eventId}/checklist`,
-      );
+      const response = await review(appWith(fakeStorage()), eventId);
 
       // Nothing was created, so the call is already idempotent on its first use.
       expect(response.status).toBe(200);
@@ -559,7 +573,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const eventId = await createEvent(scenario("A"));
       await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T10:00:00Z");
       const api = appWith(fakeStorage());
-      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      const first = await review(api, eventId);
       expect(first.status).toBe(201);
 
       // The same two rules, merged in the other order: the same requirement, not a new one.
@@ -568,7 +582,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         [{ ruleIds: [...MERGED].reverse(), kind: "permit" }],
         "2026-07-22T11:00:00Z",
       );
-      const second = await request(api).post(`/api/events/${eventId}/checklist`);
+      const second = await review(api, eventId);
 
       expect(second.status).toBe(200);
       expect(second.body.planChanged).toBe(false);
@@ -582,7 +596,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const eventId = await createEvent(scenario("A"));
       await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T10:00:00Z");
       const api = appWith(fakeStorage());
-      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      const first = await review(api, eventId);
       const mergedItemId = (first.body.items as ChecklistItemView[])[0]?.id;
       await request(api)
         .patch(`/api/checklist-items/${mergedItemId}`)
@@ -594,7 +608,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         MERGED.map((ruleId) => ({ ruleIds: [ruleId], kind: "permit" })),
         "2026-07-22T11:00:00Z",
       );
-      const split = await request(api).post(`/api/events/${eventId}/checklist`);
+      const split = await review(api, eventId);
 
       expect(split.status).toBe(201);
       // Partial overlap is not a match, so "submitted" is not carried onto a line whose scope
@@ -629,13 +643,13 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         "2026-07-22T10:00:00Z",
       );
       const api = appWith(fakeStorage());
-      const separate = await request(api).post(`/api/events/${eventId}/checklist`);
+      const separate = await review(api, eventId);
       const trackedIds = (separate.body.items as ChecklistItemView[]).map((item) => item.id);
       expect(trackedIds).toHaveLength(2);
 
       // The dedupe key changes and the two lines become one.
       await insertPlan(eventId, [{ ruleIds: MERGED, kind: "permit" }], "2026-07-22T11:00:00Z");
-      const merged = await request(api).post(`/api/events/${eventId}/checklist`);
+      const merged = await review(api, eventId);
 
       // No unique violation: the merged row is claimed by the new item, not fought over.
       expect(merged.status).toBe(201);
@@ -1089,7 +1103,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(edited.status).toBe(200);
       await generatePlan(eventId);
 
-      const rescoped = await request(api).post(`/api/events/${eventId}/checklist`);
+      const rescoped = await review(api, eventId);
 
       expect(rescoped.status).toBe(201);
       // The rescope raised the prompt (asserted on the read below); this POST answers it.
@@ -1150,7 +1164,10 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const api = appWith(fakeStorage());
       const absent = randomUUID();
 
-      expect((await request(api).post(`/api/events/${absent}/checklist`)).status).toBe(404);
+      // A plan id is supplied by hand for both 404s below. The helper reads one off a GET, and a
+      // GET against an event that does not exist (or has no plan) has none to give — the request
+      // would then be refused for a missing planId and never reach the lookup under test.
+      expect((await review(api, absent, randomUUID())).status).toBe(404);
       expect((await request(api).get(`/api/events/${absent}/checklist`)).status).toBe(404);
       expect(
         (await request(api).patch(`/api/checklist-items/${absent}`).send({ status: "approved" }))
@@ -1159,7 +1176,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect((await request(api).get(`/api/documents/${absent}/url`)).status).toBe(404);
 
       const planless = await createEvent(scenario("A"));
-      const response = await request(api).post(`/api/events/${planless}/checklist`);
+      const response = await review(api, planless, randomUUID());
       expect(response.status).toBe(404);
       expect(response.body.error).toContain("no plan generated");
     });
@@ -1300,7 +1317,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       // The edit bumps revision_counter; the plan still pins the revision it evaluated.
       await request(api).patch(`/api/events/${eventId}`).send({ street_event_size: "medium" });
-      const refused = await request(api).post(`/api/events/${eventId}/checklist`);
+      const refused = await review(api, eventId);
 
       expect(refused.status).toBe(409);
       expect(refused.body.error).toContain("regenerate the plan first");
@@ -1315,7 +1332,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       // Regenerating clears it, and the checklist then covers the rescoped requirements.
       await generatePlan(eventId);
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      const created = await review(api, eventId);
       expect(created.status).toBe(201);
       expect(
         (created.body.items as ChecklistItemView[]).some(
@@ -1355,7 +1372,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       // Re-creating the checklist is the organizer accepting the new plan, so the prompt clears
       // rather than latching on for the rest of the event's life.
-      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      const accepted = await review(api, eventId);
       expect(accepted.status).toBe(200);
       expect(accepted.body.planChanged).toBe(false);
       expect((accepted.body.items as ChecklistItemView[]).map((item) => item.id)).toEqual(
@@ -1378,7 +1395,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       await request(api).patch(`/api/events/${eventId}`).send({ event_date: "2026-10-14" });
       await generatePlan(eventId);
-      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      const accepted = await review(api, eventId);
 
       const item = (accepted.body.items as ChecklistItemView[]).find(
         (candidate) => candidate.id === itemId,
@@ -1389,6 +1406,105 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // Re-pointed at the current plan's row, so the deadline it shows is the recalculated one.
       expect(item?.planItemId).not.toBe(body.items[0]?.planItemId);
       expect(item?.inLatestPlan).toBe(true);
+    });
+  });
+
+  /**
+   * THE STALE TAB. A review acknowledges a SPECIFIC plan, and the organizer must have been shown
+   * the plan it acknowledges.
+   *
+   * The race is between requests, not inside one: the transaction-level race is covered above, and
+   * it was never the reachable case. This one is — a tab renders plan A, anything at all
+   * regenerates, and the click arrives minutes later. Choosing the plan server-side made that
+   * click acknowledge plan B, so `checklist_acknowledgements` asserted a review that did not
+   * happen and nothing downstream could tell. AC 6 reads that row to mean the organizer has
+   * reviewed the changed items, which is exactly the claim it could not support.
+   *
+   * Asserted against the ROW rather than the response, both the plan id and the timestamp,
+   * because "did not record" is the whole property and a response body cannot demonstrate it.
+   */
+  describe("a review is bound to the plan the organizer was shown", () => {
+    const acknowledgement = async (eventId: string) =>
+      (
+        await pool.query<{ plan_id: string; acknowledged_at: Date }>(
+          "SELECT plan_id, acknowledged_at FROM checklist_acknowledgements WHERE event_id = $1",
+          [eventId],
+        )
+      ).rows[0];
+
+    it("refuses a review naming a superseded plan, and records nothing", async () => {
+      const { eventId, body } = await checklistFor("A");
+      const api = appWith(fakeStorage());
+      // What the organizer's tab is still displaying, captured before anything regenerates.
+      const displayed = body.planId as string;
+      const before = await acknowledgement(eventId);
+      expect(before?.plan_id).toBe(displayed);
+
+      // Another tab, or another device, moves the event on and regenerates.
+      await request(api).patch(`/api/events/${eventId}`).send({ event_date: "2026-10-14" });
+      await generatePlan(eventId);
+      const current = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect(current.body.planId).not.toBe(displayed);
+
+      // The organizer, who has seen none of that, presses review.
+      const refused = await review(api, eventId, displayed);
+
+      expect(refused.status).toBe(409);
+      expect(refused.body.supersededPlanId).toBe(displayed);
+      // NOTHING WAS RECORDED. Same plan and the same timestamp: had it re-acknowledged, the plan
+      // id would have moved to the newer plan, and had it merely re-run, the timestamp would have.
+      const after = await acknowledgement(eventId);
+      expect(after?.plan_id).toBe(before?.plan_id);
+      expect(after?.acknowledged_at.getTime()).toBe(before?.acknowledged_at.getTime());
+      // Re-presented rather than merely refused: the newer plan comes back with the refusal, so
+      // the organizer can read what they are being asked to acknowledge.
+      expect(refused.body.checklist.planId).toBe(current.body.planId);
+      expect(refused.body.checklist.planChanged).toBe(true);
+    });
+
+    it("records the acknowledgement when the review names the plan being shown", async () => {
+      const { eventId, body } = await checklistFor("A");
+      const api = appWith(fakeStorage());
+      const first = await acknowledgement(eventId);
+      expect(first?.plan_id).toBe(body.planId);
+
+      await request(api).patch(`/api/events/${eventId}`).send({ event_date: "2026-10-14" });
+      await generatePlan(eventId);
+      // This time the organizer re-reads the page first, so the id they submit is the current one.
+      const current = await request(api).get(`/api/events/${eventId}/checklist`);
+      expect(current.body.planChanged).toBe(true);
+
+      const accepted = await review(api, eventId, current.body.planId as string);
+
+      expect(accepted.status).toBe(200);
+      expect(accepted.body.planChanged).toBe(false);
+      // The acknowledgement moved to the plan they actually read, which is the normal path this
+      // guard must not break: refusing everything would satisfy the test above and nothing else.
+      const after = await acknowledgement(eventId);
+      expect(after?.plan_id).toBe(current.body.planId);
+      expect(after?.acknowledged_at.getTime()).toBeGreaterThan(
+        first?.acknowledged_at.getTime() as number,
+      );
+    });
+
+    it("refuses a review that names no plan, rather than choosing one", async () => {
+      const { eventId } = await checklistFor("A");
+      const api = appWith(fakeStorage());
+      const before = await acknowledgement(eventId);
+
+      // Exactly the old client's request. Defaulting it to the latest plan is the defect, so the
+      // absent id is refused rather than filled in.
+      const bare = await request(api).post(`/api/events/${eventId}/checklist`).send({});
+      const notAUuid = await request(api)
+        .post(`/api/events/${eventId}/checklist`)
+        .send({ planId: "the-one-i-was-looking-at" });
+
+      for (const response of [bare, notAUuid]) {
+        expect(response.status).toBe(400);
+        expect(response.body.error).toContain("planId is required");
+      }
+      const after = await acknowledgement(eventId);
+      expect(after?.acknowledged_at.getTime()).toBe(before?.acknowledged_at.getTime());
     });
   });
 
@@ -1416,7 +1532,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const eventId = await createEvent(scenario("A"));
       await insertPlan(eventId, permits(...ruleIds), "2026-07-22T10:00:00Z");
       const api = appWith(fakeStorage());
-      const first = await request(api).post(`/api/events/${eventId}/checklist`);
+      const first = await review(api, eventId);
       expect(first.status).toBe(201);
       expect(first.body.planChanged).toBe(false);
       return { eventId, api };
@@ -1429,7 +1545,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       const { eventId, api } = await startedFrom([A, B]);
 
       expect(await flagOn(api, eventId)).toBe(false);
-      const again = await request(api).post(`/api/events/${eventId}/checklist`);
+      const again = await review(api, eventId);
       expect(again.status).toBe(200);
       expect(again.body.planChanged).toBe(false);
     });
@@ -1441,7 +1557,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       await insertPlan(eventId, permits(A, B), "2026-07-22T11:00:00Z");
 
       expect(await flagOn(api, eventId)).toBe(true);
-      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+      expect((await review(api, eventId)).body.planChanged).toBe(
         false,
       );
       expect(await flagOn(api, eventId)).toBe(false);
@@ -1453,7 +1569,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       await insertPlan(eventId, permits(A, B, C), "2026-07-22T11:00:00Z");
 
       expect(await flagOn(api, eventId)).toBe(true);
-      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      const accepted = await review(api, eventId);
       expect(accepted.status).toBe(201);
       expect(accepted.body.planChanged).toBe(false);
       expect(await flagOn(api, eventId)).toBe(false);
@@ -1465,12 +1581,12 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
 
       expect(await flagOn(api, eventId)).toBe(true);
-      const accepted = await request(api).post(`/api/events/${eventId}/checklist`);
+      const accepted = await review(api, eventId);
       expect(accepted.body.planChanged).toBe(false);
       // The retained row is history, not a pending review: it must not hold the prompt open on
       // this read or any later one.
       expect(await flagOn(api, eventId)).toBe(false);
-      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+      expect((await review(api, eventId)).body.planChanged).toBe(
         false,
       );
 
@@ -1487,7 +1603,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       await insertPlan(eventId, [{ ruleIds: [A, B], kind: "permit" }], "2026-07-22T11:00:00Z");
 
       expect(await flagOn(api, eventId)).toBe(true);
-      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+      expect((await review(api, eventId)).body.planChanged).toBe(
         false,
       );
       expect(await flagOn(api, eventId)).toBe(false);
@@ -1503,14 +1619,14 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       await insertPlan(eventId, permits(A), "2026-07-22T10:00:00Z");
       await insertPlan(eventId, permits(B), "2026-07-22T11:00:00Z");
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      const created = await review(api, eventId);
       expect(created.status).toBe(201);
       expect((created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
         B,
       ]);
 
       await insertPlan(eventId, permits(A, B), "2026-07-22T12:00:00Z");
-      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+      const reviewed = await review(api, eventId);
 
       // B first: it became a task first, even though A appeared in an earlier plan.
       expect((reviewed.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
@@ -1542,7 +1658,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       await insertPlan(eventId, permits(C), "2026-07-22T10:00:00Z");
       await insertPlan(eventId, permits(A, B), "2026-07-22T11:00:00Z");
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      const created = await review(api, eventId);
       expect(created.status).toBe(201);
       // One transaction, so A and B tie on creation and the filing-date order decides.
       expect((created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0])).toEqual([
@@ -1552,7 +1668,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       // Drops A, keeps B, brings C back.
       await insertPlan(eventId, permits(B, C), "2026-07-22T12:00:00Z");
-      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+      const reviewed = await review(api, eventId);
       expect(reviewed.status).toBe(201);
 
       const items = reviewed.body.items as ChecklistItemView[];
@@ -1589,7 +1705,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         ],
         "2026-07-22T10:00:00Z",
       );
-      const created = await request(api).post(`/api/events/${eventId}/checklist`);
+      const created = await review(api, eventId);
       expect(created.status).toBe(201);
       const before = (created.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0]);
 
@@ -1599,7 +1715,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         [{ ruleIds: [B], kind: "permit", latestApplyDate: "2026-07-25" }],
         "2026-07-22T11:00:00Z",
       );
-      const reviewed = await request(api).post(`/api/events/${eventId}/checklist`);
+      const reviewed = await review(api, eventId);
       expect(reviewed.status).toBe(200);
 
       const after = (reviewed.body.items as ChecklistItemView[]).map((item) => item.ruleIds[0]);
@@ -1649,13 +1765,13 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         [{ ruleIds: ["ADV-NOISE-CODE-001"], kind: "advisory" }],
         "2026-07-22T10:00:00Z",
       );
-      await request(api).post(`/api/events/${emptyEvent}/checklist`);
+      await review(api, emptyEvent);
       const emptyCreated = await request(api).get(`/api/events/${emptyEvent}/checklist`);
       expect(emptyCreated.body.created).toBe(true);
       expect(emptyCreated.body.items).toEqual([]);
 
       // Creating flips it, so the flag tracks the checklist and not the plan's shape.
-      await request(api).post(`/api/events/${uncreated}/checklist`);
+      await review(api, uncreated);
       expect((await request(api).get(`/api/events/${uncreated}/checklist`)).body.created).toBe(
         true,
       );
@@ -1682,7 +1798,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       expect(items).toHaveLength(2);
       expect(items.every((item) => !item.inLatestPlan)).toBe(true);
 
-      expect((await request(api).post(`/api/events/${eventId}/checklist`)).body.planChanged).toBe(
+      expect((await review(api, eventId)).body.planChanged).toBe(
         false,
       );
       expect(await flagOn(api, eventId)).toBe(false);
@@ -1719,7 +1835,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
 
       const [first] = await acknowledgement();
       const secondPlan = await insertPlan(eventId, permits(A), "2026-07-22T11:00:00Z");
-      await request(api).post(`/api/events/${eventId}/checklist`);
+      await review(api, eventId);
 
       const rows = await acknowledgement();
       expect(rows).toHaveLength(1);
@@ -1759,9 +1875,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
       // dormant. Its verification status is OFFICIAL_CONFLICT in the published ruleset.
       const eventId = await createEvent({ ...scenario("C"), headcount: 20 });
       await generatePlan(eventId);
-      const response = await request(appWith(fakeStorage())).post(
-        `/api/events/${eventId}/checklist`,
-      );
+      const response = await review(appWith(fakeStorage()), eventId);
 
       const conflicted = (response.body.items as ChecklistItemView[]).find(
         (item) => item.ruleIds[0] === "PARKS-EVENT-EXACTLY-20-001",
@@ -1775,6 +1889,12 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
     it("refuses to serve an item whose published text is missing rather than dropping it", async () => {
       const eventId = await createEvent(scenario("A"));
       await generatePlan(eventId);
+      // Read while the plan still renders, because that is the honest order: the organizer had it
+      // on screen and pressed review, and the renderings were lost underneath them. Reading it
+      // afterwards is not possible anyway — the GET the helper uses fails for the same reason the
+      // POST under test does.
+      const shown = (await request(appWith(fakeStorage())).get(`/api/events/${eventId}/checklist`))
+        .body.planId as string;
       // A plan whose renderings were lost is a partial answer, and F-201 AC 5 already settled
       // that a partial plan is never served as a complete one.
       await pool.query(
@@ -1783,9 +1903,7 @@ describe.runIf(databaseUrl.length > 0)("F-202 compliance checklist", () => {
         [eventId],
       );
 
-      const response = await request(appWith(fakeStorage())).post(
-        `/api/events/${eventId}/checklist`,
-      );
+      const response = await review(appWith(fakeStorage()), eventId, shown);
 
       expect(response.status).toBe(500);
       expect(response.body.error).toBe("checklist request failed");

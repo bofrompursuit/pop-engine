@@ -116,6 +116,12 @@ export type ChecklistItem = PlanContext & {
 export type StatusRollup = Readonly<Record<ChecklistStatus, number>>;
 
 export type ChecklistResponse = {
+  /**
+   * The plan these rows were built from. Read so the page can say WHICH plan it is showing when
+   * it asks the api to record a review: the acknowledgement names a specific plan, and the server
+   * refuses to pick one on the caller's behalf.
+   */
+  readonly planId: string;
   /** The current plan's pinned pair, for the checklist's own banner (F-206 AC 1). */
   readonly rulesetVersion: string;
   readonly snapshotDate: string | null;
@@ -138,7 +144,13 @@ export type ChecklistResult =
    * "a checklist may exist but could not be read", which nothing on this page answers. Offering
    * creation for the second would POST against a plan whose state is unknown.
    */
-  | { ok: false; noPlan: boolean; message: string };
+  /**
+   * `superseded` means the api refused the review because the plan this page was showing is no
+   * longer the latest, and — this is the part that matters — RECORDED NOTHING. The organizer is
+   * re-presented with the current plan and reviews again, rather than having an acknowledgement
+   * filed against a plan they never read.
+   */
+  | { ok: false; noPlan: boolean; superseded?: true; message: string };
 
 export type ChecklistItemUpdate = {
   readonly id: string;
@@ -288,6 +300,7 @@ const ROLLUP_CHECKS = Object.fromEntries(
 ) as FieldChecks<StatusRollup>;
 
 const CHECKLIST_CHECKS: FieldChecks<ChecklistResponse> = {
+  planId: isString,
   rulesetVersion: isString,
   snapshotDate: nullOr(isString),
   created: isBoolean,
@@ -344,18 +357,23 @@ export async function loadChecklist(apiBaseUrl: string, eventId: string): Promis
  * regeneration (AC 1 and AC 6 are one idempotent endpoint). A second call creates nothing and
  * returns the checklist that already exists, so a double click cannot duplicate anything.
  *
- * The response IS the checklist it just wrote, so it goes straight on screen rather than being
- * thrown away and asked for again.
+ * `displayedPlanId` is the plan THIS PAGE WAS SHOWING, and it is required. A review records which
+ * plan the organizer read, so the api compares this against the latest plan and refuses when they
+ * differ rather than quietly re-pointing the acknowledgement at a plan that arrived while the
+ * organizer was reading. Sending the id the page rendered from is what makes that check possible;
+ * sending the latest id fetched at click time would defeat it.
  */
 export async function createChecklist(
   apiBaseUrl: string,
   eventId: string,
+  displayedPlanId: string,
 ): Promise<ChecklistResult> {
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}/api/events/${eventId}/checklist`, {
       method: "POST",
       ...CREDENTIALED,
+      body: JSON.stringify({ planId: displayedPlanId }),
     });
   } catch {
     return { ok: false, noPlan: false, message: UNREACHABLE };
@@ -363,9 +381,16 @@ export async function createChecklist(
 
   const body = await readJson(response);
   if (!response.ok) {
+    // The api answers 409 for two different states and they are not interchangeable: the plan was
+    // superseded while this page was reading it, or the EVENT was edited and the plan needs
+    // regenerating first. Only the first is a re-present, and it is told apart by the field the
+    // api sends with it rather than by the status code, which both share.
+    const superseded =
+      response.status === 409 && typeof asRecord(body)?.supersededPlanId === "string";
     return {
       ok: false,
       noPlan: response.status === 404,
+      ...(superseded ? { superseded: true as const } : {}),
       message: failureMessage(
         body,
         `The checklist could not be created (HTTP ${response.status}).`,

@@ -125,15 +125,35 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
    * Convert the latest plan into a checklist, and re-run the same call to review it after a
    * regeneration. The endpoint is idempotent: a second call creates nothing and answers with the
    * checklist that already exists, so a double click cannot produce two.
+   *
+   * `displayedPlanId` comes from the checklist this button is rendered beside, NOT from a fresh
+   * read taken at click time. That is the whole point: it is the id of the plan the organizer has
+   * actually been looking at, so the api can refuse to file a review against anything else. Taking
+   * it from a fresh read would reintroduce the bug this argument exists to close.
    */
-  const convert = async () => {
+  const convert = async (displayedPlanId: string) => {
     const requested = showing;
     setCreating(true);
     setCreationFailure(null);
 
-    const result = await createChecklist(apiBaseUrl, eventId);
+    const result = await createChecklist(apiBaseUrl, eventId, displayedPlanId);
     if (active.current !== requested) return;
     if (!result.ok) {
+      // Superseded is not a failure to report and stop at: the plan moved while this page was
+      // being read, NOTHING was recorded, and the organizer needs the newer plan in front of them
+      // to review it. Re-read so the screen shows what they are being asked to review, and say
+      // plainly that nothing was filed — a message alone would leave them looking at the plan the
+      // api just refused.
+      if (result.superseded === true) {
+        const reloadFailure = await reload(requested);
+        setCreationFailure(
+          reloadFailure ??
+            "The plan changed while you were reading it, so nothing was recorded. " +
+              "The current plan is now shown — review it and press the button again.",
+        );
+        setCreating(false);
+        return;
+      }
       setCreationFailure(result.message);
       setCreating(false);
       return;
@@ -335,7 +355,7 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           <button
             className="intake__submit"
             type="button"
-            onClick={() => void convert()}
+            onClick={() => void convert(checklist.planId)}
             disabled={creating}
           >
             {creating

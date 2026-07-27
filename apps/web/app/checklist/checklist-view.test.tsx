@@ -1308,6 +1308,51 @@ describe("edge cases", () => {
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
 
+  it("re-presents the newer plan when the one on screen was superseded, and says nothing was recorded", async () => {
+    // The stale tab, from the organizer's side. This page rendered plan-2 and the api refuses the
+    // review because plan-3 arrived meanwhile. The refusal must not read as "your click failed":
+    // nothing was recorded, and the plan they now have to review has to be the one on screen.
+    const shown = checklistBody({
+      created: true,
+      planChanged: true,
+      items: [trackedItem(STREET_MEDIUM)],
+    });
+    const newer = checklistBody({
+      planId: "plan-3",
+      created: true,
+      planChanged: true,
+      items: [trackedItem(STREET_LARGE)],
+    });
+    let current = shown;
+    stubApi({
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        // The regeneration lands: from here the page reads the newer plan.
+        current = newer;
+        return jsonResponse(409, {
+          error: "plan plan-2 is no longer the latest plan for event event-1",
+          supersededPlanId: "plan-2",
+          checklist: newer,
+        });
+      },
+    });
+    await renderView();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review items against the current plan" }),
+    );
+
+    // Told plainly that the click filed nothing, rather than being left to assume it did.
+    await waitFor(() => expect(screen.getByText(/nothing was recorded/i)).toBeTruthy());
+    // And looking at the plan they are being asked to review, not the one that was refused.
+    expect(screen.getAllByRole("heading", { name: nameOf(STREET_LARGE) })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: nameOf(STREET_MEDIUM) })).toBeNull();
+    // The review button is still there: this is a retry, not a dead end.
+    expect(
+      screen.getByRole("button", { name: "Review items against the current plan" }),
+    ).toBeTruthy();
+  });
+
   it("cannot send a second conversion while the first is still in flight", async () => {
     let release: ((response: Response) => void) | undefined;
     let current = checklistBody({ created: false });

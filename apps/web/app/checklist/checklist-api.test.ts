@@ -177,13 +177,19 @@ describe("createChecklist", () => {
     const body = checklistBody({ created: true, items: [trackedItem()] });
     const fetchMock = stubFetch(async () => jsonResponse(201, body));
 
-    const result = await createChecklist("https://api.example.com", "event-1");
+    const result = await createChecklist("https://api.example.com", "event-1", "plan-1");
 
     expect(result).toMatchObject({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.com/api/events/event-1/checklist",
-      expect.objectContaining({ method: "POST", credentials: "include" }),
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        // The plan the page was showing rides on the request. Without it the api has no way to
+        // tell a review of THIS plan from a review of whatever arrived while the page was open.
+        body: JSON.stringify({ planId: "plan-1" }),
+      }),
     );
   });
 
@@ -196,7 +202,7 @@ describe("createChecklist", () => {
     });
     stubFetch(async () => jsonResponse(200, existing));
 
-    const result = await createChecklist("https://api.example.com", "event-1");
+    const result = await createChecklist("https://api.example.com", "event-1", "plan-1");
 
     expect(result.ok && result.checklist.items.map((item) => item.id)).toEqual(["item-1"]);
   });
@@ -206,7 +212,7 @@ describe("createChecklist", () => {
       jsonResponse(409, { error: "plan was generated against revision 1, but the event is at 2" }),
     );
 
-    await expect(createChecklist("https://api.example.com", "event-1")).resolves.toEqual({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toEqual({
       ok: false,
       noPlan: false,
       message: "plan was generated against revision 1, but the event is at 2",
@@ -218,7 +224,7 @@ describe("createChecklist", () => {
       throw new TypeError("network down");
     });
 
-    await expect(createChecklist("https://api.example.com", "event-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
       ok: false,
       message: "The API could not be reached.",
     });
@@ -227,7 +233,7 @@ describe("createChecklist", () => {
   it("reports a 404 as the event having no plan to convert", async () => {
     stubFetch(async () => jsonResponse(404, {}));
 
-    await expect(createChecklist("https://api.example.com", "event-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
       ok: false,
       noPlan: true,
     });
@@ -236,7 +242,7 @@ describe("createChecklist", () => {
   it("refuses a created checklist it cannot read", async () => {
     stubFetch(async () => jsonResponse(201, { created: "yes" }));
 
-    await expect(createChecklist("https://api.example.com", "event-1")).resolves.toMatchObject({
+    await expect(createChecklist("https://api.example.com", "event-1", "plan-1")).resolves.toMatchObject({
       ok: false,
       message: "The API returned a checklist this page cannot read.",
     });
