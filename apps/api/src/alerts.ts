@@ -1077,17 +1077,42 @@ async function plannedAlerts(
   // an ungated controlling minimum, and the copy then called an ungated countdown a window width.
   // Same shape as the defect round 18 fixed, one layer over. So the controlling row is carried
   // rather than re-approximated, and everything the copy says about the number reads from it.
-  const openDated = rows
-    .filter((row) => {
-      const applyBy = isoDate(row.latest_apply_date);
-      return applyBy !== null && applyBy >= schedulingToday;
-    })
+  // TWO QUESTIONS, TWO SETS, because one filter was answering both and they are not the same
+  // question. "May this warning still be sent" is about which requirements are still OPEN. "Which
+  // findings produced the number we are describing" is about which requirements the verdict's
+  // minimum came from, open or not. Deriving the second from the first quietly narrowed it.
+  //
+  // The case it lost: a gated and an ungated requirement tie for the minimum, and the checklist is
+  // materialized after the gated filing date but before the ungated one. Openness dropped the
+  // gated controller while still permitting the warning, so the copy described the number purely as
+  // an evaluation-date countdown and dropped that finding's verification qualifications — even
+  // though the same verdict value was ALSO computed as its filing-window WIDTH.
+  //
+  // The round 22 tie principle already decides which way this goes, and it is worth saying here
+  // rather than leaving it to be re-derived: break the tie in the direction that cannot harm the
+  // organizer. Dropping a gated controller from the copy is the harm direction, because it turns a
+  // width into a countdown and states a filing date the sources do not publish. So every tied
+  // controller is retained for the copy and the status, and openness decides only whether the
+  // warning may go out at all.
+  const dated = rows
     .map((row) => ({ row, slack: renderings.get(renderingKey(row.rule_ids))?.slack_days }))
-    .filter((dated): dated is { row: PlanAlertRow; slack: number } => typeof dated.slack === "number");
+    .filter((entry): entry is { row: PlanAlertRow; slack: number } => typeof entry.slack === "number");
+  /** Openness, and nothing else: whether the requirement the number describes can still be filed. */
+  const openDated = dated.filter((entry) => {
+    const applyBy = isoDate(entry.row.latest_apply_date);
+    return applyBy !== null && applyBy >= schedulingToday;
+  });
   const controllingFilingStillOpen =
-    openDated.length > 0 && Math.min(...openDated.map((dated) => dated.slack)) === minSlackDays;
-  /** Every still-open requirement whose slack IS the number the copy quotes. */
-  const controlling = openDated.filter((dated) => dated.slack === minSlackDays);
+    openDated.length > 0 && Math.min(...openDated.map((entry) => entry.slack)) === minSlackDays;
+  /**
+   * EVERY requirement whose slack IS the number the copy quotes, open or not.
+   *
+   * The expiry date below is unaffected by widening this, and that is worth knowing rather than
+   * assuming: it takes the LAST of the tied dates, an expired controller's date is necessarily
+   * earlier than an open one's, and this is only ever read when at least one tied controller is
+   * still open. Same value, computed from the set that actually answers the question.
+   */
+  const controlling = dated.filter((entry) => entry.slack === minSlackDays);
   // ONE RULE, TWO OPPOSITE TIE-BREAKS, and they are written here together because apart they look
   // like a contradiction and someone will eventually "unify" them.
   //

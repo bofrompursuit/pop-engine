@@ -271,7 +271,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
        * A SECOND dated requirement with more slack than the first, for the case where the
        * requirement that produced minSlackDays expires while a later one stays open.
        */
-      laterDated?: { latestApplyDate: string; slackDays: number };
+      laterDated?: { latestApplyDate: string; slackDays: number; applyAfterDate?: string };
     } = {},
   ): Promise<{ planId: string; checklistItemId: string }> => {
     const {
@@ -355,12 +355,12 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       // A second dated requirement, later and with more slack than the one the verdict quotes.
       await pool.query(
         `INSERT INTO permit_plan_items (id, plan_id, rule_ids, triggered_by, permit_name, agency,
-                                        latest_apply_date, sources, kind, disposition,
+                                        latest_apply_date, apply_after_date, sources, kind, disposition,
                                         deadline_status, verification_status)
          VALUES ($1, $2, ARRAY['PARKS-EVENT-001'], '[]'::jsonb, 'Special Event Permit',
-                 'NYC Parks', $3, '[]'::jsonb, 'permit', 'required', 'on_track',
+                 'NYC Parks', $3, $4, '[]'::jsonb, 'permit', 'required', 'on_track',
                  'SOURCE_CONFIRMED')`,
-        [laterItemId, planId, laterDated.latestApplyDate],
+        [laterItemId, planId, laterDated.latestApplyDate, laterDated.applyAfterDate ?? null],
       );
       // It becomes a task like any other dated permit, so it really does schedule reminders.
       await pool.query(
@@ -794,6 +794,56 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       );
       expect(body).toContain("Verification of your Sound Device Permit (NYPD): SOURCE CONFIRMED");
       expect(body).toContain("Verification of your Special Event Permit (NYC Parks): RESEARCH REQUIRED");
+    });
+
+    it("keeps a tied gated controller in the copy after its own window has shut", async () => {
+      // ONE FILTER WAS ANSWERING TWO QUESTIONS. Openness decides whether the warning may still be
+      // sent; it should not also decide which findings produced the number being described. Here a
+      // gated and an ungated requirement tie at 9, the gated one's filing date has passed and the
+      // ungated one's has not, so the warning is still legitimately sent — and the gated controller
+      // was dropped from the copy, which described the number purely as an evaluation-date
+      // countdown even though that same value was ALSO computed as a filing-window width.
+      //
+      // The round 22 tie principle decides it: break the tie in the direction that cannot harm the
+      // organizer, and turning a width into a countdown states a filing date no source publishes.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        // The UNGATED controller, still open, which is what keeps the warning sendable.
+        latestApplyDate: dayFromToday(9),
+        // The GATED controller, tied at 9, whose own window has already shut.
+        laterDated: {
+          latestApplyDate: dayFromToday(-3),
+          slackDays: 9,
+          applyAfterDate: dayFromToday(-20),
+        },
+      });
+      await pool.query(
+        `UPDATE permit_plan_items SET verification_status = 'RESEARCH_REQUIRED'
+          WHERE plan_id = $1 AND rule_ids = ARRAY['PARKS-EVENT-001']`,
+        [planId],
+      );
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      // Openness still permitted it, which is what makes this about the copy and not the guard.
+      expect(warning).toBeDefined();
+      // A width, not an anchored countdown, because one of the tied controllers is gated.
+      expect(warning?.payload.subject).toBe("At risk — the narrowest filing window is 9 days wide");
+      expect(String(warning?.payload.subject)).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+      // And that controller's published state travels, which it could not while it was filtered out.
+      expect(String(warning?.payload.body)).toContain(
+        "Verification of your Special Event Permit (NYC Parks): RESEARCH REQUIRED",
+      );
     });
 
     it("does not warn about slack on a plan that is not at risk", async () => {
