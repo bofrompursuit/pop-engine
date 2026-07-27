@@ -578,11 +578,29 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
 
               Tense, since it differs from the two notices above: those describe what HAS happened
               and read it off the alert rows, while this describes what the form will produce and
-              reads it off the inputs. Both are state; only the state differs. */}
+              reads it off the inputs. Both are state; only the state differs.
+
+              AND IT PROMISES ROUTING, NOT ARRIVAL, which is the second half and the one the first
+              pass missed. There are three things this sentence could key on and they are not the
+              same question: whether a CONTACT exists, whether the SENDER is configured, and whether
+              rows were actually SCHEDULED. Keying on the contact alone still told an organizer with
+              a perfectly good address that their reminders go to their email while
+              `sendersFromEnv` had selected `unconfiguredEmailSender`, which is the supported bare
+              and local configuration, and every one of those alerts fails and retries.
+
+              The page cannot key on the sender, and that is not an oversight to fix here: the
+              checklist response reports contacts and rows and says nothing about provider
+              credentials. `simulatedDeliveryNotice` above already refuses to reassure for exactly
+              this reason, in a comment written in round 7, and this sentence was breaking that rule
+              one function below where it is stated.
+
+              So it says where reminders are ADDRESSED, which the contacts settle on their own, and
+              claims nothing about arrival. What did not arrive is the failed-delivery notice's job,
+              and that one counts real rows. */}
           <p className="checklist__lede">
             {contacts.email.trim() === ""
               ? "Text messages are not being sent yet, and no email address is set, so no deadline reminders will be delivered. Add an email address to receive them. A number entered now is stored for when text sending is switched on."
-              : "Text messages are not being sent yet, so reminders go to your email. A number entered now is stored for when text sending is switched on."}
+              : "Text messages are not being sent yet, so deadline reminders are addressed to your email instead. A number entered now is stored for when text sending is switched on."}
           </p>
           {/* One endpoint, one button, because the conversion IS idempotent: posting the plan the
               page is showing when nothing has changed creates nothing and records the contact.

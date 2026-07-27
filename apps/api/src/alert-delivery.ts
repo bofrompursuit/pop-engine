@@ -104,9 +104,18 @@ export function createResendEmailSender(settings: {
           : `email provider unreachable: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
+    // THE BODY IS RELEASED ON BOTH PATHS, and the throwing one is why this is a comment rather
+    // than a line. Undici holds a connection open until its response body is consumed or
+    // cancelled, so a body that is simply never read keeps its socket until garbage collection.
+    // The poller sends up to eight at a time and retries through outages, which is exactly the
+    // shape that accumulates them: the concurrency bound limits requests in flight, not sockets
+    // left behind by requests that finished.
+    //
+    // Cancelled rather than read, because nothing here wants the contents. The provider's body can
+    // echo the recipient, which is contact data (AGENTS.md "do not log unredacted contact data"),
+    // so the rejection carries the status and nothing else.
+    await response.body?.cancel();
     if (!response.ok) {
-      // The provider's body can echo the recipient, which is contact data (AGENTS.md "do not log
-      // unredacted contact data"), so only the status is carried.
       throw new AlertDeliveryError(
         `email provider rejected the send with status ${response.status}`,
       );

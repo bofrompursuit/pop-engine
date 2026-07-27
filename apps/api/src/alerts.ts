@@ -1346,7 +1346,25 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- claim both match ('pending', 'failed'), the reconciler's cancel matches both, and
              -- this clause's own WHERE matches both. Checked rather than assumed.
              SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at,
-                 status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END
+                 status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END,
+                 -- A REVIVED ALERT STARTS CLEAN, which is the third transition this clause has had
+                 -- to answer and the one that was never given a rule. Round 9 decided an unchanged
+                 -- destination keeps its evidence; round 11 decided a corrected address gets its
+                 -- own row, so it starts fresh by construction. Cancelled-then-revived is neither:
+                 -- the requirement went away and came back, and the row that returns is the one
+                 -- that was withdrawn.
+                 --
+                 -- Keeping the old counters there meant an immediately due revived alert sat out a
+                 -- fifteen-minute backoff earned before it was cancelled, and its next failure was
+                 -- scored as a high-count retry rather than a first one. The evidence belonged to
+                 -- an attempt at a requirement PopEngine had since decided not to send at all.
+                 --
+                 -- Only from 'cancelled'. A 'failed' row whose review changed nothing keeps
+                 -- everything its attempts established, which is round 9 and is not reopened here.
+                 failure_count = CASE WHEN alerts.status = 'cancelled' THEN 0
+                                      ELSE alerts.failure_count END,
+                 next_attempt_at = CASE WHEN alerts.status = 'cancelled' THEN NULL
+                                        ELSE alerts.next_attempt_at END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
            -- xmax = 0 is true only for a row this statement inserted, which is what separates a
            -- newly scheduled alert from one that already existed and was recomputed in place.

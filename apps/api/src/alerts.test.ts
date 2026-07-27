@@ -3504,6 +3504,60 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(provider.delivered).toHaveLength(1);
     });
 
+    it("clears the retry state when a cancelled alert is revived", async () => {
+      // The third transition this clause has had to answer. Round 9 decided an unchanged
+      // destination keeps its evidence and round 11 decided a corrected address gets its own row,
+      // so it starts fresh by construction. Cancelled-then-revived is neither: the requirement went
+      // away and came back, and the row that returns is the one that was withdrawn. Keeping the old
+      // counters made an immediately due revived alert sit out a fifteen-minute backoff earned
+      // before it was cancelled, and scored its next failure as a high-count retry.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const gated = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, gated.planId, contacts);
+        const unlock = (await alertsOf(eventId)).find(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        // It failed its way into the longest backoff before the requirement disappeared.
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 3,
+                             next_attempt_at = clock_timestamp() + interval '15 minutes'
+            WHERE id = $1`,
+          [unlock?.id],
+        );
+
+        // The requirement disappears, so the alert is cancelled.
+        const ungated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, ungated.planId, contacts);
+        expect((await alertsOf(eventId)).find((row) => row.id === unlock?.id)?.status).toBe(
+          "cancelled",
+        );
+
+        // And returns.
+        const regated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          applyAfterDate: dayFromToday(21),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, regated.planId, contacts);
+
+        const revived = (await alertsOf(eventId)).find((row) => row.id === unlock?.id);
+        expect(revived?.status).toBe("pending");
+        expect(revived?.failure_count).toBe(0);
+        expect(revived?.next_attempt_at).toBeNull();
+      } finally {
+        client.release();
+      }
+    });
+
     it("keeps retrying through a provider outage without losing an alert", async () => {
       const eventId = await createEvent(scenario("C"));
       await schedulePastDue(eventId);
@@ -3563,6 +3617,48 @@ describe("F-203 delivery channels (AC 5)", () => {
     body: "…",
     idempotencyKey: "event:item:deadline_reminder:email:2026-08-19",
   };
+
+  it("releases the response body on both the accepted and the rejected path", async () => {
+    // Undici holds a connection open until its body is consumed or cancelled, so a body nobody
+    // reads keeps its socket until garbage collection. The poller sends eight at a time and retries
+    // through outages, which is the shape that accumulates them: the concurrency bound limits
+    // requests in flight, not sockets left behind by requests that finished.
+    const cancelled: string[] = [];
+    const bodyFor = (label: string) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"id":"x"}'));
+          controller.close();
+        },
+        cancel() {
+          cancelled.push(label);
+        },
+      });
+
+    const accepted = createResendEmailSender({
+      apiKey: "k",
+      from: "a@b.test",
+      fetch: async () => new Response(bodyFor("accepted"), { status: 200 }),
+    });
+    await accepted({
+      recipient: "organizer@example.test",
+      subject: "s",
+      body: "b",
+      idempotencyKey: "k1",
+    });
+    expect(cancelled).toContain("accepted");
+
+    // The throwing path is the one that gets forgotten.
+    const rejected = createResendEmailSender({
+      apiKey: "k",
+      from: "a@b.test",
+      fetch: async () => new Response(bodyFor("rejected"), { status: 422 }),
+    });
+    await expect(
+      rejected({ recipient: "organizer@example.test", subject: "s", body: "b", idempotencyKey: "k2" }),
+    ).rejects.toBeInstanceOf(AlertDeliveryError);
+    expect(cancelled).toContain("rejected");
+  });
 
   it("sends email through Resend and hands it the idempotency key", async () => {
     const calls: { url: string; init: RequestInit }[] = [];

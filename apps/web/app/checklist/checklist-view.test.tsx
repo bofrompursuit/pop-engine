@@ -1256,7 +1256,7 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
 
     await renderView();
 
-    expect(screen.queryByText(/reminders go to your email/)).toBeNull();
+    expect(screen.queryByText(/addressed to your email/)).toBeNull();
     const lede = screen.getByText(/no deadline reminders will be delivered/);
     expect(lede.textContent).toContain(
       "Text messages are not being sent yet, and no email address is set, so no deadline " +
@@ -1269,7 +1269,7 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
     );
   });
 
-  it("still says reminders go to the email when there is one", async () => {
+  it("says where reminders are addressed without promising they arrive", async () => {
     // The other half, so the fix cannot be written as "never mention email". This is the sentence
     // the phone field exists to qualify, and it is true whenever an address is set.
     stubApi({
@@ -1282,9 +1282,14 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
 
     await renderView();
 
-    expect(screen.getByText(/reminders go to your email/).textContent).toContain(
-      "Text messages are not being sent yet, so reminders go to your email.",
+    // ROUTING, NOT ARRIVAL. The page cannot see whether Resend is configured — the checklist
+    // response reports contacts and rows and nothing about provider credentials — so a promise that
+    // reminders GO to the email is one it cannot keep in the supported unconfigured configuration.
+    // Where they are ADDRESSED is settled by the contacts alone.
+    expect(screen.getByText(/addressed to your email/).textContent).toContain(
+      "Text messages are not being sent yet, so deadline reminders are addressed to your email",
     );
+    expect(screen.queryByText(/reminders go to your email/)).toBeNull();
     expect(screen.queryByText(/no deadline reminders will be delivered/)).toBeNull();
   });
 
