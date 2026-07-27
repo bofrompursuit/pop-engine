@@ -420,6 +420,14 @@ type PlannedAlert = {
    * sweep reads that item's own `latest_apply_date`, which is live rather than a snapshot.
    */
   readonly controllingApplyBy?: string;
+  /**
+   * The slot this alert was MEANT for, before it was clamped forward if that moment had passed.
+   *
+   * Stored so a review can tell a genuine reschedule from recomputing an already-past slot. The
+   * plan-level warning has none: it is due at the moment it is written, so there is no earlier
+   * intent for it to differ from.
+   */
+  readonly intendedAt?: string;
 };
 
 const isoDate = (value: Date | string | null): string | null =>
@@ -896,9 +904,17 @@ async function plannedAlerts(
    * The copy is unaffected too: `late` is decided from `sendOn` against the scheduling day, so a
    * catch-up reminder still says it is one.
    */
-  const dueAt = (day: string): Date => {
+  const dueAt = (day: string): { at: Date; intended: string } => {
     const scheduled = instantAtLocalHour(settings.jurisdiction, day, SEND_HOUR_LOCAL);
-    return scheduled.getTime() < now.getTime() ? now : scheduled;
+    // The INTENDED slot travels beside the clamped one, because the two answer different
+    // questions and round 27's rule needs the first. `send_at` is recomputed from the request
+    // clock whenever the slot has already gone, so it differs on EVERY review even when nothing
+    // about the schedule changed — and a rule that keys on "the value changed" then cleared the
+    // backoff each time, letting a repeated submission drive repeated immediate retries.
+    return {
+      at: scheduled.getTime() < now.getTime() ? now : scheduled,
+      intended: scheduled.toISOString(),
+    };
   };
   const planned: PlannedAlert[] = [];
 
@@ -938,7 +954,8 @@ async function plannedAlerts(
           // Already past at scheduling time — a checklist created inside the reminder window —
           // is due NOW rather than at a moment that has gone (spec edge case, and AC 2's bound is
           // measured from this field).
-          sendAt: dueAt(sendOn),
+          sendAt: dueAt(sendOn).at,
+          intendedAt: dueAt(sendOn).intended,
           subject,
           body,
           // THE OFFSET IS PART OF WHICH REMINDER THIS IS, and the send day alone does not carry
@@ -1000,7 +1017,8 @@ async function plannedAlerts(
         // Same treatment as a reminder, and for the same reason: an unlock whose gate opened
         // before the plan was materialized is due now, not at a past instant that would score it
         // late against AC 2 the moment it was written.
-        sendAt: dueAt(openOn),
+        sendAt: dueAt(openOn).at,
+        intendedAt: dueAt(openOn).intended,
         subject,
         body,
         // NO DATE IN THIS ONE, and that is the difference between it and a reminder. A reminder is
@@ -1408,7 +1426,14 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- Every other reader already accepts 'failed' and is unaffected: the poller's scan and
              -- claim both match ('pending', 'failed'), the reconciler's cancel matches both, and
              -- this clause's own WHERE matches both. Checked rather than assumed.
-             SET payload = EXCLUDED.payload, send_at = EXCLUDED.send_at,
+             -- MERGED, NOT REPLACED. Wholesale assignment took the newly rendered subject and
+             -- body and dropped everything the delivery path had written, so an unchanged review
+             -- wiped last_error while leaving the row failed with its count and its backoff:
+             -- an operator saw that delivery failed and lost the only record of why, which this
+             -- module keeps in the payload and nowhere else. The right-hand side wins on every
+             -- key it carries, so the copy is still recomputed; keys only the delivery path
+             -- writes survive because nothing on the right names them.
+             SET payload = alerts.payload || EXCLUDED.payload, send_at = EXCLUDED.send_at,
                  status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END,
                  -- A REVIVED ALERT STARTS CLEAN, which is the third transition this clause has had
                  -- to answer and the one that was never given a rule. Round 9 decided an unchanged
@@ -1455,7 +1480,14 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
                                       ELSE alerts.failure_count END,
                  next_attempt_at = CASE
                    WHEN alerts.status = 'cancelled' THEN NULL
-                   WHEN alerts.send_at IS DISTINCT FROM EXCLUDED.send_at THEN NULL
+                   -- THE INTENDED SLOT, NOT THE COMPUTED INSTANT. send_at is clamped forward to
+                   -- the request clock whenever its slot has already gone, so it differs on every
+                   -- review of an overdue alert even though nothing was rescheduled. Keying the
+                   -- clear on it let a repeated submission grant repeated immediate retries and
+                   -- made an old alert look newly scheduled. The rule is unchanged and this is the
+                   -- fact it was always about.
+                   WHEN alerts.payload->>'intended_at'
+                        IS DISTINCT FROM EXCLUDED.payload->>'intended_at' THEN NULL
                    ELSE alerts.next_attempt_at
                  END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
@@ -1480,6 +1512,7 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
               ...(alert.controllingApplyBy === undefined
                 ? {}
                 : { controlling_apply_by: alert.controllingApplyBy }),
+              ...(alert.intendedAt === undefined ? {} : { intended_at: alert.intendedAt }),
             }),
           ],
         );
@@ -1675,15 +1708,37 @@ async function sendOne(
           -- so a tick that swept before local midnight could deliver a filing date that had since
           -- become yesterday. Read under the event lock, which is what makes it a safe point
           -- rather than another race.
-          AND NOT ${FILING_WINDOW_HAS_SHUT("$2")}
         FOR UPDATE SKIP LOCKED`,
-      [alertId, todayInJurisdiction(jurisdiction, new Date())],
+      [alertId],
     );
     const row = rows[0];
     if (row === undefined) {
       await client.query("ROLLBACK");
       return null;
     }
+    // THE EXPIRY DECISION IS MADE HERE, under the lock, rather than in a bulk sweep that took no
+    // lock at all. The sweep could read a pre-edit `revision_counter`, judge the old plan current,
+    // and cancel its expired failed alerts before the edit committed — so a row that round 14 says
+    // must be HELD for review was withdrawn instead, its failure warning disappeared, and the
+    // regeneration revived it with its delivery evidence cleared.
+    //
+    // Deferred to this point rather than locked in bulk, which is the option that fits what is
+    // already here: this is the per-alert safe point, the event row is held, the window recheck
+    // lives here for the same reason, and the staleness predicate above is evaluated against a
+    // revision no writer is midway through changing. One decision, one place, one lock.
+    const { rows: expired } = await client.query(
+      `SELECT 1 FROM alerts WHERE id = $1 AND ${FILING_WINDOW_HAS_SHUT("$2")}`,
+      [alertId, todayInJurisdiction(jurisdiction, new Date())],
+    );
+    if (expired[0] !== undefined) {
+      // Cancelled rather than left pending, for round 19's reason: the scheduler will refuse to
+      // re-create an alert for a window that has shut, so nothing is undecided, and leaving it
+      // would report a delivery still being retried.
+      await client.query("UPDATE alerts SET status = 'cancelled' WHERE id = $1", [alertId]);
+      await client.query("COMMIT");
+      return null;
+    }
+
     const outcome = await deliverClaimed(client, row, senders);
     await client.query("COMMIT");
     return outcome;
@@ -1837,58 +1892,10 @@ export function createAlertPoller(dependencies: {
           `next scan and may exceed the ${DELIVERY_BOUND_MS}ms delivery bound`,
       );
     }
-    // DELIVERY NOW CONSULTS THE OPINION THE SCHEDULER ALREADY HOLDS. `plannedAlerts` refuses to
-    // CREATE a reminder for a filing date that has passed, because "file by <a day that has gone>"
-    // is the one thing a missed window must never be dressed up as. The claim never asked the same
-    // question, so a provider outage spanning the deadline left the row eligible and the poller
-    // delivered exactly that copy on recovery. One question with two answers, and the one that
-    // shipped was the one that never asked.
-    //
-    // CANCELLED RATHER THAN HELD, which is the opposite of what round 14 does for a stale plan, and
-    // the difference is whether anything is still undecided. There, the event had been edited and
-    // the next review might legitimately schedule the identical alert, so the poller declining to
-    // send left the decision where the spec puts it. Here the window is shut: the scheduler will
-    // refuse to re-create this alert on every future review, so "PopEngine no longer intends to
-    // send this" is settled rather than pending. The poller is applying the scheduler's rule, not
-    // forming an opinion of its own. Leaving the row pending would also make it lie twice over,
-    // reported to the organizer as a delivery that is still being retried.
-    //
-    // A MISSED-DEADLINE ALERT INSTEAD was the other option and is not available here. Migration 001
-    // is shipped and immutable, and its CHECK admits exactly `deadline_reminder`, `slack_warning`
-    // and `dependency_unlocked`, so a new outcome needs a forward migration on a shipped table.
-    // Rewriting this row's payload in place would keep the type and make a `deadline_reminder` say
-    // something else, destroying both the type's meaning and the record of what was intended. The
-    // checklist is where a missed requirement is already reported, and it says so on every visit.
-    //
-    // THE SAME CLOCK THE SCHEDULER READS, which round 19 got wrong. That version compared against
-    // UTC yesterday, reasoning that the poller had no jurisdiction and it was safer to be a day
-    // late than a day early. The instinct was right and the mechanism was not: being conservative
-    // should not mean knowingly shipping a stale filing date for a day, which is exactly what a
-    // grace period on this comparison buys. `todayInJurisdiction` is the function `index.ts`
-    // already uses for `today`, the jurisdiction is in scope where the poller is constructed, and
-    // passing it removes the trade rather than picking a side of it.
-    //
-    // STALE-PLAN ROWS ARE EXCLUDED, or this sweep would undo the hold round 14 exists to apply.
-    // Those rows are held precisely because their plan's dates belong to the OLD event, so
-    // cancelling them on the strength of one of those dates decides the alert was withdrawn before
-    // regeneration has established whether its replacement is still required, and takes the
-    // failure evidence off the organizer's screen on the way. Regeneration cancels or revives
-    // them, which is what the review is for.
-    await database.query(
-      // NO TYPE FILTER ANY MORE, because filtering by type was a way of not answering the
-      // question. An immediate slack warning that fails during an outage, whose controlling window
-      // shuts before delivery recovers, was excluded here while the due query still selected it,
-      // so the poller sent "apply within N days" that scheduling would now refuse to create. It was
-      // excluded because it carries no checklist item to join through — so the fix is to give it a
-      // deadline to compare rather than to name the types that happen to have one.
-      `UPDATE alerts SET status = 'cancelled'
-        WHERE status IN ('pending', 'failed')
-          AND coalesce(payload->>'test', 'false') <> 'true'
-          AND ${FILING_WINDOW_HAS_SHUT("$1")}
-          AND ${NOT_FROM_A_STALE_PLAN}`,
-      [todayInJurisdiction(jurisdiction, new Date())],
-    );
-
+    // The expiry sweep that used to run here is gone. It took no lock, so it could read a
+    // pre-edit revision and cancel a row round 14 says must be held; the decision now happens at
+    // the per-alert safe point in `sendOne`, where the event row is held. Scanning a shut-window
+    // row costs one claim that retires it, which is what the sweep was doing anyway.
     let sent = 0;
     let failed = 0;
     let abandoned = 0;
@@ -1922,6 +1929,11 @@ export function createAlertPoller(dependencies: {
         // means it is still due on the next tick.
         const outcome = await sendOne(database, id, senders, jurisdiction).catch((error: unknown) => {
           console.error(`alert ${id} could not be recorded`, error);
+          // COUNTED AS UNREACHED, not as nothing to do. `drained` exists to tell "no more work"
+          // from "more work I did not reach", and a transaction that threw is the second: the row
+          // is untouched and still due. Reported as drained, the tick waited out a whole interval
+          // and the retry could pass the bound.
+          abandoned += 1;
           return null;
         });
         if (outcome === null) continue;
@@ -2323,6 +2335,16 @@ export async function simulatedDeliveries(
  */
 export type FailedDelivery = {
   readonly channel: AlertChannel;
+  /**
+   * Whether any of these rows is HELD because its own plan is behind the event.
+   *
+   * Read from the plans the FAILED ROWS hang off, not from the latest plan. The page used to key
+   * its "retrying is paused" wording on `planStale`, which describes the newest plan: after an edit
+   * and a regeneration but before review, that is false while these rows still point at the old
+   * revision and stay unclaimable, so the copy promised retries that were paused. The page cannot
+   * work this out from anything else it is given, so it is answered here.
+   */
+  readonly heldForReview: boolean;
   /** Alerts on this channel whose most recent attempt failed. Never zero: absent instead. */
   readonly failedCount: number;
 };
@@ -2331,8 +2353,13 @@ export async function failedDeliveries(
   database: Queryable,
   eventId: string,
 ): Promise<FailedDelivery[]> {
-  const { rows } = await database.query<{ channel: AlertChannel; count: number }>(
-    `SELECT channel, count(*)::int AS count
+  const { rows } = await database.query<{
+    channel: AlertChannel;
+    count: number;
+    held: boolean | null;
+  }>(
+    `SELECT channel, count(*)::int AS count,
+            bool_or(NOT (${NOT_FROM_A_STALE_PLAN})) AS held
        FROM alerts
       WHERE event_id = $1
         AND status = 'failed'
@@ -2341,7 +2368,11 @@ export async function failedDeliveries(
       ORDER BY channel`,
     [eventId],
   );
-  return rows.map((row) => ({ channel: row.channel, failedCount: row.count }));
+  return rows.map((row) => ({
+    channel: row.channel,
+    failedCount: row.count,
+    heldForReview: row.held === true,
+  }));
 }
 
 export type AlertView = {

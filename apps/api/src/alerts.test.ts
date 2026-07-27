@@ -2664,7 +2664,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       await createAlertPoller({ database: pool, senders: provider.senders, jurisdiction: ruleset.jurisdiction }).tick();
 
       const failures = await failedDeliveries(pool, eventId);
-      expect(failures).toEqual([{ channel: "email", failedCount: 2 }]);
+      expect(failures).toEqual([{ channel: "email", failedCount: 2, heldForReview: false }]);
       // The provider's words stay on the row for an operator; they can name a recipient.
       expect(JSON.stringify(failures)).not.toContain("550");
     });
@@ -2686,7 +2686,9 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       provider.fail = "email provider unreachable: ECONNREFUSED";
       const poller = createAlertPoller({ database: pool, senders: provider.senders, jurisdiction: ruleset.jurisdiction });
       await poller.tick();
-      expect(await failedDeliveries(pool, eventId)).toEqual([{ channel: "email", failedCount: 1 }]);
+      expect(await failedDeliveries(pool, eventId)).toEqual([
+        { channel: "email", failedCount: 1, heldForReview: false },
+      ]);
 
       provider.fail = null;
       await poller.tick();
@@ -3783,9 +3785,9 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       // filing date had become yesterday. The claim rechecked status, backoff and plan staleness
       // and not the window.
       //
-      // THE INTERLEAVING IS FORCED: the pool is proxied so that the moment the sweep's UPDATE has
-      // run, the filing date is moved into the past. Every later claim in that same tick therefore
-      // meets a window that shut after the sweep passed it, which is the reported ordering exactly.
+      // THE INTERLEAVING IS FORCED: the pool is proxied so that the moment the tick's scan has
+      // run, the filing date is moved into the past. The claim that follows therefore meets a
+      // window that shut after the row was selected, which is the reported ordering exactly.
       const eventId = await createEvent(scenario("C"));
       await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
       const [row] = await alertsOf(eventId);
@@ -3796,7 +3798,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       closing.connect = pool.connect.bind(pool) as Pool["connect"];
       closing.query = (async (text: string, values?: unknown[]) => {
         const result = await pool.query(text as never, values as never);
-        if (!closed && typeof text === "string" && text.includes("SET status = 'cancelled'")) {
+        if (!closed && typeof text === "string" && text.includes("SELECT id FROM alerts")) {
           closed = true;
           await pool.query(
             `UPDATE permit_plan_items SET latest_apply_date = current_date - 5
@@ -3813,9 +3815,103 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         jurisdiction: ruleset.jurisdiction,
       }).tick();
 
-      // The sweep passed it and the claim caught it.
+      // The scan selected it and the claim caught it, under the event lock.
       expect(provider.attempts).toHaveLength(0);
-      expect((await alertsOf(eventId))[0]?.status).toBe("pending");
+      // Retired there rather than by a bulk sweep that took no lock at all.
+      expect((await alertsOf(eventId))[0]?.status).toBe("cancelled");
+    });
+
+    it("keeps a backoff when the same checklist is submitted twice", async () => {
+      // Round 27's rule was right and its trigger was wrong. send_at is recomputed from the request
+      // clock whenever the slot has already gone, so it differs on EVERY review of an overdue
+      // alert even though nothing was rescheduled — and keying the clear on it let a repeated
+      // submission grant repeated immediate retries and made an old alert look newly scheduled.
+      // The slot has to be ALREADY PAST for this to be reachable at all: a future slot is not
+      // clamped, so send_at is identical on both submissions and the old trigger looked correct.
+      // My first version of this test used a future date and passed against the unfixed code.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "dead@example.test", phone: null };
+      const { planId } = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(0) });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, contacts);
+        const [before] = await alertsOf(eventId);
+        expect(before?.send_at.getTime()).toBeLessThanOrEqual(Date.now());
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 3,
+                             next_attempt_at = clock_timestamp() + interval '15 minutes'
+            WHERE id = $1`,
+          [before?.id],
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        // The same checklist, submitted again. Nothing about the schedule changed, but the clamped
+        // send_at is recomputed from a later clock.
+        await schedulerWith()(client, eventId, planId, contacts);
+
+        const after = (await alertsOf(eventId)).find((row) => row.id === before?.id);
+        // The recomputed instant really did move, which is what made the old trigger fire.
+        expect(after?.send_at.getTime()).not.toBe(before?.send_at.getTime());
+        expect(after?.next_attempt_at).not.toBeNull();
+        expect(after?.failure_count).toBe(3);
+      } finally {
+        client.release();
+      }
+    });
+
+    it("keeps the failure reason when an unchanged review recomputes the copy", async () => {
+      // The payload is where this module stores last_error and nowhere else, and wholesale
+      // assignment of the newly rendered subject and body dropped it: an operator saw that
+      // delivery failed and lost the only record of why, on a row still failed with its count.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "dead@example.test", phone: null };
+      const { planId } = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(30) });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, contacts);
+        const [before] = await alertsOf(eventId);
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 1,
+                             payload = payload || '{"last_error":"provider rejected 550"}'::jsonb
+            WHERE id = $1`,
+          [before?.id],
+        );
+
+        await schedulerWith()(client, eventId, planId, contacts);
+
+        const after = (await alertsOf(eventId)).find((row) => row.id === before?.id);
+        expect(after?.payload.last_error).toBe("provider rejected 550");
+        // And the copy really was recomputed, so this is not passing by nothing having happened.
+        expect(after?.payload.subject).toBeDefined();
+      } finally {
+        client.release();
+      }
+    });
+
+    it("counts an alert whose transaction threw as work it did not reach", async () => {
+      // drained tells "no more work" from "more work I did not reach", and a throw is the second:
+      // the row is untouched and still due. Reported as drained, the tick waited out a whole
+      // interval and the retry could pass the bound.
+      const eventId = await createEvent(scenario("C"));
+      await schedulePastDue(eventId, [reminderOffsets[0] ?? 7]);
+      const provider = fakeProvider();
+
+      // Forced, not hoped for: the connection every claim needs is made to fail, which is exactly
+      // the transaction failure the catch is there for and leaves the row untouched and still due.
+      const throwing = Object.create(pool) as Pool;
+      throwing.query = pool.query.bind(pool) as Pool["query"];
+      throwing.connect = (() =>
+        Promise.reject(new Error("connection terminated unexpectedly"))) as Pool["connect"];
+
+      const summary = await createAlertPoller({
+        database: throwing,
+        senders: provider.senders,
+        jurisdiction: ruleset.jurisdiction,
+      }).tick();
+
+      expect(summary.sent + summary.failed).toBe(0);
+      expect(summary.abandoned).toBeGreaterThan(0);
+      expect(summary.drained).toBe(false);
     });
 
     it("keeps retrying through a provider outage without losing an alert", async () => {

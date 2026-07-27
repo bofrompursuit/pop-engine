@@ -125,21 +125,30 @@ export function simulatedDeliveryNotice(delivery: { channel: string; sentCount: 
  * here until the plan is current again. The version that leaves them able to act is the version
  * that says both.
  */
-export function failedDeliveryNotice(
-  failure: { channel: string; failedCount: number },
-  planStale = false,
-): string {
+export function failedDeliveryNotice(failure: {
+  channel: string;
+  failedCount: number;
+  heldForReview?: boolean;
+}): string {
   const name = CHANNEL_NAMES[failure.channel] ?? failure.channel;
   const alerts = failure.failedCount === 1 ? "alert" : "alerts";
   const have = failure.failedCount === 1 ? "has" : "have";
-  return (
-    `${failure.failedCount} ${name} ${alerts} for this event ${have} failed to send. ` +
-    (planStale
-      ? `Retrying is paused because this event changed after the plan was made: regenerate the ` +
-        `plan and review the checklist to start it again.`
-      : `PopEngine keeps retrying them. If the ${name} address below is wrong, correcting it will ` +
-        `redirect the alerts that have not gone out.`)
-  );
+  // UNCONFIRMED, NOT UNDELIVERED. A provider timeout or a lost response is recorded as failed while
+  // the message MAY have arrived — that ambiguity is the whole reason this module hands the
+  // provider an idempotency key and retries. Saying the alerts "failed to send" and "have not gone
+  // out" turned an unknown outcome into a definite non-delivery, which is the same overclaim in the
+  // opposite direction from the one the simulation notice refuses. The page cannot tell a rejection
+  // from a lost answer, because the reason lives in `payload.last_error` and is deliberately not
+  // sent to a client, so unconfirmed is the strongest thing that is true here.
+  const lead = `${failure.failedCount} ${name} ${alerts} for this event ${have} not been confirmed as delivered.`;
+  // Read from the plans the FAILED ROWS hang off, not from the latest plan, which is what
+  // `planStale` describes. Between a regeneration and a review the latest plan is current while
+  // these rows still point at the old revision and stay unclaimable.
+  return failure.heldForReview === true
+    ? `${lead} Retrying is paused because this event changed after their plan was made: ` +
+        `regenerate the plan and review the checklist to start it again.`
+    : `${lead} PopEngine keeps retrying them. If the ${name} address below is wrong, correcting ` +
+        `it will redirect the alerts that have not gone out.`;
 }
 
 export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
@@ -522,7 +531,7 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           count is not evidence the channel works. */}
       {checklist.failedAlertDeliveries.map((failure) => (
         <p className="checklist__flag" role="alert" key={`failed-${failure.channel}`}>
-          {failedDeliveryNotice(failure, checklist.planStale)}
+          {failedDeliveryNotice(failure)}
         </p>
       ))}
 

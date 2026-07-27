@@ -1186,15 +1186,15 @@ describe("F-203 · the alert contact stays correctable after the checklist exist
       await renderView();
 
       await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
-      await waitFor(() => expect(screen.queryByText(/failed to send/)).toBeNull());
+      await waitFor(() => expect(screen.queryByText(/not been confirmed as delivered/)).toBeNull());
 
       // The poller runs and the send fails, which happens entirely after the render above.
-      failures = [{ channel: "email", failedCount: 1 }];
+      failures = [{ channel: "email", failedCount: 1, heldForReview: false }];
       await vi.advanceTimersByTimeAsync(61_000);
 
       await waitFor(() =>
-        expect(screen.getByText(/failed to send/).textContent).toContain(
-          "1 email alert for this event has failed to send.",
+        expect(screen.getByText(/not been confirmed as delivered/).textContent).toContain(
+          "1 email alert for this event has not been confirmed as delivered.",
         ),
       );
     } finally {
@@ -1312,18 +1312,18 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
-        failedAlertDeliveries: [{ channel: "email", failedCount: 2 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: false }],
         alertContacts: { email: "typo@example.test", phone: null },
       }),
     });
 
     await renderView();
 
-    const notice = screen.getByText(/failed to send/);
+    const notice = screen.getByText(/not been confirmed as delivered/);
     expect(notice.textContent).toBe(
-      "2 email alerts for this event have failed to send. PopEngine keeps retrying them. If the " +
-        "email address below is wrong, correcting it will redirect the alerts that have not gone " +
-        "out.",
+      "2 email alerts for this event have not been confirmed as delivered. PopEngine keeps " +
+        "retrying them. If the email address below is wrong, correcting it will redirect the " +
+        "alerts that have not gone out.",
     );
     expect(notice.getAttribute("role")).toBe("alert");
     // The action it points at is really there, because contacts stay editable on a current
@@ -1344,19 +1344,61 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
-        planStale: true,
-        failedAlertDeliveries: [{ channel: "email", failedCount: 2 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: true }],
       }),
     });
 
     await renderView();
 
-    const notice = screen.getByText(/failed to send/);
-    expect(notice.textContent).toContain("2 email alerts for this event have failed to send.");
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).toContain("2 email alerts for this event have not been confirmed as delivered.");
     expect(notice.textContent).toContain(
-      "Retrying is paused because this event changed after the plan was made: regenerate the plan " +
-        "and review the checklist to start it again.",
+      "Retrying is paused because this event changed after their plan was made: regenerate the " +
+        "plan and review the checklist to start it again.",
     );
+    expect(notice.textContent).not.toContain("PopEngine keeps retrying them");
+  });
+
+  it("does not turn an unknown delivery outcome into a definite non-delivery", async () => {
+    // A provider timeout or a lost response is recorded as failed while the message MAY have
+    // arrived, which is the whole reason this feature hands the provider an idempotency key and
+    // retries. Saying the alerts "failed to send" and "have not gone out" converted an unknown
+    // outcome into a definite one. The page cannot tell a rejection from a lost answer, because
+    // the reason lives in payload.last_error and is deliberately never sent to a client, so
+    // unconfirmed is the strongest thing that is true here.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: false }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).not.toContain("failed to send");
+    expect(notice.textContent).toContain(
+      "2 email alerts for this event have not been confirmed as delivered.",
+    );
+  });
+
+  it("reads the paused state from the failed rows rather than the latest plan", async () => {
+    // planStale describes the NEWEST plan. Between a regeneration and a review that is false while
+    // the failed rows still point at the old revision and stay unclaimable, so the copy promised
+    // retries that were paused. The api answers it from the plans those rows hang off.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planStale: false,
+        planChanged: false,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 1, heldForReview: true }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).toContain("Retrying is paused because this event changed");
     expect(notice.textContent).not.toContain("PopEngine keeps retrying them");
   });
 
@@ -1364,14 +1406,14 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
-        failedAlertDeliveries: [{ channel: "email", failedCount: 1 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 1, heldForReview: false }],
       }),
     });
 
     await renderView();
 
-    expect(screen.getByText(/failed to send/).textContent).toContain(
-      "1 email alert for this event has failed to send.",
+    expect(screen.getByText(/not been confirmed as delivered/).textContent).toContain(
+      "1 email alert for this event has not been confirmed as delivered.",
     );
   });
 
@@ -1383,7 +1425,7 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
 
     await renderView();
 
-    expect(screen.queryByText(/failed to send/)).toBeNull();
+    expect(screen.queryByText(/not been confirmed as delivered/)).toBeNull();
     expect(screen.queryByText(/working|delivering|sent normally/)).toBeNull();
   });
 
@@ -1394,17 +1436,17 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
       [GET_CHECKLIST]: checklistOf({
         created: true,
         simulatedAlertDeliveries: [{ channel: "sms", sentCount: 1 }],
-        failedAlertDeliveries: [{ channel: "email", failedCount: 3 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 3, heldForReview: false }],
       }),
     });
 
     await renderView();
 
     const simulated = screen.getByText(/No text messages have been sent\./);
-    const failed = screen.getByText(/failed to send/);
+    const failed = screen.getByText(/not been confirmed as delivered/);
     expect(simulated).not.toBe(failed);
     // Neither sentence borrows the other's claim.
-    expect(simulated.textContent).not.toContain("failed to send");
+    expect(simulated.textContent).not.toContain("not been confirmed as delivered");
     expect(failed.textContent).not.toContain("not switched on yet");
   });
 });

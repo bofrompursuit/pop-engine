@@ -152,6 +152,8 @@ export type SimulatedAlertDelivery = {
 export type FailedAlertDelivery = {
   readonly channel: string;
   readonly failedCount: number;
+  /** Whether these rows are held because their own plan is behind the event, not the latest one. */
+  readonly heldForReview: boolean;
 };
 
 export type AlertContacts = {
@@ -356,6 +358,7 @@ const SIMULATED_DELIVERY_CHECKS: FieldChecks<SimulatedAlertDelivery> = {
 const FAILED_DELIVERY_CHECKS: FieldChecks<FailedAlertDelivery> = {
   channel: isString,
   failedCount: isNumber,
+  heldForReview: isBoolean,
 };
 
 const ALERT_CONTACTS_CHECKS: FieldChecks<AlertContacts> = {
