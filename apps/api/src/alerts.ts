@@ -527,6 +527,15 @@ function dependencyCopy(
  * them they have more. Neither reading survives being called "days away", so the copy now says
  * what the number is and points at the dates that ARE the countdown.
  *
+ * NO VERIFICATION STATE ON THIS ONE, and the asymmetry is the answer rather than an omission. The
+ * reminder and dependency builders both carry the published states because both name a REQUIREMENT,
+ * and a state belongs to a rule. This copy names none: it reports the narrowest slack across every
+ * dated finding in the plan and PopEngine's own threshold, and there is no single rule whose status
+ * could attach to that. Picking one would be inventing an association the plan does not make, which
+ * is the failure AGENTS.md:28 exists to prevent rather than an instance of the rule it states. The
+ * test-alert copy is silent for the same reason and more simply: it asserts no regulatory fact at
+ * all.
+ *
  * "apply within N days" stays in the subject: that phrasing is fixed for FEASIBLE-AT-RISK by the
  * answer key's verdict model and `specs/F-102`, and `apps/web/app/plan/verdict-copy.ts` already
  * renders it. Restating it differently here would put two vocabularies on one verdict.

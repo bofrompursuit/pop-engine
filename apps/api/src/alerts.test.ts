@@ -245,7 +245,7 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
   const insertDuePlan = async (
     eventId: string,
     options: {
-      latestApplyDate?: string;
+      latestApplyDate?: string | null;
       planToday?: string;
       applyAfterDate?: string | null;
       disposition?: string;
@@ -1609,6 +1609,33 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
 
       const rows = await alertsOf(eventId);
       expect(rows.some((row) => row.alert_type === "dependency_unlocked")).toBe(false);
+    });
+
+    it("still unlocks a gated item that has no filing deadline at all", async () => {
+      // The criterion this pins is the one most likely to be "fixed" by someone reading the guard
+      // above. A null latest_apply_date is not an expired one: the pinned holiday list is
+      // deliberately unpublished, so null is the NORMAL state for every business_days_minimum
+      // finding, and reading it as expired would suppress unlocks across most of the live ruleset
+      // while looking like correctness.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        latestApplyDate: null,
+        applyAfterDate: dayFromToday(3),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const rows = await alertsOf(eventId);
+      expect(rows.some((row) => row.alert_type === "dependency_unlocked")).toBe(true);
+      // And no reminder, because there is no filing date to count back from. Nothing is invented.
+      expect(rows.some((row) => row.alert_type === "deadline_reminder")).toBe(false);
     });
 
     it("still unlocks while the filing deadline is ahead", async () => {
