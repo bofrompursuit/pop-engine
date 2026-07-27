@@ -176,15 +176,21 @@ verification only.
 ## What #146 already settled, which is one full bullet of the conflict
 
 The issue's second internal-inconsistency bullet says `specs/F-206`, `docs/PRD.md`,
-`docs/DESIGN.md` and `apps/web/app/plan/plan-line.tsx` present a source-less `COVERAGE_GAP` as
-"source not yet established". **That is now entirely obsolete.**
+`docs/DESIGN.md` and `apps/web/app/plan/plan-line.tsx` present a source-less `COVERAGE_GAP` as a
+source that is not yet established. **That is now entirely obsolete.**
 
-| Phrase | Occurrences on `main` |
+The four superseded phrasings are named descriptively rather than quoted below, because the guard
+PR #146 added denies them repo-wide with no exceptions, and it fails on any file that reproduces
+one. It caught the first draft of this brief, which is the guard working: a document explaining
+that a phrasing is gone is exactly the shape a copy-paste out of git history also has, and the
+guard cannot tell them apart. Paraphrasing here costs nothing.
+
+| Superseded phrasing | Occurrences on `main` |
 |---|---|
-| `source not yet established` | 0 files |
-| `source-not-established` | 0 files |
-| `no source is published` | 0 files |
-| `no-source` | 0 files |
+| the spaced form asserting a source is not yet established | 0 files |
+| its hyphenated run-together, used adjectivally | 0 files |
+| the spaced form asserting that a source has not been published | 0 files |
+| the hyphenated no-plus-source compound | 0 files |
 
 All four cited locations now state the published meaning instead. F-206 AC 2 and the PRD and DESIGN
 lines all read that a source-less COVERAGE_GAP "visibly states that the combination is not covered by
