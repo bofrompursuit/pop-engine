@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
+import { PortalBlock } from "../portal-block";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import type { ConsumedFinding } from "./plan-api";
 
@@ -174,20 +175,14 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
 
       {finding.feeDisplay !== null && <p className="line__fee">{finding.feeDisplay}</p>}
 
-      {/* Some rules publish no portal URL at all: NYPD-SOUND-001 names the precinct and the form
-          number instead, and that text is the entire filing route for the line. */}
-      {finding.portalUrl !== null ? (
-        <p className="line__portal">
-          <a href={finding.portalUrl} target="_blank" rel="noreferrer noopener">
-            {finding.portalName ?? finding.portalUrl}
-          </a>
-        </p>
-      ) : (
-        finding.portalName !== null && <p className="line__portal">{finding.portalName}</p>
-      )}
-      {finding.portalInstructions !== null && (
-        <p className="line__portal-instructions">{finding.portalInstructions}</p>
-      )}
+      {/* F-204: application path from the rules data only. AC 4 — "apply at [portal]", new tab. */}
+      <PortalBlock
+        portalName={finding.portalName}
+        portalUrl={finding.portalUrl}
+        portalInstructions={finding.portalInstructions}
+        className="line__portal"
+        instructionsClassName="line__portal-instructions"
+      />
 
       {finding.notes.map((note) => (
         <p className="line__note" key={note}>

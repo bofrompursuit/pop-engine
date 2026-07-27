@@ -165,11 +165,17 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
     expect(within(row).getByText(/apply by 2026-08-01/)).toBeDefined();
     expect(within(row).getByText(citationOf(STREET_MEDIUM))).toBeDefined();
     expect(within(row).getByText(feeOf(STREET_MEDIUM) as string)).toBeDefined();
+    expect(within(row).getByText(/apply at/)).toBeDefined();
     expect(
       within(row)
         .getByRole("link", { name: portalNameOf(STREET_MEDIUM) as string })
         .getAttribute("href"),
     ).toBe(portalUrlOf(STREET_MEDIUM));
+    expect(
+      within(row)
+        .getByRole("link", { name: portalNameOf(STREET_MEDIUM) as string })
+        .getAttribute("target"),
+    ).toBe("_blank");
   });
 
   it("sends the organizer to the plan view when there is no plan to convert", async () => {
@@ -812,12 +818,44 @@ describe("AC 5 · deadline context lives where the work happens", () => {
     await renderView();
 
     // NYPD-SOUND-001 publishes a precinct and a form number instead of a URL, and that text is
-    // the entire filing route for the row.
+    // the entire filing route for the row (F-204 AC 1).
     const row = rowFor(SOUND);
     const portalName = portalNameOf(SOUND) as string;
     expect(portalUrlOf(SOUND)).toBeNull();
     expect(within(row).queryByRole("link", { name: portalName })).toBeNull();
-    expect(within(row).getByText(portalName)).toBeDefined();
+    expect(
+      within(row).getByText((_content, element) => {
+        return element?.tagName === "P" && (element.textContent ?? "").startsWith(`apply at ${portalName}`);
+      }),
+    ).toBeDefined();
+  });
+
+  it("renders distinct Scenario C Parks and precinct portals on one checklist (F-204 AC 5)", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem("PARKS-EVENT-001"), trackedItem(SOUND)],
+      }),
+    });
+    await renderView();
+
+    const parks = rowFor("PARKS-EVENT-001");
+    expect(
+      within(parks)
+        .getByRole("link", { name: portalNameOf("PARKS-EVENT-001") as string })
+        .getAttribute("href"),
+    ).toBe(portalUrlOf("PARKS-EVENT-001"));
+
+    const sound = rowFor(SOUND);
+    expect(within(sound).queryByRole("link", { name: portalNameOf(SOUND) as string })).toBeNull();
+    expect(
+      within(sound).getByText((_content, element) => {
+        return (
+          element?.tagName === "P" &&
+          (element.textContent ?? "").startsWith("apply at Local NYPD precinct")
+        );
+      }),
+    ).toBeDefined();
   });
 
   it("labels each citation URL when a rule publishes more than one", async () => {
@@ -874,8 +912,8 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
     });
     await renderView();
 
-    // ADV-ALCOHOL-PUBLIC-001 publishes no `source` at all, which is the state this must show
-    // rather than invent a citation for.
+    // ADV-ALCOHOL-PUBLIC-001 publishes no `source` at all; COVERAGE_GAP means the combination is
+    // not modeled (published legend), not that a source search failed.
     const row = rowFor(ALCOHOL_ADVISORY);
     expect(within(row).getByTestId("verification-status").textContent).toBe("COVERAGE GAP");
     expect(within(row).getByText(NOT_COVERED_BY_RULESET)).toBeDefined();
