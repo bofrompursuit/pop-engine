@@ -131,7 +131,33 @@ describe("DashboardView", () => {
     expect(screen.getByTestId("checkins-total").textContent).toContain("3");
   });
 
-  it("discards a slower earlier poll once a newer one has started", async () => {
+  it("skips starting a new poll while one is still in flight", async () => {
+    let resolveFirst!: (value: Response) => void;
+    const first = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockResolvedValue(jsonResponse(200, stats({ checkins_total: 4 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={20} />,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveFirst(jsonResponse(200, stats({ checkins_total: 4 })));
+    expect((await screen.findByTestId("checkins-total")).textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "4 check-ins",
+    );
+  });
+
+  it("discards an in-flight poll after the event id changes", async () => {
+    const otherEventId = "22222222-2222-4222-8222-222222222222";
     let resolveFirst!: (value: Response) => void;
     const first = new Promise<Response>((resolve) => {
       resolveFirst = resolve;
@@ -142,11 +168,14 @@ describe("DashboardView", () => {
       .mockResolvedValue(jsonResponse(200, stats({ checkins_total: 9 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
-      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={20} />,
+    const { rerender } = render(
+      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={60_000} />,
     );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    rerender(
+      <DashboardView eventId={otherEventId} apiBaseUrl="https://api.example.com" pollMs={60_000} />,
+    );
     expect((await screen.findByTestId("checkins-total")).textContent?.replace(/\s+/g, " ").trim()).toBe(
       "9 check-ins",
     );

@@ -68,20 +68,26 @@ export function DashboardView({
     }
 
     let alive = true;
-    let requestGeneration = 0;
+    let inFlight = false;
 
     const refresh = async () => {
-      const generation = ++requestGeneration;
-      const result = await loadEventStats(apiBaseUrl, eventId);
-      // Drop superseded or unmounted results so a slow earlier poll cannot overwrite newer totals.
-      if (!alive || generation !== requestGeneration) return;
-      if (!result.ok) {
-        setFailure(result.message);
-        return;
+      // Serialize polls: if latency exceeds pollMs, overlapping requests would each
+      // supersede the last and the dashboard would never leave "Loading check-ins…".
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const result = await loadEventStats(apiBaseUrl, eventId);
+        if (!alive) return;
+        if (!result.ok) {
+          setFailure(result.message);
+          return;
+        }
+        setFailure(null);
+        setStats(result.stats);
+        setLastSuccessAt(nowRef.current());
+      } finally {
+        inFlight = false;
       }
-      setFailure(null);
-      setStats(result.stats);
-      setLastSuccessAt(nowRef.current());
     };
 
     void refresh();
