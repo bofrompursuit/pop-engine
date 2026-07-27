@@ -13,6 +13,8 @@ export type StatsDependencies = {
 
 export type EventStats = {
   checkins_total: number;
+  checkins_registered: number;
+  checkins_walk_in: number;
   rsvps_total: number;
   capacity: number | null;
   checkins_last_10min: number;
@@ -31,48 +33,60 @@ const asCount = (value: string | number | null | undefined): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+type StatsRow = {
+  capacity: number | null;
+  checkins_total: string;
+  checkins_registered: string;
+  checkins_walk_in: string;
+  checkins_last_10min: string;
+  rsvps_total: string;
+};
+
 /**
  * Check-in and RSVP totals for one event, plus optional confirmed capacity.
  * `rsvps_total` is confirmed RSVPs only (same definition as the guest list).
- * `checkins_last_10min` uses the database clock so polling clients stay consistent.
+ * `checkins_registered` / `checkins_walk_in` split on `checkins.rsvp_id` (F-302 AC 4).
+ * All counters come from one statement so concurrent inserts cannot yield
+ * `checkins_last_10min > checkins_total`.
  */
 export async function readEventStats(database: Queryable, eventId: string): Promise<StatsResult> {
   if (!UUID.test(eventId)) {
     return { status: 400, body: { error: "That event link is not valid." } };
   }
 
-  const { rows: eventRows } = await database.query<{ capacity: number | null }>(
-    "SELECT capacity FROM events WHERE id = $1",
+  const { rows } = await database.query<StatsRow>(
+    `SELECT
+       e.capacity,
+       (SELECT count(*)::text FROM checkins c
+         WHERE c.event_id = e.id) AS checkins_total,
+       (SELECT count(*)::text FROM checkins c
+         WHERE c.event_id = e.id AND c.rsvp_id IS NOT NULL) AS checkins_registered,
+       (SELECT count(*)::text FROM checkins c
+         WHERE c.event_id = e.id AND c.rsvp_id IS NULL) AS checkins_walk_in,
+       (SELECT count(*)::text FROM checkins c
+         WHERE c.event_id = e.id
+           AND c.checked_in_at >= now() - interval '10 minutes') AS checkins_last_10min,
+       (SELECT count(*)::text FROM rsvps r
+         WHERE r.event_id = e.id AND r.status = 'confirmed') AS rsvps_total
+     FROM events e
+     WHERE e.id = $1`,
     [eventId],
   );
-  if (eventRows[0] === undefined) {
+
+  const row = rows[0];
+  if (row === undefined) {
     return { status: 404, body: { error: "That event was not found." } };
   }
-
-  const [{ rows: checkinRows }, { rows: recentRows }, { rows: rsvpRows }] = await Promise.all([
-    database.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM checkins WHERE event_id = $1",
-      [eventId],
-    ),
-    database.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM checkins
-       WHERE event_id = $1 AND checked_in_at >= now() - interval '10 minutes'`,
-      [eventId],
-    ),
-    database.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM rsvps
-       WHERE event_id = $1 AND status = 'confirmed'`,
-      [eventId],
-    ),
-  ]);
 
   return {
     status: 200,
     body: {
-      checkins_total: asCount(checkinRows[0]?.count),
-      rsvps_total: asCount(rsvpRows[0]?.count),
-      capacity: eventRows[0].capacity,
-      checkins_last_10min: asCount(recentRows[0]?.count),
+      checkins_total: asCount(row.checkins_total),
+      checkins_registered: asCount(row.checkins_registered),
+      checkins_walk_in: asCount(row.checkins_walk_in),
+      rsvps_total: asCount(row.rsvps_total),
+      capacity: row.capacity,
+      checkins_last_10min: asCount(row.checkins_last_10min),
     },
   };
 }

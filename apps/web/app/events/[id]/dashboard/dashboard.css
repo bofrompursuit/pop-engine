@@ -28,6 +28,7 @@
 .ops__lede,
 .ops__recent,
 .ops__compare,
+.ops__split,
 .ops__zero,
 .ops__stale {
   margin: 0;

@@ -30,6 +30,8 @@ const jsonResponse = (status: number, body: unknown): Response =>
 
 const stats = (overrides: Partial<EventStats> = {}): EventStats => ({
   checkins_total: 0,
+  checkins_registered: 0,
+  checkins_walk_in: 0,
   rsvps_total: 0,
   capacity: null,
   checkins_last_10min: 0,
@@ -71,13 +73,23 @@ describe("DashboardView", () => {
     expect(screen.getByTestId("checkins-total").textContent).toContain("0");
     expect(screen.getByTestId("checkins-total").textContent).toContain("check-ins");
     expect(screen.getByTestId("capacity-gauge").textContent).toContain("capacity not set");
+    expect(screen.getByTestId("checkin-split").textContent).toBe("0 registered · 0 walk-ins");
   });
 
-  it("shows capacity percentage and an over-capacity warning when set", async () => {
+  it("shows capacity percentage, over-capacity warning, and the registered/walk-in split", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        jsonResponse(200, stats({ checkins_total: 12, rsvps_total: 20, capacity: 10 })),
+        jsonResponse(
+          200,
+          stats({
+            checkins_total: 12,
+            checkins_registered: 7,
+            checkins_walk_in: 5,
+            rsvps_total: 20,
+            capacity: 10,
+          }),
+        ),
       ),
     );
     render(<DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={60_000} />);
@@ -89,6 +101,7 @@ describe("DashboardView", () => {
     expect(screen.getByTestId("rsvp-compare").textContent).toBe(
       "20 RSVPs confirmed · 12 check-ins",
     );
+    expect(screen.getByTestId("checkin-split").textContent).toBe("7 registered · 5 walk-ins");
   });
 
   it("keeps the last totals and shows last-updated age when a poll fails", async () => {
@@ -116,6 +129,33 @@ describe("DashboardView", () => {
       expect(screen.getByTestId("stale-indicator").textContent).toBe("last updated 5s ago");
     });
     expect(screen.getByTestId("checkins-total").textContent).toContain("3");
+  });
+
+  it("discards a slower earlier poll once a newer one has started", async () => {
+    let resolveFirst!: (value: Response) => void;
+    const first = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockResolvedValue(jsonResponse(200, stats({ checkins_total: 9 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <DashboardView eventId={EVENT_ID} apiBaseUrl="https://api.example.com" pollMs={20} />,
+    );
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    expect((await screen.findByTestId("checkins-total")).textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "9 check-ins",
+    );
+
+    resolveFirst(jsonResponse(200, stats({ checkins_total: 1 })));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.getByTestId("checkins-total").textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "9 check-ins",
+    );
   });
 
   it("never uses forbidden arrival labels in dashboard UI source", () => {

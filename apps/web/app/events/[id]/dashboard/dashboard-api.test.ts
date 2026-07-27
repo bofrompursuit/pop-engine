@@ -14,6 +14,8 @@ describe("loadEventStats", () => {
       vi.fn().mockResolvedValue(
         jsonResponse(200, {
           checkins_total: 4,
+          checkins_registered: 3,
+          checkins_walk_in: 1,
           rsvps_total: 9,
           capacity: 100,
           checkins_last_10min: 2,
@@ -25,6 +27,8 @@ describe("loadEventStats", () => {
       ok: true,
       stats: {
         checkins_total: 4,
+        checkins_registered: 3,
+        checkins_walk_in: 1,
         rsvps_total: 9,
         capacity: 100,
         checkins_last_10min: 2,

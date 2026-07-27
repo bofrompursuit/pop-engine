@@ -91,6 +91,8 @@ export function GuestListView({ eventId, apiBaseUrl }: GuestListProps) {
         published public event page.{" "}
         <a href={`/events/${eventId}/promote`}>Promote / publish</a>
         {" · "}
+        <a href={`/events/${eventId}/dashboard`}>Live ops</a>
+        {" · "}
         <a href={`/intake/${eventId}`}>Edit intake</a>
       </p>
 

@@ -7,6 +7,8 @@ export const CREDENTIALED = {
 
 export type EventStats = {
   checkins_total: number;
+  checkins_registered: number;
+  checkins_walk_in: number;
   rsvps_total: number;
   capacity: number | null;
   checkins_last_10min: number;
@@ -39,6 +41,8 @@ function parseStats(body: unknown): EventStats | null {
   if (record === null) return null;
   if (
     typeof record.checkins_total !== "number" ||
+    typeof record.checkins_registered !== "number" ||
+    typeof record.checkins_walk_in !== "number" ||
     typeof record.rsvps_total !== "number" ||
     typeof record.checkins_last_10min !== "number" ||
     !(record.capacity === null || typeof record.capacity === "number")
@@ -47,6 +51,8 @@ function parseStats(body: unknown): EventStats | null {
   }
   return {
     checkins_total: record.checkins_total,
+    checkins_registered: record.checkins_registered,
+    checkins_walk_in: record.checkins_walk_in,
     rsvps_total: record.rsvps_total,
     capacity: record.capacity,
     checkins_last_10min: record.checkins_last_10min,

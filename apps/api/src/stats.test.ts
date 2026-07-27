@@ -76,13 +76,15 @@ describe.runIf(databaseUrl.length > 0)("F-402 event stats", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       checkins_total: 0,
+      checkins_registered: 0,
+      checkins_walk_in: 0,
       rsvps_total: 0,
       capacity: null,
       checkins_last_10min: 0,
     });
   });
 
-  it("counts check-ins, confirmed RSVPs, capacity, and the last-10-minute window", async () => {
+  it("counts check-ins, registered vs walk-in, confirmed RSVPs, capacity, and the last-10-minute window", async () => {
     const { id: eventId } = await createEvent({ capacity: 50, headcount: 50 });
     await insertRsvp(eventId, { name: "Confirmed", email: "confirmed@example.com" });
     await insertRsvp(eventId, {
@@ -93,8 +95,15 @@ describe.runIf(databaseUrl.length > 0)("F-402 event stats", () => {
 
     const recent = await request(api)
       .post(`/api/events/${eventId}/checkins`)
-      .send({ name: "Recent", contact: "recent@example.com" });
+      .send({ name: "Recent", contact: "confirmed@example.com" });
     expect(recent.status).toBe(201);
+    expect(recent.body.checkin.rsvp_id).toEqual(expect.any(String));
+
+    const walkIn = await request(api)
+      .post(`/api/events/${eventId}/checkins`)
+      .send({ name: "Walk-in", contact: "walkin@example.com" });
+    expect(walkIn.status).toBe(201);
+    expect(walkIn.body.checkin.rsvp_id).toBeNull();
 
     const olderId = randomUUID();
     await database.query(
@@ -106,10 +115,12 @@ describe.runIf(databaseUrl.length > 0)("F-402 event stats", () => {
     const response = await request(api).get(`/api/events/${eventId}/stats`);
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      checkins_total: 2,
+      checkins_total: 3,
+      checkins_registered: 1,
+      checkins_walk_in: 2,
       rsvps_total: 1,
       capacity: 50,
-      checkins_last_10min: 1,
+      checkins_last_10min: 2,
     });
   });
 
@@ -125,6 +136,8 @@ describe.runIf(databaseUrl.length > 0)("F-402 event stats", () => {
     const response = await request(api).get(`/api/events/${eventId}/stats`);
     expect(response.status).toBe(200);
     expect(response.body.checkins_total).toBe(1);
+    expect(response.body.checkins_walk_in).toBe(1);
+    expect(response.body.checkins_registered).toBe(0);
     expect(response.body.checkins_last_10min).toBe(1);
   });
 
@@ -145,6 +158,8 @@ describe.runIf(databaseUrl.length > 0)("F-402 event stats", () => {
       status: 200,
       body: {
         checkins_total: 0,
+        checkins_registered: 0,
+        checkins_walk_in: 0,
         rsvps_total: 0,
         capacity: 3,
         checkins_last_10min: 0,

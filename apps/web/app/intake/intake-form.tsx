@@ -346,6 +346,8 @@ export function IntakeForm({
             <a href={`/events/${saved.id}/promote`}>Promote public page</a>
             {" · "}
             <a href={`/events/${saved.id}/guests`}>Guest list</a>
+            {" · "}
+            <a href={`/events/${saved.id}/dashboard`}>Live ops</a>
           </p>
           {planStale && (
             <div className="intake__stale">

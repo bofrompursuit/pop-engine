@@ -9,6 +9,9 @@ import {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Stable production clock — an inline default would recreate each render and restart the poll effect. */
+const systemNow = (): number => Date.now();
+
 export type DashboardViewProps = {
   eventId: string;
   apiBaseUrl: string;
@@ -48,32 +51,37 @@ export function lastUpdatedLabel(lastSuccessAt: number, nowMs: number): string {
 export function DashboardView({
   eventId,
   apiBaseUrl,
-  now = () => Date.now(),
+  now = systemNow,
   pollMs = STATS_POLL_MS,
 }: DashboardViewProps) {
   const [stats, setStats] = useState<EventStats | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
   const [staleTick, setStaleTick] = useState(0);
-  const mounted = useRef(true);
+  const nowRef = useRef(now);
+  nowRef.current = now;
 
   useEffect(() => {
-    mounted.current = true;
     if (!UUID.test(eventId)) {
       setFailure("That event link is not valid.");
       return;
     }
 
+    let alive = true;
+    let requestGeneration = 0;
+
     const refresh = async () => {
+      const generation = ++requestGeneration;
       const result = await loadEventStats(apiBaseUrl, eventId);
-      if (!mounted.current) return;
+      // Drop superseded or unmounted results so a slow earlier poll cannot overwrite newer totals.
+      if (!alive || generation !== requestGeneration) return;
       if (!result.ok) {
         setFailure(result.message);
         return;
       }
       setFailure(null);
       setStats(result.stats);
-      setLastSuccessAt(now());
+      setLastSuccessAt(nowRef.current());
     };
 
     void refresh();
@@ -85,11 +93,11 @@ export function DashboardView({
     }, 1000);
 
     return () => {
-      mounted.current = false;
+      alive = false;
       window.clearInterval(poll);
       window.clearInterval(staleClock);
     };
-  }, [apiBaseUrl, eventId, now, pollMs]);
+  }, [apiBaseUrl, eventId, pollMs]);
 
   if (failure !== null && stats === null) {
     return (
@@ -158,6 +166,9 @@ export function DashboardView({
 
       <p className="ops__compare" data-testid="rsvp-compare">
         {stats.rsvps_total} RSVPs confirmed · {stats.checkins_total} check-ins
+      </p>
+      <p className="ops__split" data-testid="checkin-split">
+        {stats.checkins_registered} registered · {stats.checkins_walk_in} walk-ins
       </p>
 
       {showStale && lastSuccessAt !== null && (
