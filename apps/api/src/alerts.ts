@@ -529,6 +529,20 @@ const isSettledRequirement = (row: PlanAlertRow): boolean => row.disposition ===
  */
 const humanizeToken = (token: string): string => token.replace(/_/g, " ");
 
+/**
+ * A published verification state, attributed to the requirement it belongs to.
+ *
+ * ONE FORMAT, THREE BUILDERS, and this is the shared half rather than the whole of it. The
+ * dependency alert and the slack warning both name several requirements, so both have to say WHOSE
+ * status each one is, and writing that format out by hand in two places is how the third finding on
+ * this requirement got written. The reminder keeps its own unlabelled `Verification: X`, because it
+ * is about one requirement that the whole message already names, and labelling it would change
+ * shipped copy for no gain. That difference is a copy decision rather than a duplication, and it is
+ * recorded here so the next reader can tell the two apart.
+ */
+const verificationLine = (subject: string, status: VerificationStatus): string =>
+  `Verification of your ${subject}: ${humanizeToken(status)}`;
+
 function reminderCopy(
   row: PlanAlertRow,
   rendering: FindingRendering | undefined,
@@ -653,8 +667,8 @@ function dependencyCopy(
     // issued-before-filed order is NOT confirmed. "You can now pursue" reads as a start date the
     // agencies agree on, and without this line the unconfirmed part of the claim is the part the
     // organizer cannot see. Every token is read off the plan item, never named here.
-    `Verification of your ${withAgency(gated)}: ${humanizeToken(gated.verification_status)}`,
-    `Verification of your ${withAgency(upstream)}: ${humanizeToken(upstream.verification_status)}`,
+    verificationLine(withAgency(gated), gated.verification_status),
+    verificationLine(withAgency(upstream), upstream.verification_status),
     dependency === undefined
       ? null
       : `Verification of the sequencing between them: ` +
@@ -724,6 +738,19 @@ const slackWarningCopy = (
   evaluatedOn: string,
   /** Whether the requirement that PRODUCED this number waits on another agency's decision. */
   controllingIsGated: boolean,
+  /**
+   * Every requirement whose slack IS this number, with what the ruleset says about each.
+   *
+   * All of them, not the first: round 22 established the tie can hold several and that they can
+   * differ, and a status is not a summary — quoting one requirement's while another tied one says
+   * something else would be picking a reading.
+   */
+  controllingFindings: readonly {
+    readonly subject: string;
+    readonly verificationStatus: VerificationStatus;
+    readonly notes: readonly string[];
+    readonly conflictText: string | null;
+  }[],
 ): { subject: string; body: string } => ({
   // THE SUBJECT BRANCHES TOO, and not branching it was a regression this file's own argument had
   // already refuted. Anchoring "apply within N days" to a date is right when N is a countdown from
@@ -758,6 +785,21 @@ const slackWarningCopy = (
         `any date. Its own start and filing dates are on your checklist.`
       : `Your plan is FEASIBLE-AT-RISK: the narrowest slack across its dated requirements is ` +
         `${minSlackDays} days, measured from the plan's evaluation date ${evaluatedOn}.`,
+    // THE THIRD BUILDER TO NEED THIS. AGENTS.md keeps the published verification states visible END
+    // TO END and a notification is an end; reminders got it in round 7, dependency alerts in round
+    // 10, and this one published a risk and a number while saying nothing about the status of the
+    // rule the number came from. The verdict does not exclude unsettled findings from its minimum,
+    // so a plan whose tightest requirement is OFFICIAL_CONFLICT produced an apparently settled
+    // "apply within N days" from a rule that is not settled.
+    //
+    // Every tied controlling requirement, with its own published notes and both readings of a
+    // conflict, quoted rather than summarised. Which qualifications belong to a number is the
+    // ruleset's call, not this file's.
+    ...controllingFindings.flatMap((finding) => [
+      verificationLine(finding.subject, finding.verificationStatus),
+      ...finding.notes,
+      finding.conflictText,
+    ]),
     `The ${slackWarningDays}-day threshold is PopEngine's internal planning buffer, not an ` +
       `official threshold.`,
   ]
@@ -859,7 +901,25 @@ async function plannedAlerts(
           // reminder already occupies. Same item, same type, same day — the same key. If the old
           // one had been sent, the conflict clause correctly refuses to touch a sent row, and the
           // new reminder carrying the CORRECTED filing date was silently dropped on the floor.
-          identity: `${row.checklist_item_id}:deadline_reminder:${daysBefore}:${sendOn}`,
+          // THE OFFSET IS WHICH REMINDER THIS IS, AND THE DAY IS NOT PART OF IT. The send day used
+          // to be in here, which meant an event edit that moved the filing date minted a new key:
+          // the reminder already SENT was correctly left alone, a fresh row was inserted for the
+          // same channel and the same recipient, and the organizer was reminded twice. AC 7, as
+          // this PR amended it and the product owner approved it, says a re-send is legitimate when
+          // the DESTINATION differs, not when the attempt does. A moved date is not a different
+          // destination. Same ruling the product owner made for the slack warning in round 15,
+          // arriving on the reminder.
+          //
+          // The offset stays, and on its own it is enough. The day was added to tell the 7-day
+          // reminder from the 1-day one when a moved date landed them on the same calendar day; a
+          // key of item plus offset cannot collide between offsets at all, so that case is closed
+          // by construction rather than by a second component.
+          //
+          // What a moved date does now is UPDATE the unsent row it already owns — new send day, new
+          // copy, same identity — which is the same treatment round 20 gave `send_at`. The intended
+          // day still decides the copy and whether the reminder is a catch-up; it just no longer
+          // decides whether this is the same reminder.
+          identity: `${row.checklist_item_id}:deadline_reminder:${daysBefore}`,
         });
       }
     }
@@ -1005,6 +1065,15 @@ async function plannedAlerts(
       settings.slackWarningDays,
       plan.today,
       controllingIsGated,
+      controlling.map((dated) => {
+        const rendering = renderings.get(renderingKey(dated.row.rule_ids));
+        return {
+          subject: withAgency(dated.row),
+          verificationStatus: dated.row.verification_status,
+          notes: rendering?.notes ?? [],
+          conflictText: rendering?.conflict_text ?? null,
+        };
+      }),
     );
     planned.push({
       alertType: "slack_warning",

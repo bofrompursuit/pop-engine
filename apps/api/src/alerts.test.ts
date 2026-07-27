@@ -724,6 +724,77 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(String(after[0]?.payload.body)).toContain("9 days");
     });
 
+    it("carries the controlling requirement's verification state and its published caveats", async () => {
+      // THE THIRD BUILDER. AGENTS.md keeps published verification states visible end to end and a
+      // notification is an end; reminders got this in round 7 and dependency alerts in round 10.
+      // The verdict does not exclude unsettled findings from its minimum, so a plan whose tightest
+      // requirement is OFFICIAL_CONFLICT produced an apparently settled "apply within N days" from
+      // a rule that is not settled.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(9),
+        conflictText: "Two published readings disagree on whether this applies.",
+      });
+      await pool.query(
+        `UPDATE permit_plan_items SET verification_status = 'OFFICIAL_CONFLICT'
+          WHERE plan_id = $1 AND rule_ids = ARRAY['NYPD-SOUND-001']`,
+        [planId],
+      );
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(String(warning?.payload.body)).toContain(
+        "Verification of your Sound Device Permit (NYPD): OFFICIAL CONFLICT",
+      );
+      // And the published prose, quoted rather than summarised.
+      expect(String(warning?.payload.body)).toContain(
+        "Two published readings disagree on whether this applies.",
+      );
+    });
+
+    it("carries every tied controlling requirement's state, not just the first", async () => {
+      // Round 22 established the tie can hold several and that they can differ. A status is not a
+      // summary: quoting one while another tied requirement says something else is picking a
+      // reading.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(9),
+        laterDated: { latestApplyDate: dayFromToday(20), slackDays: 9 },
+      });
+      await pool.query(
+        `UPDATE permit_plan_items SET verification_status = 'RESEARCH_REQUIRED'
+          WHERE plan_id = $1 AND rule_ids = ARRAY['PARKS-EVENT-001']`,
+        [planId],
+      );
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+
+      const body = String(
+        (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning")?.payload.body,
+      );
+      expect(body).toContain("Verification of your Sound Device Permit (NYPD): SOURCE CONFIRMED");
+      expect(body).toContain("Verification of your Special Event Permit (NYC Parks): RESEARCH REQUIRED");
+    });
+
     it("does not warn about slack on a plan that is not at risk", async () => {
       const eventId = await createEvent(scenario("C"));
       await materialize(eventId);
@@ -1426,21 +1497,79 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       const byKey = new Map(after.map((row) => [row.idempotency_key, row]));
       // The alert that already went out is untouched: still sent, never re-sent, never cancelled.
       expect(byKey.get(sentAlready?.idempotency_key ?? "")?.status).toBe("sent");
-      // The three other reminders of the old timeline are cancelled rather than deleted.
+      // AND IT IS NOT REPLACED. Under the previous identity the moved date minted a new key, so a
+      // fresh row went out to the same address for the same offset. A reminder is identified by its
+      // requirement and its offset now, so the moved date updates the rows that already exist and
+      // the sent one keeps its slot.
+      expect(after.filter((row) => row.alert_type === "deadline_reminder")).toHaveLength(
+        before.filter((row) => row.alert_type === "deadline_reminder").length,
+      );
+      // The three unsent reminders of the old timeline are MOVED rather than cancelled and
+      // recreated: same row, same key, new day and new copy.
       const oldReminders = before.filter(
         (row) => row.alert_type === "deadline_reminder" && row.id !== sentAlready?.id,
       );
       expect(oldReminders).toHaveLength(3);
       for (const row of oldReminders) {
-        expect(byKey.get(row.idempotency_key)?.status).toBe("cancelled");
+        const moved = byKey.get(row.idempotency_key);
+        expect(moved?.status).toBe("pending");
+        expect(moved?.id).toBe(row.id);
+        expect(moved?.send_at.getTime()).not.toBe(row.send_at.getTime());
       }
       // The dependency unlock is unmoved and untouched: it is dated from the plan's clock and the
       // upstream processing range, neither of which the event date changed.
       const unlock = before.find((row) => row.alert_type === "dependency_unlocked");
       expect(byKey.get(unlock?.idempotency_key ?? "")?.status).toBe("pending");
-      // Four recomputed reminders, plus the unmoved unlock.
-      expect(after.filter((row) => row.status === "pending")).toHaveLength(5);
-      expect(response.body.alerts).toMatchObject({ scheduled: 4, cancelled: 3 });
+      // Three moved reminders plus the unmoved unlock. The fourth reminder is the sent one, which
+      // stays sent and is not replaced.
+      expect(after.filter((row) => row.status === "pending")).toHaveLength(4);
+      // Nothing new was scheduled and nothing was cancelled, because the recomputed set is the
+      // same set of alerts on different days.
+      expect(response.body.alerts).toMatchObject({ scheduled: 0, cancelled: 0 });
+    });
+
+    it("does not remind twice when the filing date moves", async () => {
+      // AC 7 as this PR amended it and the product owner approved it: a re-send is legitimate when
+      // the DESTINATION differs, not when the attempt does. A moved filing date is not a different
+      // destination. With the send day in the identity it minted a new key, the already-sent
+      // reminder was correctly left alone, and a fresh row went out to the same address for the
+      // same offset. Same ruling the product owner made for the slack warning in round 15.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const first = await insertDuePlan(eventId, { latestApplyDate: dayFromToday(30) });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, first.planId, contacts);
+        const scheduled = await alertsOf(eventId);
+        // The seven-day reminder has gone out.
+        const sentAlready = scheduled.find(
+          (row) => row.send_at.toISOString().slice(0, 10) === dayFromToday(23),
+        );
+        expect(sentAlready).toBeDefined();
+        await pool.query(
+          "UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE id = $1",
+          [sentAlready?.id],
+        );
+
+        // The organizer moves the event out, so every filing date moves with it.
+        const second = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(45),
+          reuseChecklistItemId: first.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, second.planId, contacts);
+
+        const after = await alertsOf(eventId);
+        // The sent reminder keeps its slot and is not replaced: one row for that offset, still sent.
+        const sameOffset = after.filter(
+          (row) => row.idempotency_key === sentAlready?.idempotency_key,
+        );
+        expect(sameOffset).toHaveLength(1);
+        expect(sameOffset[0]?.status).toBe("sent");
+        // And no second reminder was minted for it. The one-day reminder is the only pending one.
+        expect(after.filter((row) => row.status === "pending")).toHaveLength(1);
+      } finally {
+        client.release();
+      }
     });
 
     it("does not suppress a new reminder that lands on a sent reminder's day", async () => {
@@ -2071,26 +2200,47 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
     });
 
     it("brings a cancelled alert back when the requirement returns", async () => {
+      // Driven by a requirement APPEARING and DISAPPEARING rather than by a date moving. Moving a
+      // date no longer cancels anything, because a reminder keeps its identity across the move, so
+      // a date-driven version of this would be testing the reconciler on a set it never changes.
       const eventId = await createEvent(scenario("C"));
-      await materialize(eventId);
-      const original = await alertsOf(eventId);
-      await request(appWith(fakeProvider()))
-        .patch(`/api/events/${eventId}`)
-        .send({ event_date: "2026-10-16" });
-      await materialize(eventId);
-      expect(
-        (await alertsOf(eventId)).filter((row) => row.status === "cancelled").length,
-      ).toBeGreaterThan(0);
+      const contacts = { email: "organizer@example.test", phone: null };
+      const gated = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, gated.planId, contacts);
+        const unlock = (await alertsOf(eventId)).find(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        expect(unlock).toBeDefined();
 
-      // Undo the move: the original dates are back, so the alerts scheduled for them are too.
-      await request(appWith(fakeProvider()))
-        .patch(`/api/events/${eventId}`)
-        .send({ event_date: "2026-09-16" });
-      await materialize(eventId);
+        // A regeneration in which the requirement is no longer gated, so the unlock is not called
+        // for at all.
+        const ungated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, ungated.planId, contacts);
+        expect(
+          (await alertsOf(eventId)).find((row) => row.id === unlock?.id)?.status,
+        ).toBe("cancelled");
 
-      const revived = new Map((await alertsOf(eventId)).map((row) => [row.idempotency_key, row]));
-      for (const row of original) {
-        expect(revived.get(row.idempotency_key)?.status).toBe("pending");
+        // And back: the gate returns, so the alert scheduled for it does too.
+        const regated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          applyAfterDate: dayFromToday(21),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, regated.planId, contacts);
+
+        const revived = (await alertsOf(eventId)).find((row) => row.id === unlock?.id);
+        expect(revived?.status).toBe("pending");
+        expect(revived?.idempotency_key).toBe(unlock?.idempotency_key);
+      } finally {
+        client.release();
       }
     });
   });
