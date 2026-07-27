@@ -145,16 +145,39 @@ const RETRY_BACKOFF = `CASE
  * the spec puts that decision. If the organizer never regenerates, nothing is delivered either way
  * — the difference is only whether the row lies about having been withdrawn.
  *
- * SCOPE, STATED BECAUSE IT IS NARROWER THAN THE FINDING. The plan is reachable from an alert only
- * through `checklist_item_id`, and the plan-level slack warning has none, so this predicate cannot
- * see it and does not claim to. Two reasons that is the right place to stop rather than a gap to
- * paper over: a slack warning states a risk figure and an evaluation date but no agency deadline,
- * so it cannot deliver a wrong regulatory date; and it is scheduled with `send_at` of now, so it
- * goes out on the next tick seconds later, leaving almost no window for an edit to land inside.
- * Covering it would mean carrying a plan reference on the alert row, which is a column and a
- * migration, and that is a bigger claim than this finding supports. Test sends carry no checklist
- * item either and are deliberately unaffected: a demo alert is an operator action against no
- * deadline.
+ * TWO BRANCHES, because two kinds of row reach their plan differently.
+ *
+ * Most alerts hang off a checklist item, so the plan is a join away and the join reads the plan's
+ * LIVE revision, which is better than any snapshot.
+ *
+ * The plan-level slack warning has no checklist item, and the previous round left it out on the
+ * argument that it is scheduled with `send_at` of now and therefore goes out seconds later, leaving
+ * no window for an edit. That half of the argument was wrong. A warning whose send FAILS goes into
+ * backoff — up to fifteen minutes by `RETRY_BACKOFF` — and stays pending or failed for as long as
+ * delivery is broken. So the sequence is: the warning fails, the organizer edits the event,
+ * delivery recovers before they regenerate, and the old plan's slack figure goes out. The window is
+ * not seconds, it is however long the outage lasts.
+ *
+ * The other half of that argument does still stand, and the distinction is worth keeping rather
+ * than flattening: a slack warning states a risk figure and an evaluation date, NOT an agency
+ * deadline. It cannot deliver a wrong filing date, which is what made the checklist-backed case
+ * severe. This is a correctness fix, not that one again.
+ *
+ * WHY THE PAYLOAD AND NOT A COLUMN. The warning is scheduled from the plan row, which already
+ * carries `event_revision`, so the number is in hand at the moment the row is written and costs a
+ * jsonb field rather than a migration. The payload is already read for facts rather than only copy
+ * — `payload->>'test'` is what keeps demo sends out of the reconciler and out of the failure count
+ * — so this is the existing pattern rather than a new use of the column. A real column was
+ * available, 009 and 010 being unshipped, and would have bought nothing here.
+ *
+ * WHY NOT CANCEL IT INSTEAD, which was the cheapest option on the table. Cancelling needs a writer
+ * that knows the event was edited, which means `events.ts` reaching into alerts on the intake path,
+ * and it would give one class of problem two different answers: hold the checklist-backed rows,
+ * cancel this one. The outcomes converge anyway — a cancelled warning is revived by the reconciler
+ * if the next plan carries the same key — so the split would buy nothing and cost the single rule.
+ *
+ * Test sends carry no checklist item and no revision, so they are deliberately unaffected: a demo
+ * alert is an operator action against no deadline.
  */
 const NOT_FROM_A_STALE_PLAN = `NOT EXISTS (
        SELECT 1
@@ -164,6 +187,13 @@ const NOT_FROM_A_STALE_PLAN = `NOT EXISTS (
          JOIN events AS stale_event ON stale_event.id = stale_plan.event_id
         WHERE stale_checklist.id = alerts.checklist_item_id
           AND stale_plan.event_revision < stale_event.revision_counter
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM events AS plan_level_event
+        WHERE plan_level_event.id = alerts.event_id
+          AND (alerts.payload->>'event_revision') IS NOT NULL
+          AND (alerts.payload->>'event_revision')::int < plan_level_event.revision_counter
      )`;
 
 const SEND_CONCURRENCY = 8;
@@ -301,6 +331,12 @@ type PlannedAlert = {
    * row's `idempotency_key`, which is what keeps a sent alert from being sent again (AC 7).
    */
   readonly identity: string;
+  /**
+   * The event revision this alert's plan was evaluated at, for the one row the staleness JOIN
+   * cannot reach. Only the plan-level slack warning sets it; everything else finds its plan
+   * through `checklist_item_id`, and reading the plan's live row beats trusting a snapshot.
+   */
+  readonly planEventRevision?: number;
 };
 
 const isoDate = (value: Date | string | null): string | null =>
@@ -330,11 +366,12 @@ type PlanVerdictRow = {
   verdict: string;
   verdict_detail: { minSlackDays?: number | null };
   today: string;
+  event_revision: number;
 };
 
 async function planVerdict(database: Queryable, planId: string): Promise<PlanVerdictRow | null> {
   const { rows } = await database.query<PlanVerdictRow>(
-    `SELECT verdict, verdict_detail, verdict_detail->>'today' AS today
+    `SELECT verdict, verdict_detail, verdict_detail->>'today' AS today, event_revision
        FROM permit_plans WHERE id = $1`,
     [planId],
   );
@@ -759,6 +796,10 @@ async function plannedAlerts(
       sendAt: now,
       subject,
       body,
+      // The plan's own `event_revision`, carried because this row has no `checklist_item_id` for
+      // the staleness check to join through. Reasoned about on `NOT_FROM_A_STALE_PLAN`. The
+      // identity below is deliberately untouched.
+      planEventRevision: plan.event_revision,
       // KEYED ON THE RISK, not on the plan row. A plan UUID is minted fresh by every generation,
       // so an identical regeneration produced a second identity, a second immediately-due warning
       // and a second send to the same address while the first sat there already sent. That is a
@@ -988,7 +1029,13 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
             recipient,
             key,
             alert.sendAt.toISOString(),
-            JSON.stringify({ subject: alert.subject, body: alert.body }),
+            JSON.stringify({
+              subject: alert.subject,
+              body: alert.body,
+              ...(alert.planEventRevision === undefined
+                ? {}
+                : { event_revision: alert.planEventRevision }),
+            }),
           ],
         );
         if (rows[0]?.inserted === true) scheduled += 1;
@@ -1422,6 +1469,16 @@ async function deliverTestAlert(
   for (let attempt = 0; attempt < TEST_ALERT_CLAIM_ATTEMPTS; attempt += 1) {
     const outcome = await sendOne(database, alertId, senders);
     const view = await alertView(database, alertId);
+    // A SKIP IS NOT A RESULT, here for the same reason it is not one in the poller. `sendOne`
+    // returns `skipped` when a checklist review or an intake edit holds the event row, which is an
+    // ordinary concurrent write and not a delivery outcome. Treated as final it made this endpoint
+    // answer 502 without having attempted anything, so a demo utility reported a failure that never
+    // happened, in front of whoever the demo is for. Kept in the loop exactly like an in-flight
+    // claim: the writer commits in milliseconds and the next attempt is the real one.
+    if (outcome?.status === "skipped") {
+      await new Promise((resolve) => setTimeout(resolve, TEST_ALERT_CLAIM_WAIT_MS));
+      continue;
+    }
     if (outcome !== null || view?.status === "sent") return view;
     await new Promise((resolve) => setTimeout(resolve, TEST_ALERT_CLAIM_WAIT_MS));
   }

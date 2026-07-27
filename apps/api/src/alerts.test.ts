@@ -2070,6 +2070,51 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(response.body.alert.status).toBe("sent");
     });
 
+    it("does not call a test undelivered because a review held the event", async () => {
+      // `sendOne` reports `skipped` when a checklist review or an intake edit holds the event row.
+      // The poller learned to retry that in round 13; this endpoint treated it as a final outcome,
+      // answered 502 and reported a failure without ever attempting delivery. It is a demo path,
+      // and a demo that reports a failure that did not happen is worse than most real bugs.
+      //
+      // The lock is taken AFTER the row is inserted, which is the only interleaving that reaches
+      // the skip: taken before, the insert's own foreign-key check waits on the event row and the
+      // request simply blocks until the review commits. A review that starts while a test send is
+      // being delivered is the ordinary case, and it is this one.
+      const eventId = await createEvent(scenario("C"));
+      const reviewer = await pool.connect();
+      const inserting = Object.create(pool) as Pool;
+      inserting.connect = pool.connect.bind(pool) as Pool["connect"];
+      inserting.query = (async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text as never, values as never);
+        if (typeof text === "string" && text.includes("INSERT INTO alerts")) {
+          await reviewer.query("BEGIN");
+          await reviewer.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [eventId]);
+          setTimeout(() => {
+            void reviewer.query("COMMIT");
+          }, 300);
+        }
+        return result;
+      }) as Pool["query"];
+
+      try {
+        const response = await request(
+          createApp({
+            database: pool,
+            intakeContract,
+            today: () => FIXTURE_TODAY,
+            alerts: { database: inserting, senders: fakeProvider().senders },
+          }),
+        )
+          .post(`/api/events/${eventId}/alerts/test`)
+          .send({ channel: "email", recipient: "organizer@example.test" });
+
+        expect(response.status).toBe(201);
+        expect(response.body.alert.status).toBe("sent");
+      } finally {
+        reviewer.release();
+      }
+    });
+
     it("waits as long as a send is allowed to take before calling a test undelivered", async () => {
       // The retry budget used to be a flat 600ms while the same delivery path allows a request to
       // stay in flight for ten seconds. A poller that won the claim and then succeeded after a
@@ -2439,6 +2484,96 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
           WHERE event_id = $1`,
         [eventId],
       );
+
+      expect((await poller.tick()).sent).toBe(1);
+      expect(provider.delivered).toHaveLength(1);
+    });
+
+    it("does not deliver a plan-level slack warning once the event has moved on", async () => {
+      // The hole in last round's scope, and the argument that put it there was half wrong. A slack
+      // warning has no checklist item, so the staleness JOIN cannot see it, and it was left out on
+      // the grounds that it goes out seconds after being written. That holds only while delivery
+      // works. A warning whose send FAILS sits in backoff for as long as the outage lasts, so the
+      // real sequence is: the send fails, the organizer edits the event, delivery recovers before
+      // they regenerate, and the OLD plan's slack figure goes out.
+      //
+      // Still a correctness fix rather than the severe one: this states a risk figure and an
+      // evaluation date, never an agency deadline, so it cannot deliver a wrong filing date.
+      const eventId = await createEvent(scenario("C"));
+      // Far enough out that no reminder is due, so only the warning is in play here.
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(30),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+      const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      expect(warning).toBeDefined();
+      // The send failed, which is what gives the edit a window to land in.
+      await pool.query("UPDATE alerts SET status = 'failed', failure_count = 1 WHERE id = $1", [
+        warning?.id,
+      ]);
+
+      await pool.query("UPDATE events SET revision_counter = revision_counter + 1 WHERE id = $1", [
+        eventId,
+      ]);
+
+      const provider = fakeProvider();
+      await createAlertPoller({ database: pool, senders: provider.senders }).tick();
+
+      expect(provider.attempts).toHaveLength(0);
+      const after = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+      // Held for the review to decide, exactly as the checklist-backed rows are.
+      expect(after?.status).toBe("failed");
+    });
+
+    it("delivers the slack warning again once its plan names the current revision", async () => {
+      // Holding is not dropping, the same half this needed for the checklist-backed case.
+      const eventId = await createEvent(scenario("C"));
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(30),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        client.release();
+      }
+      await pool.query("UPDATE events SET revision_counter = revision_counter + 1 WHERE id = $1", [
+        eventId,
+      ]);
+      const provider = fakeProvider();
+      const poller = createAlertPoller({ database: pool, senders: provider.senders });
+      expect((await poller.tick()).sent).toBe(0);
+
+      await pool.query(
+        `UPDATE permit_plans SET event_revision = (SELECT revision_counter FROM events WHERE id = $1)
+          WHERE event_id = $1`,
+        [eventId],
+      );
+      // The review rewrites the payload, revision included, which is what makes it current again.
+      const reviewing = await pool.connect();
+      try {
+        await schedulerWith()(reviewing, eventId, planId, {
+          email: "organizer@example.test",
+          phone: null,
+        });
+      } finally {
+        reviewing.release();
+      }
 
       expect((await poller.tick()).sent).toBe(1);
       expect(provider.delivered).toHaveLength(1);
