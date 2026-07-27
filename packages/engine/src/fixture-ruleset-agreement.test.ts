@@ -878,6 +878,69 @@ describe("the fixture suite and the published ruleset agree", () => {
     }
   });
 
+  it("gives every OFFICIAL_CONFLICT rule the note_text its conflict line renders from", () => {
+    // F-206 AC 2 requires an OFFICIAL_CONFLICT line to render BOTH readings with BOTH sources, and
+    // `findings.ts` builds that line from exactly one field:
+    //
+    //   conflictText: rule.verificationStatus === "OFFICIAL_CONFLICT" ? rule.noteText : null
+    //
+    // `noteText` is read from `output.note_text` alone (ruleset.ts). A rule whose conflict prose
+    // lives in the `notes` ARRAY instead therefore parses fine, evaluates fine, and renders a
+    // conflict badge with NOTHING in it. The criterion holds today only by luck: both published
+    // OFFICIAL_CONFLICT rules happen to carry note_text.
+    //
+    // Nothing in the suite caught this. It was measured, not guessed: flipping DOB-ASSEMBLY-001 to
+    // OFFICIAL_CONFLICT left the suite 808/808 GREEN while the rendering was broken, because every
+    // other check compares rule ids, dispositions and dates, and none reads the field the conflict
+    // line is made of. This is the ABSENT-not-disagreeing shape the rest of this file has been
+    // moved toward: it fails when a rule arrives without the field, rather than only when two
+    // artifacts state that field differently.
+    //
+    // Asserted over the whole published ruleset (`ruleset.rules` is rules followed by advisories in
+    // file order) rather than a fixture list, so a third OFFICIAL_CONFLICT rule added later is
+    // covered without anyone remembering to extend a test.
+    //
+    // Two assertions, not one, because "the field is present" and "the field carries something a
+    // reader can see" are different claims and a note_text of " " satisfies the first while
+    // producing exactly the empty badge this guard exists to prevent. They are kept separate so the
+    // failure names which of the two happened: a missing field means the prose is somewhere else
+    // (probably the notes array), a blank one means the prose was never written.
+    //
+    // Non-whitespace is the strongest claim this check can honestly make. F-206 AC 2 wants BOTH
+    // readings with BOTH sources, and no length threshold tests for that: a one-character note_text
+    // passes any minimum, and a long one can still state a single reading. Whether two readings are
+    // actually present is a reading-comprehension judgement that belongs to the verification owner,
+    // not to a character count invented here. So this asserts renderability, which is mechanical,
+    // and deliberately stops short of adequacy, which is not.
+    const conflictRules = ruleset.rules.filter(
+      (rule) => rule.verificationStatus === "OFFICIAL_CONFLICT",
+    );
+    expect(
+      conflictRules.length,
+      "the published ruleset declares at least one OFFICIAL_CONFLICT rule",
+    ).toBeGreaterThan(0);
+
+    for (const rule of conflictRules) {
+      expect(
+        rule.noteText,
+        `${rule.id} is OFFICIAL_CONFLICT but publishes no output.note_text, so findings.ts ` +
+          `computes conflictText: null and F-206's conflict line renders empty. OFFICIAL_CONFLICT ` +
+          `requires note_text because conflictText reads that field and nothing else. If this ` +
+          `rule's prose is in the output.notes array, move it into note_text rather than changing ` +
+          `the rule's verification status.`,
+      ).not.toBeNull();
+
+      expect(
+        (rule.noteText ?? "").trim().length,
+        `${rule.id} is OFFICIAL_CONFLICT and its output.note_text is present but blank (whitespace ` +
+          `only), so findings.ts computes a non-null conflictText that renders as an empty ` +
+          `conflict badge. F-206 AC 2 requires the line to state BOTH readings with BOTH sources, ` +
+          `so write that prose into note_text; a present-but-empty field is the same defect as a ` +
+          `missing one from the reader's side.`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
   // ---------------------------------------------------------------------------------------------
   // The key's OUTPUTS, not just its rule ids.
   //
