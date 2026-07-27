@@ -16,6 +16,13 @@ fields cannot boot without an approved regulatory source, which is a verificatio
 than an engineering one. All three are reasons to revisit the framing before deciding, and they are in
 sections 1, 3 and 5.
 
+**Fourth revision.** Four further findings applied, all verified through the guards named in section 3.
+Two change conclusions: the count tables now describe the shape actually measured rather than a remedied
+one, and the sequencing-bindings move is not publication-only, which changes whether the three v2.9 items
+can share a bump. The inventory correction is the fourth, and this time the INCLUSION TEST is stated as
+one sentence and applied to all 33 fields with every exclusion shown, because the previous three failures
+came from an inconsistent rule rather than incomplete enumeration.
+
 **Third revision.** Fifteen review findings across two rounds have been applied and each is marked
 "Corrected in review" at the point it applies, so a reader who saw an earlier version can find what
 moved. Two changed what the brief concludes: the overlap is one and not zero, and the near-empty
@@ -54,8 +61,12 @@ rule on any of them would state a false absence in those two approved scenarios 
 Options, unpriced and listed rather than recommended: an engine change so a classification emits only
 on a TRUE trigger, which touches `resolveFindings` for every rule kind and needs the engine owner; a
 rule-shape change carrying separate true and unknown text, which is a schema change needing its own
-approved spec; restricting confirmations to boolean gates, which drops five of the fourteen fields and
-two of the issue's four named candidates; or accepting that the proposal does not work for enum gates
+approved spec; restricting confirmations to boolean gates, which drops NINE of the seventeen fields, the seven
+`"no"` enums plus both multi_enum fields, and drops exactly ONE of the issue's four named candidates,
+`obstructs_public_way`, because `alcohol`, `generator_present` and `battery_present` are already
+booleans. Corrected in review: an earlier version said five and two, which made this remedy look
+cheaper on one axis and more destructive on the other. It is also only a partial remedy, because a
+nullable boolean left unanswered is asked-not-answered and evaluates UNKNOWN by the same path; or accepting that the proposal does not work for enum gates
 as shaped.
 
 ## 1. The proposed line, applied
@@ -66,10 +77,33 @@ stay silent when the absence follows from something they never mentioned.
 ### The issue's four candidates are not the complete set under that test
 
 Read as "a declared intake field the organizer is asked, whose negative answer establishes an
-absence", the ruleset has **fourteen** such fields, not four.
+absence", the ruleset has **seventeen** such fields, not four.
 
-**Corrected in review for the third time, so this one is DERIVED rather than spotted, and here is the
-method.** For all 33 declared intake fields, take each field's negative values from its DECLARED domain
+**Corrected in review for the FOURTH time, and the previous three failed for a reason worth naming: the
+enumeration was exhaustive but the INCLUSION RULE was not consistent.** Round 3 included
+`generator_present` and `battery_present` although no trigger reads them, then excluded
+`venue_has_assembly_approval` for exactly that condition. A rule applied inconsistently cannot be
+saved by enumerating harder, which is why round 3's derivation still missed three fields.
+
+**The test, in one sentence, and it is the only criterion used.** A field qualifies when the organizer
+is asked it AND its declared domain contains a value whose meaning is the absence of the thing the
+field names. Deliberately independent of whether any trigger reads it, which is the inconsistency
+above.
+
+Applied mechanically to all 33 declared fields: **17 qualify**. The 16 that do not are listed below
+WITH their test result, so a fifth correction has nowhere to hide:
+
+| Excluded field | Type | Why it fails the test |
+|---|---|---|
+| `borough`, `location_type`, `sapo_event_type`, `street_event_size`, `plaza_level` | enum | no value in the declared domain means absence; every value names a thing that is present |
+| `headcount`, `event_date`, `food_vendor_count`, `tent_area_sqft`, `tent_days_in_place`, `stage_height_ft`, `stage_area_sqft`, `generator_gasoline_gallons`, `generator_diesel_gallons`, `generator_kw`, `battery_system_kwh` | integer, number, date | no absence value in the domain; zero is a quantity, not an absence |
+
+The three fields this pass adds over round 3 are `venue_has_assembly_approval`, which the review named,
+plus `plaza_multiple_blocks` and `food_affinity_private_exception_claimed`, which it did not. The
+earlier derivation method is kept below because it is still how the rule-out column was computed, but
+it is no longer what decides inclusion.
+
+**The superseded method, retained because the rule-out column still uses it.** For all 33 declared intake fields, take each field's negative values from its DECLARED domain
 only (`false` for a boolean, `["none"]` for a multi_enum that declares `none`, `"no"` for an enum that
 declares it). Then for every condition in every rule trigger that reads that field, decide
 mechanically whether the negative makes the condition false, which rules the rule out, or true, which
@@ -139,8 +173,33 @@ Under the **eleven-field** reading:
 | E | alcohol, selling, open flame, battery | 4 |
 | F | selling, structures, open flame, generator, battery, **not open to the public** | 6 |
 
-Mean 6.0, range 4 to 7. Scenario D is a block party with `has_amusement_ride: false`, so that
-question is in scope and answered; Scenario F answers `event_open_to_public = "no"`.
+**Corrected in review, and this is the correction that matters most for the noise argument.** The
+earlier tables treated the unknown-answered fields as contributing nothing. Section 0 establishes, by
+driving it through the guards, that an `eq "no"` trigger on an `"unknown"` answer STILL EMITS. Those two
+cannot both stand, and treating the unknowns as silent assumed one of the four remedies section 0 lists
+as UNPRICED. So the table below is **the shape actually measured**, with no remedy assumed:
+
+| Scenario | true confirmations | FALSE confirmations, from an unknown answer | total lines | rendered sentences |
+|---|---|---|---|---|
+| A | 5 | 0 | 5 | 10 |
+| B | 7 | 0 | 7 | 14 |
+| C | 7 | 0 | 7 | 14 |
+| D | 7 | 0 | 7 | 14 |
+| E | 5 | 1 (`structure_over_10ft_tall`) | 6 | 12 |
+| F | 6 | **4** (`food_affinity_private_exception_claimed`, `sound_audible_from_public_way`, `venue_license_covers_event_area`, `venue_has_assembly_approval`) | **10** | **20** |
+
+Mean 7.0 lines, range 5 to 10, and 14 rendered sentences on average once section 3's duplication is
+included.
+
+**Two things this changes.** Scenario F carries four false statements out of ten confirmations, so the
+defect is not a corner case in the approved suite but 40 percent of one scenario's confirmations. And
+the two review findings compound: the inventory correction and the unknown correction each add to F, so
+fixing either alone would still have understated it. The earlier figures of 4 and 6 for E and F were
+low on both axes.
+
+A table for a REMEDIED shape, in which unknown answers emit nothing, is the earlier one: E 4 and F 6,
+with A, B, C and D unchanged. It is **conditional on a remedy nobody has chosen** and is labelled that
+way rather than presented as the measurement.
 
 **The three fields added in this round do not change those counts, and that is the point of separating
 two numbers.** The fixtures answer `structure_over_10ft_tall`, `sound_audible_from_public_way` and
@@ -207,7 +266,7 @@ separate plan lines in the shape that exists today.
 
 `docs/DESIGN.md`'s demo plan requires Scenario B to render "no new city event requirement identified
 from your answers" plus **exactly two confirmations**. The four-field interpretation produces three for
-Scenario B; the fourteen-field reading produces seven. Both contradict an approved document, and under
+Scenario B; the seventeen-field reading produces seven true confirmations for B, and ten lines for F once false ones are counted. Both contradict an approved document, and under
 governance section 5 that is filed and resolved rather than priced as movement.
 
 **One ambiguity has to be resolved first, and it may be the whole of it.** DESIGN's sentence continues
@@ -465,7 +524,24 @@ Two specifics worth having:
 - **The sequencing bindings do not fit `engine_conventions` as it stands.** That key is an array of
   seven prose strings. A structured table of `dependencyRuleId` / `upstreamRuleId` / `gatedRuleId`
   needs either a new root key, `config.dependency_sequencing` being the obvious shape, or a schema
-  change to `engine_conventions`. Which of those it is changes whether the move is publication-only.
+  change to `engine_conventions`.
+- **Corrected in review: the move is NOT publication-only, and cannot be, even with a byte-identical
+  table.** Verified through both guards in order. `apps/api`'s `validateRuleset` and the engine's
+  `parseEngineRuleset` both ACCEPT an added root key and an added `config` member, so publishing the
+  data breaks no boot. But the key does not survive parsing: `EngineRuleset` carries exactly
+  `rulesetVersion`, `jurisdiction`, `snapshotDate`, `slackWarningDays`, `calendarId`, `intakeFields` and
+  `rules`, with no sequencing field, and `findings.ts` imports `DEPENDENCY_SEQUENCING_BINDINGS` directly
+  and iterates it. So publishing the data alone leaves behaviour on the in-code constant, and deleting
+  the constant alone breaks its consumer.
+
+  The handoff therefore costs, before it is a publication at all: a field on `EngineRuleset` in
+  `types.ts`; parsing and validation for it in the engine's `ruleset.ts`, and a decision about whether
+  `apps/api` validates it too; `findings.ts` reading the binding from the ruleset instead of the import;
+  removal of the constant and of `proposals.ts` §7; and tests, including the fixture-agreement and
+  sequencing coverage that currently exercises the constant. **That changes the v2.9 answer:** this item
+  is not a passenger on a publication, it is an engine change that a publication then depends on, so it
+  cannot share a bump with the other two until the engine work lands and is approved under the same
+  verification-owner plus engine-owner class its own file header names.
 - **The TPA re-attribution's ordering dependency is already satisfied.** It edits
   `deadline.qualification`, which was one of the two lines `specs/F-202` cited by number. PR #163 has
   MERGED, so F-202 now cites the field paths and this edit can no longer silently falsify the spec.
@@ -476,8 +552,9 @@ Two specifics worth having:
 ## 7. What could not be established
 
 - Whether the published sequencing table would be byte-identical to the current constant, which is
-  what decides whether change two is publication-only. It has one entry today, so the comparison is
-  small, but the target shape is undecided.
+  what the published table would say. It has one entry today, so the comparison is small, but the
+  target shape is undecided. Note this no longer decides whether the move is publication-only: the
+  correction above establishes that it is not, whatever the table contains.
 - Whether the product owner reads Scenario B's four named absences as the specification for named
   confirmations or as one scenario's copy. Section 5's finding depends on which, and the answer keys
   are silent on it.
