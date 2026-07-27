@@ -176,7 +176,13 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
   ) => {
     const app = appWith(fakeProvider(), today);
     expect((await request(app).post(`/api/events/${eventId}/plan`)).status).toBe(201);
-    const response = await request(app).post(`/api/events/${eventId}/checklist`).send(contacts);
+    // The plan the organizer was shown, read off a GET exactly as the browser does before it
+    // submits: a review records WHICH plan was read, so the api refuses to choose one itself.
+    const shown = (await request(app).get(`/api/events/${eventId}/checklist`)).body
+      .planId as string;
+    const response = await request(app)
+      .post(`/api/events/${eventId}/checklist`)
+      .send({ planId: shown, ...contacts });
     return response;
   };
 
@@ -659,12 +665,54 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       }
     });
 
+    it("states the verification state on every reminder, not only where prose mentions it", async () => {
+      // AGENTS.md keeps the verification states visible END TO END, and a notification is an end.
+      // Copying an OFFICIAL_CONFLICT rule's prose covered one status and left the ordinary
+      // confirmed case saying nothing at all, which is the case where silence reads as settled.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId);
+
+      const rows = await alertsOf(eventId);
+      const reminders = rows.filter((row) => row.alert_type === "deadline_reminder");
+      expect(reminders.length).toBeGreaterThan(0);
+      for (const alert of reminders) {
+        const ruleIds = await ruleIdsFor(alert.checklist_item_id ?? "");
+        // The state the plan item stored, humanised the way the checklist row humanises it.
+        const stored = await pool.query<{ verification_status: string }>(
+          `SELECT item.verification_status
+             FROM checklist_items AS checklist
+             JOIN permit_plan_items AS item ON item.id = checklist.plan_item_id
+            WHERE checklist.id = $1`,
+          [alert.checklist_item_id],
+        );
+        const expected = (stored.rows[0]?.verification_status ?? "").replace(/_/g, " ");
+        expect(expected).not.toBe("");
+        expect(alert.payload.body, `reminder for ${ruleIds.join("+")}`).toContain(
+          `Verification: ${expected}`,
+        );
+      }
+      // Scenario C's permits are SOURCE_CONFIRMED, which is exactly the case that used to be silent.
+      expect(
+        reminders.some((row) => row.payload.body?.includes("Verification: SOURCE CONFIRMED")),
+      ).toBe(true);
+    });
+
     it("carries the published qualification beside the date it qualifies", async () => {
-      // DOB-ASSEMBLY-001 publishes NO deadline display, and puts the doubt in the deadline's own
-      // qualification and the verification's: the code notes say "earlier than 10 days" while an
-      // external critique says ten BUSINESS days, and the wording is unpinned. Reading only
-      // `deadline_display` dropped both, so the reminder stated a computed calendar date as
-      // though the lead were settled.
+      // A deadline's number is not the whole published answer. DOB-ASSEMBLY-001 states the unit,
+      // the bound and what remains unestablished in the deadline's own `qualification` and the
+      // verification's, and `findings.ts` flattens both into `notes` with nothing marking which
+      // is which. A builder reading only `deadline_display` dropped them, so the reminder gave a
+      // computed date as though the lead were settled.
+      //
+      // The expected strings are READ FROM THE PUBLISHED RULE rather than written here. The first
+      // version quoted v2.7's wording, and v2.8 rewrote it: the assertion broke while the code was
+      // still correct, which is a test pinning prose instead of behaviour.
+      const rule = ruleset.rules.find((candidate) => candidate.id === "DOB-ASSEMBLY-001");
+      const qualification = rule?.deadline?.qualification;
+      const verificationQualification = rule?.verificationQualification;
+      expect(typeof qualification).toBe("string");
+      expect(typeof verificationQualification).toBe("string");
+
       // Scenario F, which the rule's own `exercised_by_scenarios` names.
       const eventId = await createEvent(scenario("F"));
       await materialize(eventId);
@@ -679,8 +727,8 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(assembly.length).toBeGreaterThan(0);
       for (const alert of assembly) {
         // Quoted from the rule, not summarised by this repo.
-        expect(alert.payload.body).toContain("External critique says '10 business days'");
-        expect(alert.payload.body).toContain("lead wording variance");
+        expect(alert.payload.body).toContain(qualification as string);
+        expect(alert.payload.body).toContain(verificationQualification as string);
       }
     });
 

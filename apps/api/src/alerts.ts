@@ -390,6 +390,12 @@ const sequenceNote = (upstream: PlanAlertRow, openOn: string): string =>
  */
 const isSettledRequirement = (row: PlanAlertRow): boolean => row.disposition === "required";
 
+/**
+ * A published enum token as an organizer reads it. The same transformation the checklist row
+ * applies, so one requirement does not arrive named two ways on two surfaces.
+ */
+const humanizeToken = (token: string): string => token.replace(/_/g, " ");
+
 function reminderCopy(
   row: PlanAlertRow,
   rendering: FindingRendering | undefined,
@@ -410,6 +416,15 @@ function reminderCopy(
       ? null
       : `Published deadline: ${rendering.deadline_display}`,
     hardFloorSentence(row.deadline),
+    // THE VERIFICATION STATE, on every reminder rather than only where prose happens to mention
+    // it. AGENTS.md keeps SOURCE_CONFIRMED, OFFICIAL_CONFLICT, RESEARCH_REQUIRED and COVERAGE_GAP
+    // visible END TO END, and a notification is an end: it is the copy an organizer acts on, and
+    // for a reminder that arrives by SMS it may be the only place they read the requirement at
+    // all. Carrying the conflict prose covered exactly one status and left the ordinary confirmed
+    // case saying nothing, which is the case where silence reads as "this is settled" — true for
+    // SOURCE_CONFIRMED and wrong for the rest. The checklist row already shows the same token
+    // (`checklist-item.tsx`), humanised the same way, so the two surfaces agree.
+    `Verification: ${humanizeToken(row.verification_status)}`,
     // EVERY PUBLISHED NOTE, because the qualification IS one of them and nothing here can tell
     // which. `findings.ts` builds this array as the rule's own notes, then the DEADLINE's
     // `qualification`, then the VERIFICATION's, then "confirm with agency" where it applies — all

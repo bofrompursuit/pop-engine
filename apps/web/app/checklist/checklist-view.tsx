@@ -426,12 +426,19 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
         </p>
       ))}
 
-      {(!checklist.created || checklist.planChanged) && !checklist.planStale && (
+      {/* THE CONTACT OUTLIVES THE CONVERSION, so it is not rendered by the conversion's condition.
+          Both used to hang off "there is something to convert", which meant that the moment a
+          checklist was current the inputs and the only button that submits them disappeared: an
+          organizer who mistyped an address had no way to correct it, and the alerts already
+          scheduled went on retrying the unusable one until some unrelated regeneration happened to
+          bring the button back. `planStale` still hides it, because the api refuses the POST in
+          that state and a control that cannot succeed is worse than none. */}
+      {!checklist.planStale && (
         <div className="checklist__actions">
-          {/* F-203: where the deadline reminders go, collected here because this is the moment the
-              spec collects it — converting the plan is what schedules the alerts, so the contact
-              has to travel with that click. Left blank, no alerts are scheduled and the api says
-              so; there is no account to fall back on in the MVP. */}
+          {/* F-203: where the deadline reminders go. Collected at conversion because that is the
+              moment the spec collects it, and editable afterwards because an address is a fact
+              about the event rather than about that one click. Left blank, no alerts are scheduled
+              and the api says so; there is no account to fall back on in the MVP. */}
           <label className="intake__label" htmlFor="alert-email">
             Email for deadline reminders
           </label>
@@ -459,6 +466,9 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
             Text messages are not being sent yet, so reminders go to your email. A number entered
             now is stored for when text sending is switched on.
           </p>
+          {/* One endpoint, one button, because the conversion IS idempotent: posting the plan the
+              page is showing when nothing has changed creates nothing and records the contact.
+              What changes is what the button honestly says it will do. */}
           <button
             className="intake__submit"
             type="button"
@@ -467,9 +477,11 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           >
             {creating
               ? "Working…"
-              : checklist.created
-                ? "Review items against the current plan"
-                : "Create the checklist from this plan"}
+              : !checklist.created
+                ? "Create the checklist from this plan"
+                : checklist.planChanged
+                  ? "Review items against the current plan"
+                  : "Save contact details"}
           </button>
         </div>
       )}

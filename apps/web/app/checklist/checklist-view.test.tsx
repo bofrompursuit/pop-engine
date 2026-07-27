@@ -1105,6 +1105,77 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
   });
 });
 
+describe("F-203 · the alert contact stays correctable after the checklist exists", () => {
+  it("still offers the contact fields and a save on a current checklist", async () => {
+    // The case that was broken: nothing to convert, so the inputs and the only button that
+    // submits them were both gone. An organizer who mistyped an address had no product flow to
+    // correct it, and the alerts already scheduled kept retrying the unusable one.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        items: [trackedItem()],
+        alertContacts: { email: "typo@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    // Seeded from the store, so the organizer edits what is actually on file.
+    expect(screen.getByLabelText<HTMLInputElement>("Email for deadline reminders").value).toBe(
+      "typo@example.test",
+    );
+    // Named for what pressing it does here: there is nothing to review.
+    expect(screen.getByRole("button", { name: "Save contact details" })).toBeDefined();
+  });
+
+  it("sends the corrected address with the plan the page is showing", async () => {
+    let current = checklistBody({
+      created: true,
+      planChanged: false,
+      alertContacts: { email: "typo@example.test", phone: null },
+    });
+    stubApi({
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody({
+          created: true,
+          planChanged: false,
+          alertContacts: { email: "organizer@example.test", phone: null },
+        });
+        return jsonResponse(200, current);
+      },
+    });
+    await renderView();
+
+    const email = screen.getByLabelText("Email for deadline reminders");
+    await userEvent.clear(email);
+    await userEvent.type(email, "organizer@example.test");
+    await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+
+    await waitFor(() => {
+      expect(
+        (global.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.some(
+          ([, init]) =>
+            init?.method === "POST" &&
+            String(init.body).includes('"contactEmail":"organizer@example.test"'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("hides the contact controls while the plan is stale, because the api would refuse them", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, planChanged: false, planStale: true }),
+    });
+
+    await renderView();
+
+    expect(screen.queryByLabelText("Email for deadline reminders")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save contact details" })).toBeNull();
+  });
+});
+
 describe("F-203 AC 5 · a simulated alert is labelled where the organizer reads it", () => {
   it("says no text messages were sent and how many did not arrive", async () => {
     stubApi({
