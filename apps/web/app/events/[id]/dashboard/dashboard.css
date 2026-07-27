@@ -1,0 +1,99 @@
+/* Route-local styles for F-402 live ops — phone-first (organizer on their feet). */
+
+.ops {
+  max-width: 24rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 100dvh;
+  justify-content: center;
+  padding: 1.25rem 0 3rem;
+}
+
+.ops__eyebrow {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ops h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+
+.ops__lede,
+.ops__recent,
+.ops__compare,
+.ops__zero,
+.ops__stale {
+  margin: 0;
+  color: var(--muted);
+}
+
+.ops__total {
+  margin: 0.5rem 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.ops__total-number {
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.ops__total-label {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.ops__zero {
+  font-size: 1rem;
+}
+
+.ops__gauge {
+  margin: 0.25rem 0 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.ops__gauge--over {
+  border-color: var(--warning-line);
+  background: var(--warning-bg);
+}
+
+.ops__gauge-label,
+.ops__gauge-percent {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.ops__gauge-percent {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ops__warning {
+  margin: 0.5rem 0 0;
+  font-weight: 600;
+}
+
+.ops__error {
+  margin: 0;
+  color: var(--error);
+}
+
+.ops__stale {
+  font-size: 0.95rem;
+}

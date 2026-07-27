@@ -6,6 +6,7 @@ import { createEventsRouter, type EventsDependencies } from "./events";
 import { EventNotFoundError, PlanIntegrityError, type PlanService } from "./plan";
 import { createPublicPageRouter } from "./public-page";
 import { createRsvpsRouter } from "./rsvps";
+import { createStatsRouter } from "./stats";
 
 /**
  * What the loaded rules file says about itself (F-206). `snapshotDate` is the date the ruleset
@@ -69,6 +70,8 @@ export function createApp(dependencies: AppDependencies): Express {
     "/api",
     createRsvpsRouter({ database: dependencies.database, today: dependencies.today }),
   );
+  // F-402: organizer live-ops totals; polled ~5s. Same Access gate as /guests (not CF-bypassed).
+  app.use("/api", createStatsRouter({ database: dependencies.database }));
   // F-301: registers GET /e/:eventId at the app root (ARCHITECTURE) plus organizer
   // /api/events/:id/public-page routes on the same router.
   app.use(createPublicPageRouter({ database: dependencies.database }));
