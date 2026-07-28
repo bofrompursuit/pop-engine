@@ -212,3 +212,162 @@ second is what prevents the harm today.
    `"street_event"` with `street_event_size: "large"` and `"unknown"`, pass each through
    `validateIntake` and then `evaluate` with the ruleset's own `calendarId`.
 4. Compare `plan.verdict`, the rule ids in `plan.findings`, and `plan.verdictDetail.missingFacts`.
+
+
+---
+
+# Round 2: the rendering gap, measured
+
+Round 1 established that the branch table exists and is not on screen. This measures what that
+costs, through the real component path: `PlanView` rendered with `@testing-library/react`, fed by a
+stubbed `fetch` in the same three-call shape the page makes, with the plan body produced by
+`validateIntake` -> `evaluate` on the published ruleset. No JSX was read and inferred from.
+
+## R1. It is already required by an APPROVED spec, and it is unimplemented
+
+**This reclassifies the whole thing, so it goes first.**
+
+`specs/F-102-feasibility-verdict.md` is **APPROVED (2026-07-24)**. Its Outputs table sets the copy
+rule for one verdict explicitly:
+
+| Verdict | detail carries | Copy rule |
+| --- | --- | --- |
+| CONDITIONAL | each missing fact + every branch's verdict and reason | **branch table rendered** |
+
+And AC 6, **Branching**: "every material unknown produces a fully evaluated branch (Scenario F:
+license coverage, assembly approval, sound audibility -> **branch table with per-branch verdicts**;
+the no-license branch shows the one-business-day miss)."
+
+So rendering the branch table is **not a new requirement**. It is an acceptance criterion of an
+approved spec, naming an approved fixture scenario, and it is not implemented. `plan-view.tsx:19`
+records the boundary rather than the gap: "F-102's branch tables and rescope ladder are its own
+feature."
+
+**Measured against Scenario F itself**, which is what AC 6 names:
+
+- verdict `CONDITIONAL`, two missing facts, four branches
+- on screen: `Depends on: sound audible from public way, venue license covers event area`
+- branch reason text on screen: **none of the four**
+- per-branch verdicts on screen: **none**
+- the `venue_license_covers_event_area = "no"` branch carries verdict **INFEASIBLE**, and neither
+  the branch nor its verdict is visible
+
+One observation offered without a conclusion, since it is a different question: AC 6 names three
+unknowns for Scenario F and the engine produces missing facts for two of them,
+`sound_audible_from_public_way` and `venue_license_covers_event_area`.
+`venue_has_assembly_approval` is answered `"unknown"` in the fixture but does not appear as a
+missing fact. Whether that is correct is outside this measurement.
+
+## R2. What the organizer actually sees
+
+Literal visible text for the `sapo_event_type: "unknown"` submission, in order, at the top of the
+page:
+
+```
+Your permit plan
+Rules snapshot nyc.v2.8 · published July 26, 2026
+Depends on: sapo event type · generated 2026-07-25 · revision 1
+```
+
+Then five findings, each `may be required`: the SAPO insurance certificate,
+`SAPO-BLOCK-PARTY-001` ("apply by 2026-07-18 · published deadline missed"),
+`SAPO-BLOCK-PARTY-SPONSOR-001`, `SAPO-PLAZA-001`, `SAPO-INSURANCE-001`, and the
+`ADV-SAPO-OTHER-CLASS-001` coverage-gap advisory ending "Not covered by this ruleset version. This
+plan may be incomplete for your event."
+
+**"Depends on: sapo event type"** is the entire branch table as rendered. `verdictCopy` maps
+`missingFacts` to `fact.field.replace(/_/g, " ")`, so the organizer is shown a de-underscored
+registry field name and no branch.
+
+One raw field name does reach the screen verbatim, inside the `SAPO-PLAZA-001` line: **"the plan
+was never asked plaza_level, which this deadline keys on"**. That is `unresolvedTimelines` rendered
+as written, underscore included.
+
+## R3. What is in `verdictDetail` and not on screen
+
+For the same submission, every member measured:
+
+| Member | Size | On screen |
+| --- | --- | --- |
+| `missingFacts` (the branch table) | 757 chars | **No**, except each `field` as de-underscored text |
+| `trace` | 1884 chars | **No** |
+| `missedRuleIds` | 24 chars | **No** |
+| `unresolvedTimelines` | 109 chars | **Yes**, verbatim, on the finding it belongs to |
+| `blockingFinding` | null | n/a |
+| `minSlackDays` | null | n/a |
+| `rescopeSuggestions` | empty | n/a |
+
+**The branches are not dropped by the renderer. They are dropped at the type boundary.**
+`apps/web/app/plan/plan-api.ts:134` defines what the web consumes:
+
+```ts
+export type ConsumedVerdictDetail = Omit<
+  Pick<VerdictDetail, "minSlackDays" | "missingFacts">, "missingFacts"
+> & { readonly missingFacts: readonly Pick<MissingFact, "field">[] };
+```
+
+with `MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString }`. So
+`branches` and `thresholds` are projected away before any component sees them, and
+`unresolvedTimelines`, `trace`, `blockingFinding`, `missedRuleIds` and `rescopeSuggestions` are not
+in `ConsumedVerdictDetail` at all. `unresolvedTimelines` reaches the screen by another path: it is
+carried on the finding, not on the verdict detail.
+
+On whether the UI honours the engine's own completeness rule: `verdict.ts` treats leaving a branch
+out as a defect ("drop it from the branch table (P1-B)"). The UI does not render the table, so the
+question of honouring per-branch completeness does not arise; there is no partial table, there is
+none.
+
+## R4. Whether an existing renderer is being missed
+
+**No.** Searching the web app for a branch-table or missing-fact renderer outside test files returns
+exactly one file, `apps/web/app/plan/verdict-copy.ts`, and its only use of `missingFacts` is the
+field-name join quoted above. There is no component that renders branches, and no path that reaches
+one.
+
+So this is "not built", not "built and unreached". That is the larger of the two readings.
+
+## R5. How many situations reach it
+
+**The gap is general, not specific to the unknown gate.** Any missing fact produces branches, and no
+missing fact renders them.
+
+Measured across the six approved scenarios, through the same component path:
+
+| Scenario | Verdict | Missing facts | Facts with branches | Branch reasons on screen |
+| --- | --- | --- | --- | --- |
+| A | INFEASIBLE | none | 0 | n/a |
+| B | CONDITIONAL | none | 0 | n/a |
+| C | FEASIBLE | none | 0 | n/a |
+| D | FEASIBLE_AT_RISK | none | 0 | n/a |
+| E | CONDITIONAL | `tent_area_sqft`, `structure_over_10ft_tall` | 1 | none |
+| F | CONDITIONAL | `sound_audible_from_public_way`, `venue_license_covers_event_area` | 2 | none |
+
+**Two of the six approved scenarios already reach the unrendered branch table today**, with no
+unknown gate involved. The `sapo_event_type` case measured in round 1 is a third situation, not the
+only one.
+
+Upper bound on the surface: **15 of the 25 fields referenced by rule triggers are enumerable**
+(enum, multi-enum or boolean) and can therefore produce a branch table when they resolve unknown:
+`location_type`, `obstructs_public_way`, `sapo_event_type`, `street_event_size`,
+`has_amusement_ride`, `event_open_to_public`, `food_present`, `selling_anything`,
+`amplified_sound`, `sound_audible_from_public_way`, `structure_types`, `structure_over_10ft_tall`,
+`open_flame_or_cooking`, `alcohol`, `venue_license_covers_event_area`. The remaining 10 are numeric
+or date fields, which produce a `thresholds` string instead, also unrendered.
+
+## R6. What this round establishes and does not
+
+Establishes:
+
+- rendering the branch table is an acceptance criterion of an approved spec, unimplemented;
+- the organizer sees a de-underscored field name and nothing else of the table;
+- the branches are dropped at the API-consumption type boundary, not by a component;
+- no renderer exists anywhere in the web app;
+- two of six approved scenarios reach it today, and 15 trigger-referenced fields can.
+
+Does not establish, and is outside this measurement:
+
+- whether Scenario F's third named unknown, `venue_has_assembly_approval`, should appear as a
+  missing fact;
+- whether the approved answer key expects the branch table on screen, which is a question about
+  `docs/test-scenario-answer-key.md` rather than about the engine or the component;
+- anything about whether #108 should be closed, which this document does not address.
