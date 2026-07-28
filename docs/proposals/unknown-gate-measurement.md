@@ -17,7 +17,8 @@ the live restatement of both conditions in S4; round 9's level-field finding-set
 answer-key confirmation in R1; round 10's provenance diff in S4, the authority order in R1, and the
 per-measurement method table below; round 11's row-by-row walk of that table; round 12's envelope
 audit and re-measured render; round 13's two-field restatement in section 2, the food prerequisite
-in section 1, and the walk arithmetic below.
+in section 1, and the walk arithmetic below; round 14's per-channel attribution in section 2 and the
+conclusions sweep in sections 6, 7 and R6.
 
 **What layer each result requires, and what the harness was where this document records it.** Five
 statements of this have now been wrong, each in a different way, and the reason the last one failed
@@ -264,12 +265,27 @@ Rules that appear only in the unknown case: `SAPO-BLOCK-PARTY-001`,
   ] }
 ```
 
-Two further channels carry the same loss:
+**Which channel names WHICH loss, because rounds 1 to 13 counted three and the count was wrong.**
+Two other channels carry content, and neither carries THIS loss:
 
-- `verdictDetail.unresolvedTimelines` reports `SAPO-PLAZA-001` with the reason "the plan was never
-  asked plaza_level, which this deadline keys on", which names a scoped-out dependent directly.
-- `verdictDetail.trace` records `SAPO-STREET-LARGE-001` with `result: "false"`, so the false
-  evaluation is recorded rather than merely absent.
+| Channel | What it names |
+| --- | --- |
+| `missingFacts` branch table | **the street-permit loss itself**: the `street_event` branch reason reads "adds SAPO-STREET-LARGE-001, SAPO-STREET-MEDIUM-001, SAPO-STREET-SMALL-001, SAPO-STREET-XL-001; drops ..." |
+| `unresolvedTimelines` | **a different rule's different loss**: `SAPO-PLAZA-001` could not date itself because `plaza_level` was not asked. Real, and not about the street permit. |
+| `trace` | **nothing about either.** It records `SAPO-STREET-LARGE-001` as `false`, which is what it records when the rule genuinely does not apply. |
+
+The `trace` row is measured rather than argued. Answering the gate `street_event` with
+`street_event_size: "small"`, where the large-event permit genuinely does not apply, gives:
+
+```
+A  street_event + "small"   trace[SAPO-STREET-LARGE-001] = {"result":"false"}   FEASIBLE
+C  gate "unknown"           trace[SAPO-STREET-LARGE-001] = {"result":"false"}   CONDITIONAL
+```
+
+Byte-identical. The trace cannot distinguish a requirement lost to an unknown gate from one that
+does not apply, which is the same thing S3 measures on the synthetic probe. So **exactly one channel
+names the street-permit loss**, and the earlier "three channels" figure counted a different rule's
+timeline and a trace entry that carries no information about the loss at all.
 
 **Why this works, and what it depends on.** `sapo_event_type` is itself referenced by rule triggers,
 so a rule condition on it resolves to an explicit unknown, the field enters `unknownFields`, and
@@ -350,7 +366,7 @@ Stated plainly because the request was to confirm or refute rather than to softe
 | `termHolds` returns a plain boolean and a gate answered `"unknown"` fails every clause kind | **Refuted.** `!=` holds on `"unknown"`. Two of three gates are unaffected. |
 | `askedFields` never adds the dependent | **Confirmed**, for `sapo_event_type`'s four dependents only |
 | The dependent resolves `not_asked` and the condition returns `false` before any operator runs | **Confirmed.** The trace records `SAPO-STREET-LARGE-001` as `false`. |
-| The requirement disappears with no unknown, no finding and no visible trace | **Refuted.** An unknown is present (verdict CONDITIONAL), findings are added rather than only removed, and three separate channels name the loss. |
+| The requirement disappears with no unknown, no finding and no visible trace | **Refuted, but by one channel rather than three.** An unknown is present (verdict CONDITIONAL) and findings are added rather than only removed, and the branch table names the lost rules explicitly. It is the ONLY channel that does: `unresolvedTimelines` names a different rule's loss and `trace` is byte-identical to a genuine non-match (section 2). |
 
 **The scoping layer is silent; the plan is not.** `askedFields` genuinely discards the information
 that a dependent was excluded and why, which is the defect issue #108 describes. On v2.8 the verdict
@@ -360,19 +376,22 @@ second is what prevents the harm today.
 
 ## 7. What this measurement does not establish
 
-- **It does not test a gate that scopes dependents out and is invisible to the trigger layer.** On
-  v2.8 the only gate that scopes dependents out is read by rules, so the branch table always fires.
-  Whether the loss would be silent for a gate that no rule reads is a question about a ruleset that
-  does not exist, and reading the code path suggests it would be, since `missingFacts` is built from
-  `resolved.unknownFields` and that set is populated by trigger conditions. That is a code reading,
-  labelled as such, not a measurement.
+- ~~**It does not test a gate that scopes dependents out and is invisible to the trigger layer.**~~
+  **Superseded by round 3.** Round 1 called this a question about a ruleset that does not exist and
+  offered a code reading in place of a measurement. S1 to S5 measured it, on a probe whose `rules`,
+  `advisories` and `config` are the published file byte for byte, and the answer is yes: the
+  requirement is lost with no missing fact, no branch and no unresolved timeline (S3). The published
+  ruleset already carries scope-only gates, and `generator_present` is one (S2). The bullet is kept
+  struck through rather than deleted so a reader who saw round 1 can see it was answered.
 - **It does not measure PR #167's question**, which was a gate left unanswered rather than answered
   `"unknown"`. The two produce different engine states: unanswered reaches `resolveAnswer` as
   `state: "unknown", isExplicitUnknown: false`, while `"unknown"` reaches it as
   `isExplicitUnknown: true`, which is what lets a rule listing `unknown` among its accepted values
   be answered by it.
-- **It measures v2.8 only.** Every count above is a fact about the published ruleset, not about the
-  engine in general.
+- **Every COUNT in rounds 1 and 2 is about v2.8**, not about the engine in general. Round 3's
+  results are the other way round: S4's conditions are statements about the engine, and what is
+  specific to v2.8 is which of them happen not to be reachable today (S4's three incidental
+  safeguards).
 
 ## Reproduction
 
@@ -617,8 +636,10 @@ So this is "not built", not "built and unreached". That is the larger of the two
 
 ## R5. How many situations reach it
 
-**The gap is general, not specific to the unknown gate.** Any missing fact produces branches, and no
-missing fact renders them.
+**The gap is general, not specific to the unknown gate.** Any ENUMERABLE missing fact produces
+branches, and no missing fact renders them. The qualifier is load-bearing and the paragraph below
+measures it: a missing fact with no enumerable candidates gets `branches: []` and a threshold string
+instead, which `tent_area_sqft` does in Scenario E.
 
 Measured across the six approved scenarios, through the same component path:
 
@@ -753,11 +774,21 @@ Establishes:
 
 Does not establish, and is outside this measurement:
 
-- whether Scenario F's third named unknown, `venue_has_assembly_approval`, should appear as a
-  missing fact;
-- whether the approved answer key expects the branch table on screen, which is a question about
-  `docs/test-scenario-answer-key.md` rather than about the engine or the component;
+- whether `DOB-ASSEMBLY-001` SHOULD read `venue_has_assembly_approval`, which is the rules question
+  behind Scenario F's third named unknown. What R1 does establish is the authority order that
+  applies to it: the fixture is level 3 and the published rule level 2, so the key is the artifact
+  to correct unless a level-1 primary source says otherwise. Which artifact changes and when is not
+  decided here;
+- ~~whether the approved answer key expects the branch table on screen~~ **, which R1 now
+  establishes rather than leaves open: the key's Scenario F expected verdict says "branch table
+  rendered" and names the license, assembly-approval and sound branches. Struck through rather than
+  deleted because it was listed as outside the measurement for three rounds after R1 answered it;**
 - anything about whether #108 should be closed, which this document does not address.
+
+Every bullet in this section was re-checked against what the document now establishes, not only the
+one that was flagged. Two moved, both above. The remaining "establishes" bullets each trace to a
+measurement in R1 to R5 and none were weakened by round 3's results, which measure the engine rather
+than the renderer.
 
 
 ---
