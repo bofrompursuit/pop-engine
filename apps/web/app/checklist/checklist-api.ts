@@ -101,11 +101,8 @@ export type ChecklistItem = PlanContext & {
   readonly id: string;
   readonly status: ChecklistStatus;
   readonly notes: string | null;
-  /**
-   * False for a requirement the latest plan no longer raises. Such a row is struck through and
-   * kept (AC 6), and it is counted separately from the rollup, which is current-plan only (AC 2).
-   */
-  readonly inLatestPlan: boolean;
+  /** True once plan history ends this task; terminal rows stay struck if the identity returns. */
+  readonly struckThrough: boolean;
   readonly documents: readonly ChecklistDocument[];
 };
 
@@ -338,7 +335,7 @@ const ITEM_CHECKS: FieldChecks<ChecklistItem> = {
   id: isString,
   status: isToken(STATUSES),
   notes: nullOr(isString),
-  inLatestPlan: isBoolean,
+  struckThrough: isBoolean,
   documents: arrayOf(shapedLike(DOCUMENT_CHECKS)),
 };
 

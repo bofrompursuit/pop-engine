@@ -324,7 +324,7 @@ describe("AC 2 · statuses, any transition, and the api's rollup", () => {
         items: [
           trackedItem(STREET_MEDIUM, { status: "submitted" }),
           trackedItem(SOUND, { status: "approved" }),
-          trackedItem(STREET_LARGE, { status: "approved", inLatestPlan: false }),
+          trackedItem(STREET_LARGE, { status: "approved", struckThrough: true }),
         ],
       }),
     });
@@ -342,7 +342,7 @@ describe("AC 2 · statuses, any transition, and the api's rollup", () => {
       [GET_CHECKLIST]: checklistOf({
         created: true,
         statusRollup: rollupOf({}),
-        items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
+        items: [trackedItem(STREET_LARGE, { struckThrough: true })],
       }),
     });
     await renderView();
@@ -988,7 +988,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
         statusRollup: rollupOf({ not_started: 1 }),
         items: [
           trackedItem(STREET_LARGE, {
-            inLatestPlan: false,
+            struckThrough: true,
             status: "submitted",
             notes: "filed on the 3rd",
             documents: [{ id: "doc-1", filename: "receipt.pdf" }],
@@ -1003,7 +1003,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
 
     const dropped = rowFor(STREET_LARGE);
     expect(dropped.className).toContain("check-item--dropped");
-    expect(within(dropped).getByRole("note").textContent).toContain("no longer raises");
+    expect(within(dropped).getByRole("note").textContent).toContain("earlier task has ended");
     // Nothing was deleted: the status, the note and the document are all still on the row.
     expect(badgeOf(dropped)).toBe("submitted");
     expect((within(dropped).getByRole("textbox") as HTMLTextAreaElement).value).toBe(
@@ -1016,7 +1016,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
     let current = checklistBody({
       created: true,
       planChanged: true,
-      items: [trackedItem(STREET_LARGE, { inLatestPlan: false })],
+      items: [trackedItem(STREET_LARGE, { struckThrough: true })],
     });
     const calls = stubApi({
       [GET_CHECKLIST]: () => jsonResponse(200, current),
@@ -1024,7 +1024,7 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
         current = checklistBody({
           created: true,
           planChanged: false,
-          items: [trackedItem(STREET_LARGE, { inLatestPlan: false }), trackedItem(SOUND)],
+          items: [trackedItem(STREET_LARGE, { struckThrough: true }), trackedItem(SOUND)],
         });
         return jsonResponse(201, current);
       },
@@ -1624,7 +1624,7 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
         created: true,
         items: [
           trackedItem(STREET_LARGE, {
-            inLatestPlan: false,
+            struckThrough: true,
             // A superseded published version, paired with the date that version carried.
             sourcePlan: { rulesetVersion: "nyc.v2.5", snapshotDate: "2026-06-01" },
           }),
@@ -1648,7 +1648,7 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
         created: true,
         items: [
           trackedItem(STREET_LARGE, {
-            inLatestPlan: false,
+            struckThrough: true,
             sourcePlan: { rulesetVersion: "nyc.v2.3", snapshotDate: null },
           }),
         ],
@@ -1674,7 +1674,7 @@ describe("AC 8 · each row is attributed to the plan its values came from", () =
         snapshotDate: "2026-06-01",
         items: [
           trackedItem(STREET_MEDIUM, {
-            inLatestPlan: false,
+            struckThrough: true,
             sourcePlan: { rulesetVersion: "nyc.v2.1", snapshotDate: "2026-01-01" },
           }),
         ],
