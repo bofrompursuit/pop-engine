@@ -1,6 +1,6 @@
 # Venue Assembly-Approval Coverage
 
-**Status:** PROPOSED (2026-07-28; Approval Blocker 13 resolved 2026-07-28 by the product owner as route 1, venue-neutral output, recorded on PR #171. Still PROPOSED: that decision settles what the feature says, not whether it can be published, and Approval Blocker 5 is the one that governs publication.) · **Reviewer/approver:** unassigned; see Approval Blockers · **Owner:** unassigned · not in `docs/BASELINE.md` and must not be added there while this is PROPOSED.
+**Status:** PROPOSED (2026-07-28; Approval Blocker 13 resolved 2026-07-28 by the product owner as route 1, venue-neutral output, recorded on PR #171. Still PROPOSED: that decision settles what the feature says, not whether it can be published, and Approval Blocker 5 is the one that governs publication.) · **Reviewer/approver:** unassigned · **Owner:** unassigned — **both are Approval Blocker 21, a PREREQUISITE**, because only tagged entries gate approval and an untagged note here would let this spec reach APPROVED with the lane unowned · not in `docs/BASELINE.md` and must not be added there while this is PROPOSED.
 **Phase:** post-MVP · **Lane:** Dev 1 (engine) + Dev 4 (verification), pending assignment · **Depends on:** F-101 (intake registry), F-201 (plan generation), F-102 (verdict and branch tables) · **Feeds:** nothing yet.
 **NO F-ID IS ASSIGNED, and the filename says so deliberately.** `F-1NN` below is a placeholder, not
 an assignment: the Stage 1 range is saturated and the id is an approval blocker. Every acceptance
@@ -159,7 +159,7 @@ So the feature emits an ordinary finding, and the answer decides whether it is e
 | `venue_has_assembly_approval` | Finding | `disposition` | Note text must |
 | --- | --- | --- | --- |
 | not in scope (gate false) | none FROM THIS FEATURE | n/a | the plan still carries `ADV-VENUE-OCCUPANCY-001`; see Edge Cases |
-| **`yes`** | emitted | **`may_be_required`** | state that this answer does not settle the filing; assert no effect; **carry no confirmation instruction**, see below |
+| **`yes`** | emitted | **`may_be_required`** | state that this answer does not settle the filing; **make no claim about the approval's effect, in either direction**; **carry no confirmation instruction**, see below |
 | **`no`** | emitted | **`may_be_required`** | state that the operator's own filing is unresolved |
 | **`unknown`** (explicit) | emitted, **both rules** | **`may_be_required`** | both texts; measured, see below |
 | **in scope, NO answer** | emitted, **both rules**, on the rescope path | **`may_be_required`** | a submission cannot be in this state; a rescope variant can and Scenario A's is |
@@ -276,7 +276,7 @@ both artifacts move in the same commit.
 | `trigger.all` | the published gate verbatim (`location_type eq private_venue`, `headcount gte 75`) plus `venue_has_assembly_approval eq yes` | the same gate plus `venue_has_assembly_approval in ["no", "unknown"]` | PINNED |
 | `output.disposition` | `MAY_BE_REQUIRED` | `MAY_BE_REQUIRED` | PINNED, and it must be written explicitly; see the default trap |
 | `output.requirement_name` | a short non-regulatory heading naming the question | the same heading | PINNED as PRESENT; see the double-render below |
-| `output.note_text` | states that the answer does not settle the filing, asserts no effect, and carries NO confirmation instruction (F-1NN-AC-01) | states the filing is unresolved, same prohibition (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
+| `output.note_text` | states that the answer does not settle the filing, makes NO claim about the approval's effect in either direction, and carries NO confirmation instruction (F-1NN-AC-01) | states the filing is unresolved, same two prohibitions (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
 | `output.permit_name`, `agency`, `deadline`, `fee` | ABSENT | ABSENT | PINNED as absent |
 | `output.portal` | ABSENT | ABSENT | PINNED as absent; it renders "apply at" and a note is not an application |
 | `output.notes` | ABSENT | ABSENT | PINNED as absent; every entry renders as regulatory prose needing its own source |
@@ -618,7 +618,7 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 
 ## Acceptance Criteria
 
-1. **F-1NN-AC-01 · A `yes` asserts no effect of any kind.** For `venue_has_assembly_approval: yes` the
+1. **F-1NN-AC-01 · A `yes` makes no claim about the approval's effect, in either direction.** For `venue_has_assembly_approval: yes` the
    finding is emitted with `disposition: may_be_required` and note text directing the operator to
    stating that the answer does not settle the filing, and carrying no confirmation instruction of its
    own, per the triple-confirmation finding below. No output string may assert that the operator is
@@ -691,8 +691,8 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, **the
    version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the seven authority
    comments in category 4a of the sweep**, **the rule and advisory
-   counts in the five documents that state them**, and, if Scenario G lands, **the scenario counts in
-   the eleven places that state them, two of which are other features' approved acceptance criteria,
+   counts in the four documents that state them**, and, if Scenario G lands, **the scenario counts in
+   the fourteen places that state them, two of which are other features' approved acceptance criteria,
    plus `G` added to `DOB-ASSEMBLY-001` and `ADV-VENUE-OCCUPANCY-001`'s `exercised_by_scenarios`**.
    That commit boots AND passes `pnpm check:baseline`.
 9. **F-1NN-AC-09 · No fact beyond the ruleset.** Every regulatory statement rendered traces to a
@@ -871,17 +871,24 @@ reach". That costs one test file already in the footprint, and it moves no metad
 no scenario count, and no other spec's acceptance criteria. What it does not do is put the `no` path in
 the approved regulatory record, which is the answer key's job and the verification owner's call.
 Stated as a comparison: **Scenario G costs three artifacts, two existing rules' metadata, the
-manifest's fixtures row, and the eleven scenario counts enumerated in the sweep below, two of which are
+manifest's fixtures row, and the fourteen scenario counts enumerated in the sweep below, two of which are
 other features' approved acceptance criteria. The unit case costs one file.**
 
 **PREFERENCE RECORDED, NOT DECIDED, and the condition is the whole of it.** The product owner prefers
 the engine unit test, **if the verification owner agrees it satisfies Acceptance Criterion 3**
 (PR #171, `https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`). The verification
 owner has not been asked, so **the Scenario G option is not withdrawn** and everything it requires
-stays specified above: the three artifacts, the two metadata edits, the manifest row, the eleven counts,
+stays specified above: the three artifacts, the two metadata edits, the manifest row, the fourteen counts,
 and the two other features' acceptance criteria. Whether a unit case satisfies a criterion about the
 approved regulatory record is a verification-owner call, not a cost comparison, which is why a
 preference is all that is recorded here.
+
+**AND THE CHOICE IS APPROVAL BLOCKER 20, a PREREQUISITE, which is a separate act from recording the
+preference.** A preference that gates nothing leaves both routes specified in an approvable document,
+and two implementers would then read the same approved text and do materially different work: one test
+file, or three fixture artifacts plus two rules' metadata plus a manifest row plus fourteen scenario
+counts. Tagging the CHOICE as a prerequisite does not decide it and does not promote the preference into
+a decision. It says the document cannot be approved while the question is open.
 
 ### Every row audited against the change class it actually describes
 
@@ -976,6 +983,14 @@ false by this change, by stating a COUNT**, and two of those are approved accept
 with `git grep -niE "\b(six|seven|6) scenarios|all six|scenarios \(a.f\)|six approved"` and again for
 rule and advisory counts, over every tracked file.
 
+**Re-run in round 12 from the repository ROOT rather than over the directories the earlier passes
+walked, which is what both misses have in common.** Round 11 found `docs/ROADMAP.md:17` outside them;
+this pass found two more, both in `docs/ARCHITECTURE.md`, taking the scenario list from eleven entries
+to fourteen. The pattern was never the failure: it matched these lines every time it was run. The path
+argument was, so the sweep is recorded here with its scope stated, every tracked file from the root and
+no directory list. `docs/ARCHITECTURE.md` is the instructive one, because it was already in the version
+sweep AND in the rule-count table below, which is what made it feel already read.
+
 **Scenario counts, which move only if Scenario G lands** (see the alternative above; if the `no` path
 is covered as a unit case, none of these moves and that is most of the cost difference):
 
@@ -992,6 +1007,9 @@ is covered as a unit case, none of these moves and that is most of the cost diff
 | `docs/DESIGN.md:50` | the green-gate criterion, "6 scenarios" | the lane gate |
 | `docs/DESIGN.md:57` | "all 6 scenarios pass end-to-end" | the same gate, end to end |
 | `docs/PRD.md:114` | the plan-generation metric, "6 scenarios + boundary fixtures" | the success metric |
+| **`docs/ROADMAP.md:17`** | **the Phase 1 gate, "Must pass all 6 answer-key scenarios"** | **the planning spine's own gate, and live rather than history** |
+| **`docs/ARCHITECTURE.md:262`** | **"The fixture suite in `test-scenario-answer-key.md` (6 scenarios + boundary fixtures) is the engine's unit-test suite"** | **states what the suite IS** |
+| **`docs/ARCHITECTURE.md:14`** | **AD-6's rationale, "testable against the 6 scenarios as plain unit tests from day 3"** | **a decision record's rationale rather than a gate, and stale the same way** |
 
 **Rule counts, advisory counts and DERIVED TOTALS, which move whenever a rule is published, so they
 move regardless of the fixture decision.** Round 8 swept scenario counts and stopped there; re-run for
@@ -1005,11 +1023,35 @@ implementer can follow it exactly and leave a live contract stale:
 | `docs/PRD.md:143` | "`rules/nyc-rules.v2.8.json`: 33 rules + 4 advisories" | 35 + 4 |
 | **`docs/PRD.md:244`** | **a SECOND occurrence, in the Rules Engine bullet: "(33 rules + 4 advisories)"** | 35 + 4 |
 | `docs/ROADMAP.md:12` | the ratification line, "33 rules + 4 advisories" | 35 + 4 |
-| `docs/DESIGN.md:7` | "(33 rules + 4 advisories, evidence-linked)" | 35 + 4 |
 | `specs/F-201-permit-plan-generator.md:31` | Acceptance Criterion 6, boot validation, "33 rules + 4 advisories" | 35 + 4 |
 | **`apps/api/src/ruleset.ts:617`** | **"37 boot-time rows", the sizing statement behind the per-row insert decision** | 39 |
 | **`apps/api/src/ruleset.test.ts:973`** | **the test NAME, "syncs all 37 rules". Its assertions at 980, 1022 and 1038 were already pinned; its title was not** | 39 |
 | **`packages/engine/src/proposals.ts:34`** | **a DERIVED total: "24 of the 37 published rules omit `output.disposition`", which is the justification for the default-disposition table** | 24 of 39 |
+
+**`docs/DESIGN.md:7` states the same "33 rules + 4 advisories" and MUST NOT MOVE**, which is the
+distinction this table got wrong until round 12. It attributes that count to **`nyc.v2.1`**, the
+corrected subset, inside a section headed "Decisions of 2026-07-22", and only afterwards records the
+retarget to a later pointer. The count is part of a dated decision about what v2.1 CONTAINED. Applying
+`35 + 4` there would not update a current fact, it would rewrite a historical one, and state that a past
+ratified version held two rules that did not exist when it was ratified. A publication may not edit the
+record of an earlier publication.
+
+**So the same test the comment sweep uses applies to counts, and it is worth stating as the rule:**
+does this number describe the CURRENT artifact, or a named past version as a historical fact. Applied to
+every count statement the two sweeps found outside `docs/proposals/`, **eight describe the current
+artifact and move, one describes a named past version and does not.** The eight are the eight rows
+remaining in the table above. The one is `docs/DESIGN.md:7`. The tell is grammatical and cheap to check:
+the moving eight name `nyc.v2.8` or no version at all, and the one that stays names `nyc.v2.1`.
+`docs/ROADMAP.md:12` is the row that looks historical and is not, since it sits in a Phase 0 checklist
+but states the count OF `nyc-rules.v2.8.json`, the file this rollout deletes, so its count moves with
+its path.
+
+**Found while applying that test, and NOT this feature's to fix.** The same `docs/DESIGN.md:7` says
+"the pointer is now `nyc.v2.5`", and `docs/DESIGN.md:73` says `BASELINE.md` "flips nyc.v2.5 to
+APPROVED". The published ruleset is `nyc.v2.8` and the manifest already records it APPROVED, so both
+sentences are stale TODAY, before this feature changes anything. They are not in this footprint: this
+change does not make them false, it finds them already false. Reported rather than corrected, because a
+correction to an APPROVED document is its owner's under §6 and is not smuggled in beside a publication.
 
 Two new rules make 33 into 35 and the rules-plus-advisories total 37 into 39. **The derived total is the
 one worth reading twice:** the numerator stays 24, because both new rules publish `MAY_BE_REQUIRED`
@@ -1183,9 +1225,30 @@ Rollout is one change or none. In it:
      feature's approval, naming the verification owner, the rules reviewer and the engine owner per
      the footprint audit above.
    - **`provenance`** is prose whose "CHANGE FROM nyc.v2.7" section describes the DOB-ASSEMBLY-001
-     deadline correction. It is rewritten to describe THIS change: two new note rules, the field they
-     consume, and that they assert no reduction. Left as copied, the new artifact claims v2.8's
-     deadline correction as its own change.
+     deadline correction. It is rewritten to describe THIS change: two new note rules and the field
+     they consume. Left as copied, the new artifact claims v2.8's deadline correction as its own
+     change.
+     **It states what the rules DO and makes no claim about the approval's effect**, in either
+     direction. An earlier revision of this item had it say the rules "assert no reduction", which is
+     the affirmative effect claim the rest of this document spent three rounds removing: it tells a
+     reader the approval reduces nothing, and `DOB-ASSEMBLY-001`'s verification block says the question
+     is "NOT PUBLISHED in either direction". Provenance is published regulatory prose whether or not
+     anything renders it, so the prohibition that governs `note_text` governs it identically. The
+     honest formulation is the one the emission table uses: the rules record that the answer does not
+     settle this event's filing.
+
+   **Every string this rollout PUBLISHES was swept for the effect claim, not only the ones the plan
+   renders.** Rounds 2, 4 and 9 each removed an affirmative reduction claim from somewhere, and it
+   survived into `provenance` because the sweeps ran over rendered output. The unit is what the change
+   PUBLISHES. There are six such strings and each is recorded with its verdict: `provenance`, which
+   carried the claim and is corrected above; `status`, which records approval and names owners, and
+   asserts nothing about the field; `supersedes`, version identifiers only; the `docs/BASELINE.md` row
+   text, which by the existing pattern says each version was authorized "for the change named in its
+   own `provenance`" and so restates no effect, and must keep pointing rather than summarising; and the
+   two new rules' `output.note_text` and `verification.qualification`, both already constrained above
+   and the second still BLOCKED on the verification owner, who is the one person who may write it. The
+   repository has no `CHANGELOG` file; the changelog for a ruleset IS the `provenance` string's "CHANGE
+   FROM" section, which is why that one string is both entries.
 
    **`status` is the dangerous one, and the reason is that it IS validated.** `validateRuleset`
    requires `status` to be a string starting with `APPROVED` (`apps/api/src/ruleset.ts:511`), so a
@@ -1250,11 +1313,18 @@ and work this feature explicitly excludes, which has no applicable owner here. B
 because the rest of the document cites them, and both are tagged for what they are:
 
 - **PREREQUISITE.** An owner must decide something before this spec can be approved. Entries 1, 3, 5, 7,
-  17 and 18.
+  17, 18, 20 and 21.
 - **DEPENDENCY, not a blocker.** True, relevant, and outside this feature or already tracked elsewhere.
   Entries 2, 4 and 6. Nothing in them is owed by anyone for this spec's approval.
 - **RESOLVED, a record.** Corrected in the body above; kept so the reasoning that cites it still reads.
   Entries 8 to 16, with their content moved to the review-history section below.
+
+**Entries 20 and 21 are new in round 12 and are the same defect in two places.** They take the next two
+free positions: 19 is already held by round 11's resolved record, and positions are never reused. Round 11 made approval
+gating explicit and precise, and two things that should gate approval were left untagged: the choice
+between the two routes for covering the explicit-`no` path, and the assignment of an owner and an
+approver. Both were recorded in the body, neither gated anything, and a document can be approved past a
+recorded fact that nothing enforces. Tagging is the enforcement.
 
 **Numbered positions are stable and are not reused**, because the body and PR #171's review threads cite
 them by number. An entry that leaves this list leaves a one-line pointer at its position, which is what
@@ -1365,6 +1435,41 @@ of work are already promised the next ruleset version, and a fourth wants a publ
     re-attribution ships a NEW artifact still carrying a source attribution the repository has already
     flagged as misleading, and F-202's approved status would then cite a publication that did not happen.
 
+20. **PREREQUISITE, verification owner. WHICH ROUTE COVERS THE EXPLICIT-`no` PATH must be chosen before
+    this spec is approved, because the two routes are not the same specification.** Acceptance Criterion 3
+    requires the explicit-`no` path covered, and this document specifies BOTH ways of covering it: an
+    approved Scenario G, and an engine unit case against the published ruleset. The comparison is under
+    the fixture section and is not repeated here.
+
+    **Why this had to become a prerequisite rather than stay a preference.** Round 11 made approval
+    gating explicit, and only tagged entries gate it. Untagged, this document could be approved carrying
+    both routes, and two implementers reading the approved text would do materially different work: one
+    writes a single test file; the other builds three fixture artifacts, edits two existing rules'
+    metadata, adds a manifest row and moves fourteen scenario counts, two of which are other features'
+    APPROVED acceptance criteria. An approved spec that admits both is not an approved specification of
+    this feature. The gate is on the CHOICE, not on either option.
+
+    **The preference is unchanged and is still a preference.** The product owner prefers the engine unit
+    case IF the verification owner agrees it satisfies Acceptance Criterion 3 (PR #171,
+    `https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`). The condition is the
+    whole of it, and the verification owner has not been asked. Whether a unit case can satisfy a
+    criterion about the approved regulatory record is theirs to answer and not a cost comparison, which
+    is why recording the preference does not close this. **Both options stay fully specified above until
+    it is answered**, and neither is withdrawn by this entry.
+
+21. **PREREQUISITE, product owner. THE LANE IS UNOWNED, and approval cannot assign it retroactively.**
+    The header records the owner and the reviewer/approver as unassigned and points here. Nothing in this
+    list required either to be filled, so the same gap round 11 closed for the route choice was open for
+    the lane itself: this spec could reach APPROVED with no owner to implement it and no named approver
+    to have approved it. `docs/DOCUMENTATION-GOVERNANCE.md` §6 assigns approvals by CHANGE CLASS and this
+    feature's rollout lands in two of them, so the reviewers are already determined by the footprint
+    audit above: the verification owner and the rules reviewer for the regulatory content, and the engine
+    owner for the trigger semantics. **What is missing is the assignment, not the criteria.** The
+    approver named here must also not be the only signatory, per §6's "No person approves their own
+    regulatory publication alone", which is a live constraint rather than a formality: `docs/DESIGN.md`
+    already records one person signing in three capacities because one person holds every lane, and this
+    entry exists so that fact is faced at assignment rather than discovered at publication.
+
 ## Review history, resolved and requiring no action
 
 Every entry below is a correction this document has already made, kept because the body cites them and
@@ -1451,7 +1556,7 @@ approval.**
     found the same defect already shipped in `SLA-VENUE-LICENSE-001` and a double-rendered
     confirm-with-agency line, both reported and neither this footprint's to fix. Three consequences of
     the same not-looking: three rendered rule fields were neither pinned nor blocked while the table
-    claimed all were, a new scenario moves two existing rules' metadata and eleven scenario counts
+    claimed all were, a new scenario moves two existing rules' metadata and fourteen scenario counts
     including two other features' approved acceptance criteria, and `verification.qualification` was
     filed as metadata when it renders to the operator as a paragraph. The scenario-count cost also
     surfaced a cheaper way to cover the explicit-`no` path, reported as a comparison for the
@@ -1479,3 +1584,24 @@ approval.**
     RESOLVED and the numbering is frozen because the body and the review threads cite it; and the primary
     `yes` output would have shipped three copies of one confirmation instruction, of which the one inside
     this footprint is removed and the underlying double-render is reported and left.
+
+**Round 12.** **Applied five findings, two of which put a gate on approval that the body had only
+    described.** Round 11 made approval gating explicit and precise, and precision exposed two things
+    that should gate approval and were not tagged: the choice of route for covering the explicit-`no`
+    path, which left BOTH routes specified in an approvable document and two implementers reading the
+    same approved text doing materially different work, and the assignment of an owner and an approver,
+    which left the lane unowned at APPROVED. Both are now PREREQUISITE entries, 20 and 21, and neither
+    decides the question it gates: the route preference is still a preference with its condition
+    attached, and both options stay specified. The third finding is the same class as rounds 2, 4 and 9
+    and is the reason the sweep unit changed again: the affirmative reduction claim those rounds removed
+    from rendered output had survived in the ruleset's `provenance` string, which is published
+    regulatory prose that nothing renders, so the sweep now runs over what the change PUBLISHES and each
+    of the six such strings is recorded with its verdict. Two ambiguous restatements of the same
+    prohibition, one in the emission table and one in the field-by-field pin, are rewritten as
+    prohibitions rather than as claims. The last two are sweep-scope failures of the same shape: the
+    scenario-count sweep had been run over directory lists rather than the repository root and missed
+    three live requirements, `docs/ROADMAP.md:17`'s Phase 1 gate and two statements in
+    `docs/ARCHITECTURE.md`, taking that list from eleven to fourteen; and the count sweep had been
+    replacing numbers without asking whether each describes the CURRENT artifact or a named past version,
+    which would have rewritten `docs/DESIGN.md:7`'s record of what `nyc.v2.1` contained. Eight of the
+    nine count statements move and that one does not.
