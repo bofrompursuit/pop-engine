@@ -16,7 +16,8 @@ answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` cor
 the live restatement of both conditions in S4; round 9's level-field finding-set diff in S4 and the
 answer-key confirmation in R1; round 10's provenance diff in S4, the authority order in R1, and the
 per-measurement method table below; round 11's row-by-row walk of that table; round 12's envelope
-audit and re-measured render.
+audit and re-measured render; round 13's two-field restatement in section 2, the food prerequisite
+in section 1, and the walk arithmetic below.
 
 **What layer each result requires, and what the harness was where this document records it.** Five
 statements of this have now been wrong, each in a different way, and the reason the last one failed
@@ -29,17 +30,27 @@ stated result requires**, which can be verified from the result itself, plus the
 cases where the document does record it (round 2's method header, section 4's own sentence, and
 every measurement from round 5 on, which were run for these rounds).
 
-Every row has been walked against the text it covers. Round 11 walked the nine rows of the table it
-replaced and reported that count above a table of eleven, which left two rows without audit
-provenance; this round walked **all eleven rows, and two moved**. Both are the same correction:
-R5's six-scenario table has a "Branch reasons on screen" column, which is a component-path result
-and was sitting in the evaluation-only row. R5 therefore joins R1 and R3 as a section holding
-measurements of more than one kind, and being split once in round 9 did not make it settled.
+**The walk, stated as arithmetic rather than as a number, because the number has now been wrong in
+three consecutive rounds.** Round 11 reported nine walked above a table of eleven. Round 12 said two
+of eleven moved and nine did not, then listed ten categories, one of which was a row that had
+moved. Both failures were unverifiable from the text, so the accounting below names every row and
+shows the sums.
 
-The nine that did not move, listed so the count is checkable: the parsed-ruleset row, the
-scope-resolution row, the validator-only row, the fixture-reading row, section 2 and the rest of the
-evaluation row, R3's direct-parser row, the S2/S3 row, S4's per-rule row, the persistence row and
-the no-submission row. The four corrections round 11 made, from the previous walk, still stand.
+**Total rows: 11**, numbered here in the order they appear in the table.
+
+**Moved in the round-12 walk: 2.** Rows 5 and 6, and they are one correction rather than two: R5's
+six-scenario table has a "Branch reasons on screen" column, which is a component-path result and was
+sitting in the evaluation-only row. It left row 5 and joined row 6. R5 therefore joins R1 and R3 as
+a section holding measurements of more than one kind, and being split once in round 9 did not make
+it settled.
+
+**Unchanged: 9.** Row 1 the parsed-ruleset row, row 2 the scope-resolution row, row 3 the
+validator-only row, row 4 the fixture-reading row, row 7 R3's direct-parser row, row 8 the S2/S3
+row, row 9 S4's per-rule row, row 10 the persistence row, row 11 the no-submission row.
+
+**2 moved + 9 unchanged = 11 total**, and rows 5 and 6 appear in the moved list and in no other, so
+the two lists partition the table. The four corrections round 11 made, from the previous walk, still
+stand.
 
 | Result | Lowest layer it requires |
 | --- | --- |
@@ -67,8 +78,14 @@ Three consequences that were previously implied or wrong, stated instead:
 
 **Audit of the one stubbed envelope in this document, because a setup that asserts something untrue
 is the same failure as the fabricated probe.** The component-path measurements are the only ones fed
-by a hand-built stored-plan envelope; every other measurement uses `evaluate` output directly, and
-R3's parser measurement JSON round-trips real `missingFacts` with nothing added. Two defects were
+by a hand-built stored-plan envelope. **Restricting that to what it covers, because the table above
+already says the rest:** among the measurements that consume a plan payload at all, rows 5 and 7,
+none uses a stub. Row 5 reads `evaluate` output directly and row 7 JSON round-trips real
+`missingFacts` with nothing added. The other rows consume no plan payload, so the question does not
+arise for them: rows 1 and 4 read artifacts, row 2 resolves scope, row 3 stops at the validator, row
+9 calls `evaluateTrigger` directly, row 10 is a database `INSERT`, and row 11 measures no submission.
+This is the fourth time a global sentence about provenance has contradicted the table, and it is the
+last one in the document: everything else that was said globally is now said per row. Two defects were
 found in that envelope and both are fixed:
 
 1. **An ordering the product cannot produce.** Round 2's envelope carried
@@ -165,17 +182,62 @@ The other seven fields that declare `unknown` gate nothing: `street_event_size`,
 
 `validateIntake` accepts `"unknown"` for all three gates, because it is a declared value and
 `readFieldValue` checks membership. One interaction worth recording, found by measuring rather than
-by reading: answering `event_open_to_public: "unknown"` makes
-`food_affinity_private_exception_claimed` REQUIRED, so a submission that answers the gate unknown
-and omits the dependent is **rejected** with `food_affinity_private_exception_claimed: required`.
-The `!=` clause widens scope rather than narrowing it.
+by reading: answering `event_open_to_public: "unknown"` can make
+`food_affinity_private_exception_claimed` REQUIRED, because the `!=` clause widens scope rather than
+narrowing it.
+
+**The prerequisite matters and round 1 left it out.** That dependent's `asked_when` is
+`food_present AND event_open_to_public != yes`, so the gate's unknown only pulls it into scope when
+food is present. Measured both ways, with the dependent omitted:
+
+```
+food_present=false, event_open_to_public="unknown": ACCEPTED
+food_present=true,  event_open_to_public="unknown": REJECTED
+  food_affinity_private_exception_claimed: required
+```
+
+So the behaviour is conditional, not universal: on a submission with no food the gate's unknown
+changes nothing about what is required.
 
 **So the mechanism's blast radius is one gate, not the registry.**
 
 ## 2. What the plan actually does when `sapo_event_type` is "unknown"
 
-Two submissions, identical except for the gate, both through `validateIntake` and `evaluate`. The
-street event is large enough that `SAPO-STREET-LARGE-001` fires when the type is answered.
+Two submissions, both through `validateIntake` and `evaluate`, on a street event large enough that
+`SAPO-STREET-LARGE-001` fires when the type is answered.
+
+**They differ in two fields, not one, and they have to.** Round 1 described this as a one-field
+variation, which is not a submission `validateIntake` accepts: `street_event_size` is asked only
+when `sapo_event_type = street_event`, so retaining `"large"` beside the unknown gate is rejected.
+Measured:
+
+```
+unknown gate, street_event_size retained as "large":
+  REJECTED street_event_size not_applicable
+  "street_event_size is only asked when sapo_event_type = street_event;
+   remove it or change the answer that triggers it"
+```
+
+So the unknown submission also nulls `street_event_size`. That is the mechanism under test rather
+than a confound, and it is worth naming as an input change rather than leaving it implicit: the
+scoped-out dependent must be withdrawn for the submission to be valid at all, which is the same
+`asked_when` scoping the section is measuring. The other three dependents `sapo_event_type` gates
+(`plaza_level`, `plaza_multiple_blocks`, `has_amusement_ride`) are unanswered in both submissions
+here, and each is rejected `not_applicable` the same way if answered beside the unknown gate.
+
+**Re-measured with the inputs stated exactly, and the finding-set diff does not change:**
+
+```
+A  sapo_event_type="street_event", street_event_size="large"
+   FEASIBLE_AT_RISK, 2 findings: SAPO-INSURANCE-001, SAPO-STREET-LARGE-001
+C  sapo_event_type="unknown",     street_event_size=null
+   CONDITIONAL, 5 findings: ADV-SAPO-OTHER-CLASS-001, SAPO-BLOCK-PARTY-001,
+   SAPO-BLOCK-PARTY-SPONSOR-001, SAPO-INSURANCE-001, SAPO-PLAZA-001
+
+   dropped: ["SAPO-STREET-LARGE-001"]
+   added:   ["ADV-SAPO-OTHER-CLASS-001","SAPO-BLOCK-PARTY-001",
+             "SAPO-BLOCK-PARTY-SPONSOR-001","SAPO-PLAZA-001"]
+```
 
 | | `sapo_event_type: "street_event"`, `street_event_size: "large"` | `sapo_event_type: "unknown"` |
 | --- | --- | --- |
