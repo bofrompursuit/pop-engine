@@ -1105,6 +1105,420 @@ describe("AC 6 · a regenerated plan is reviewed, never silently applied", () =>
   });
 });
 
+describe("F-203 · the alert contact stays correctable after the checklist exists", () => {
+  it("still offers the contact fields and a save on a current checklist", async () => {
+    // The case that was broken: nothing to convert, so the inputs and the only button that
+    // submits them were both gone. An organizer who mistyped an address had no product flow to
+    // correct it, and the alerts already scheduled kept retrying the unusable one.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        items: [trackedItem()],
+        alertContacts: { email: "typo@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    // Seeded from the store, so the organizer edits what is actually on file.
+    expect(screen.getByLabelText<HTMLInputElement>("Email for deadline reminders").value).toBe(
+      "typo@example.test",
+    );
+    // Named for what pressing it does here: there is nothing to review.
+    expect(screen.getByRole("button", { name: "Save contact details" })).toBeDefined();
+  });
+
+  it("sends the corrected address with the plan the page is showing", async () => {
+    let current = checklistBody({
+      created: true,
+      planChanged: false,
+      alertContacts: { email: "typo@example.test", phone: null },
+    });
+    stubApi({
+      [GET_CHECKLIST]: () => jsonResponse(200, current),
+      [POST_CHECKLIST]: () => {
+        current = checklistBody({
+          created: true,
+          planChanged: false,
+          alertContacts: { email: "organizer@example.test", phone: null },
+        });
+        return jsonResponse(200, current);
+      },
+    });
+    await renderView();
+
+    const email = screen.getByLabelText("Email for deadline reminders");
+    await userEvent.clear(email);
+    await userEvent.type(email, "organizer@example.test");
+    await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+
+    await waitFor(() => {
+      expect(
+        (global.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.some(
+          ([, init]) =>
+            init?.method === "POST" &&
+            String(init.body).includes('"contactEmail":"organizer@example.test"'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("shows a delivery failure that only happened after the page was rendered", async () => {
+    // THE ENTRY POINT TO EVERYTHING THE CONTACT WORK BUILT. The POST's response is assembled
+    // before the alerts it just scheduled have been attempted, so the poller can only record a
+    // failure after that state is on screen. With no reload path the warning never appeared, and
+    // an organizer who is never told there is a problem never corrects the address that caused it.
+    let failures: unknown[] = [];
+    const body = () =>
+      checklistBody({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: "typo@example.test", phone: null },
+        failedAlertDeliveries: failures,
+      });
+    stubApi({
+      [GET_CHECKLIST]: () => jsonResponse(200, body()),
+      [POST_CHECKLIST]: () => jsonResponse(200, body()),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await renderView();
+
+      await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+      await waitFor(() => expect(screen.queryByText(/not been confirmed as delivered/)).toBeNull());
+
+      // The poller runs and the send fails, which happens entirely after the render above.
+      failures = [{ channel: "email", failedCount: 1, heldForReview: false }];
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      await waitFor(() =>
+        expect(screen.getByText(/not been confirmed as delivered/).textContent).toContain(
+          "1 email alert for this event has not been confirmed as delivered.",
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not keep re-reading when there is no contact for an alert to go to", async () => {
+    // With no address the api schedules nothing and says so, so there is no later delivery whose
+    // failure could arrive. Re-reading anyway would be this page polling for a fact that cannot
+    // change, which is the general behaviour the bounded version was chosen over.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: null },
+      }),
+      [POST_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: null },
+      }),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await renderView();
+      await userEvent.click(screen.getByRole("button", { name: "Save contact details" }));
+      await waitFor(() =>
+        expect(
+          (global.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.some(
+            ([, init]) => init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      const before = (global.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(130_000);
+
+      expect((global.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(
+        before,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not promise email reminders to a contact that has no email", async () => {
+    // Both contact columns are nullable and the scheduler only takes channels that have a
+    // destination, so phone-only is a supported configuration in which NO email alert is scheduled.
+    // The unconditional sentence reassured that organizer about a delivery path they do not have,
+    // which is the worst version of it: read by exactly the person for whom it is false.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: null, phone: "+15550000000" },
+      }),
+    });
+
+    await renderView();
+
+    expect(screen.queryByText(/addressed to your email/)).toBeNull();
+    const lede = screen.getByText(/no deadline reminders will be delivered/);
+    expect(lede.textContent).toContain(
+      "Text messages are not being sent yet, and no email address is set, so no deadline " +
+        "reminders will be delivered. Add an email address to receive them.",
+    );
+    // The number is still stored rather than refused, because the schema permits phone-only.
+    expect(lede.textContent).toContain("stored for when text sending is switched on");
+    expect((screen.getByLabelText("Mobile number (optional)") as HTMLInputElement).value).toBe(
+      "+15550000000",
+    );
+  });
+
+  it("says where reminders are addressed without promising they arrive", async () => {
+    // The other half, so the fix cannot be written as "never mention email". This is the sentence
+    // the phone field exists to qualify, and it is true whenever an address is set.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planChanged: false,
+        alertContacts: { email: "organizer@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    // ROUTING, NOT ARRIVAL. The page cannot see whether Resend is configured — the checklist
+    // response reports contacts and rows and nothing about provider credentials — so a promise that
+    // reminders GO to the email is one it cannot keep in the supported unconfigured configuration.
+    // Where they are ADDRESSED is settled by the contacts alone.
+    expect(screen.getByText(/addressed to your email/).textContent).toContain(
+      "Text messages are not being sent yet, so deadline reminders are addressed to your email",
+    );
+    expect(screen.queryByText(/reminders go to your email/)).toBeNull();
+    expect(screen.queryByText(/no deadline reminders will be delivered/)).toBeNull();
+  });
+
+  it("hides the contact controls while the plan is stale, because the api would refuse them", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, planChanged: false, planStale: true }),
+    });
+
+    await renderView();
+
+    expect(screen.queryByLabelText("Email for deadline reminders")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save contact details" })).toBeNull();
+  });
+});
+
+describe("F-203 · a channel that failed to deliver is reported to the organizer", () => {
+  it("says how many failed, on which channel, and what the organizer can do", async () => {
+    // F-203 exists so a filing deadline does not pass unnoticed. An alert failing silently is
+    // exactly that failure, and until this nothing on any surface said so.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: false }],
+        alertContacts: { email: "typo@example.test", phone: null },
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).toBe(
+      "2 email alerts for this event have not been confirmed as delivered. PopEngine keeps " +
+        "retrying them. If the email address below is wrong, correcting it will redirect the " +
+        "alerts that have not gone out.",
+    );
+    expect(notice.getAttribute("role")).toBe("alert");
+    // The action it points at is really there, because contacts stay editable on a current
+    // checklist.
+    expect(screen.getByLabelText("Email for deadline reminders")).toBeDefined();
+  });
+
+  it("does not claim retries are running while the plan is stale", async () => {
+    // Round 14 made the api HOLD alerts whose plan the event has been edited past, so it cannot
+    // send a filing date the current event does not have. The count still reports those rows, and
+    // the notice went on saying PopEngine keeps retrying them, which stopped being true for as
+    // long as the organizer takes to regenerate.
+    //
+    // Qualified rather than hidden: dropping the rows would leave an organizer with failed alerts
+    // and no sign of them, which is the silence this notice exists to break. Correcting the
+    // address, which the ordinary sentence points at, does nothing until the plan is current, so
+    // the paused version names the action that actually resumes delivery.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: true }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).toContain("2 email alerts for this event have not been confirmed as delivered.");
+    expect(notice.textContent).toContain(
+      "Retrying is paused because this event changed after their plan was made: regenerate the " +
+        "plan and review the checklist to start it again.",
+    );
+    expect(notice.textContent).not.toContain("PopEngine keeps retrying them");
+  });
+
+  it("does not turn an unknown delivery outcome into a definite non-delivery", async () => {
+    // A provider timeout or a lost response is recorded as failed while the message MAY have
+    // arrived, which is the whole reason this feature hands the provider an idempotency key and
+    // retries. Saying the alerts "failed to send" and "have not gone out" converted an unknown
+    // outcome into a definite one. The page cannot tell a rejection from a lost answer, because
+    // the reason lives in payload.last_error and is deliberately never sent to a client, so
+    // unconfirmed is the strongest thing that is true here.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 2, heldForReview: false }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).not.toContain("failed to send");
+    expect(notice.textContent).toContain(
+      "2 email alerts for this event have not been confirmed as delivered.",
+    );
+  });
+
+  it("reads the paused state from the failed rows rather than the latest plan", async () => {
+    // planStale describes the NEWEST plan. Between a regeneration and a review that is false while
+    // the failed rows still point at the old revision and stay unclaimable, so the copy promised
+    // retries that were paused. The api answers it from the plans those rows hang off.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        planStale: false,
+        planChanged: false,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 1, heldForReview: true }],
+      }),
+    });
+
+    await renderView();
+
+    const notice = screen.getByText(/not been confirmed as delivered/);
+    expect(notice.textContent).toContain("Retrying is paused because this event changed");
+    expect(notice.textContent).not.toContain("PopEngine keeps retrying them");
+  });
+
+  it("agrees with itself on one failure", async () => {
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        failedAlertDeliveries: [{ channel: "email", failedCount: 1, heldForReview: false }],
+      }),
+    });
+
+    await renderView();
+
+    expect(screen.getByText(/not been confirmed as delivered/).textContent).toContain(
+      "1 email alert for this event has not been confirmed as delivered.",
+    );
+  });
+
+  it("says nothing at all when no failure was observed", async () => {
+    // An empty count is not evidence the channel works: nothing may have been attempted. This is
+    // the same overclaim as the "email is fine" line that was removed, so it must not come back
+    // as a positive rendered from an absence.
+    stubApi({ [GET_CHECKLIST]: checklistOf({ created: true, failedAlertDeliveries: [] }) });
+
+    await renderView();
+
+    expect(screen.queryByText(/not been confirmed as delivered/)).toBeNull();
+    expect(screen.queryByText(/working|delivering|sent normally/)).toBeNull();
+  });
+
+  it("keeps a switched-off channel and a failing channel as separate statements", async () => {
+    // "Not switched on yet" and "tried and did not arrive" are different facts. Collapsing them
+    // would misreport both.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        simulatedAlertDeliveries: [{ channel: "sms", sentCount: 1 }],
+        failedAlertDeliveries: [{ channel: "email", failedCount: 3, heldForReview: false }],
+      }),
+    });
+
+    await renderView();
+
+    const simulated = screen.getByText(/No text messages have been sent\./);
+    const failed = screen.getByText(/not been confirmed as delivered/);
+    expect(simulated).not.toBe(failed);
+    // Neither sentence borrows the other's claim.
+    expect(simulated.textContent).not.toContain("not been confirmed as delivered");
+    expect(failed.textContent).not.toContain("not switched on yet");
+  });
+});
+
+describe("F-203 AC 5 · a simulated alert is labelled where the organizer reads it", () => {
+  it("says no text messages were sent and how many did not arrive", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(
+          200,
+          checklistBody({
+            created: true,
+            simulatedAlertDeliveries: [{ channel: "sms", sentCount: 2 }],
+          }),
+        ),
+    });
+
+    await renderView();
+
+    // The organizer's version of the fact, not the operator's: no provider name, no open-question
+    // id, and the correction first — what they were counting on did not arrive.
+    const notice = screen.getByText(/No text messages have been sent\./);
+    expect(notice.textContent).toBe(
+      "No text messages have been sent. PopEngine recorded 2 text message alerts for this event, " +
+        "but text message sending is not switched on yet, so nothing was delivered.",
+    );
+    // And no "email is fine" reassurance: nothing in this response says whether it is, and email
+    // is only live when Resend is configured. Pointing at a second channel that may be equally
+    // silent is the same overclaim as calling the simulated one delivered.
+    expect(notice.textContent).not.toContain("Email alerts are sent normally");
+    // Loud enough not to be missed, like the other things that change what can be relied on.
+    expect(notice.getAttribute("role")).toBe("alert");
+  });
+
+  it("says nothing at all when every alert that reported sent was really sent", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(200, checklistBody({ created: true, simulatedAlertDeliveries: [] })),
+    });
+
+    await renderView();
+
+    expect(screen.queryByText(/have been sent\./)).toBeNull();
+    expect(screen.queryByText(/not switched on yet/)).toBeNull();
+    // A real delivery must not pick up a "nothing was delivered" caveat by accident.
+    expect(screen.queryByText(/nothing was delivered/)).toBeNull();
+  });
+
+  it("counts one alert as one, and names a channel it has no word for rather than dropping it", async () => {
+    stubApi({
+      [GET_CHECKLIST]: () =>
+        jsonResponse(
+          200,
+          checklistBody({
+            created: true,
+            simulatedAlertDeliveries: [
+              { channel: "sms", sentCount: 1 },
+              { channel: "carrier_pigeon", sentCount: 3 },
+            ],
+          }),
+        ),
+    });
+
+    await renderView();
+
+    expect(screen.getByText(/1 text message alert for this event/)).toBeDefined();
+    // An unrecognised channel still has to be reported: the point of the notice is that something
+    // did not arrive, and silence about it is the one answer that cannot be right.
+    expect(screen.getByText(/3 carrier_pigeon alerts for this event/)).toBeDefined();
+  });
+});
+
 describe("AC 7 · the demo path", () => {
   it("converts the rescoped plan, flips one status and uploads one document", async () => {
     let current = checklistBody({ created: false });

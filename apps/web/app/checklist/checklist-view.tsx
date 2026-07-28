@@ -57,6 +57,100 @@ const rollupOf = (rollup: StatusRollup): readonly [ChecklistStatus, number][] =>
 
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
+/**
+ * What an organizer calls the channel. Unknown tokens fall through to themselves rather than
+ * being dropped: a channel this page has not been taught about still has to be reported, because
+ * the whole point of the notice is that something did not arrive.
+ */
+const CHANNEL_NAMES: Readonly<Record<string, string>> = {
+  sms: "text message",
+  email: "email",
+};
+
+/**
+ * F-203 AC 5, and the reason it is a sentence here rather than the string the api stores.
+ *
+ * Twilio A2P 10DLC approval is not in hand, so SMS is the labelled in-product simulation
+ * DESIGN.md permits. AGENTS.md permits a simulation only while the UI labels it — and the label
+ * has to land on the ORGANIZER, who is the person relying on the alert. The row's stored label is
+ * written for whoever is reading the database: it cites the provider baseline and an open-question
+ * id, neither of which tells someone waiting for a text that no text is coming. So the audit
+ * string stays on the row and this says the thing the organizer needs, in the order they need it:
+ * nothing arrived, how much did not arrive, and what still works.
+ *
+ * It states what happened rather than what is planned. "Not switched on yet" is PopEngine's own
+ * status and is named as such; nothing here implies an agency deadline moved or that a filing was
+ * missed, which is the distinction this repo keeps everywhere else between our policy and their
+ * requirements.
+ */
+export function simulatedDeliveryNotice(delivery: { channel: string; sentCount: number }): string {
+  const name = CHANNEL_NAMES[delivery.channel] ?? delivery.channel;
+  const alerts = delivery.sentCount === 1 ? "alert" : "alerts";
+  const lead = `No ${name}s have been sent.`;
+  const detail =
+    `PopEngine recorded ${delivery.sentCount} ${name} ${alerts} for this event, but ${name} ` +
+    `sending is not switched on yet, so nothing was delivered.`;
+  // NO "but email is fine" REASSURANCE. The first version added one, and it was a promise this
+  // page has no way to keep: email is live only when Resend is configured, `index.ts` deliberately
+  // supports the unconfigured state by leaving those alerts pending, and nothing in this response
+  // reports either. Pointing an organizer at a second channel that may be just as silent is the
+  // same overclaim as presenting the simulated one as delivered — the failure this notice exists
+  // to correct. It says what did not happen and stops there.
+  return `${lead} ${detail}`;
+}
+
+/**
+ * A channel whose alerts were attempted and failed, which is a different fact from the one above.
+ *
+ * The simulation notice says "this channel is switched off by design". This one says "this channel
+ * tried and did not get through". Collapsing them would tell an organizer the wrong thing about
+ * both, so they are separate fields, separate sentences and separate blocks on the page.
+ *
+ * Every word here is backed by a counted row. It does not say why — provider error text is
+ * operator detail that can name an address — and it does not say anything about the channels that
+ * are NOT listed, because an absent failure count can equally mean nothing was attempted. What it
+ * does say is the one thing that is both true and actionable: the address can be corrected below,
+ * and correcting it redirects the alerts that have not gone out yet.
+ *
+ * EXCEPT WHILE THE PLAN IS STALE, when "PopEngine keeps retrying them" stops being true. The api
+ * holds alerts whose plan the event has been edited past — it will not send a filing date the
+ * current event does not have — so retrying is suspended until the plan is regenerated and the
+ * checklist reviewed, for however long the organizer takes to do it. The count is still real and
+ * still worth showing; the sentence about what happens next is not.
+ *
+ * QUALIFIED RATHER THAN HIDDEN, and that is the whole choice. Dropping these rows from the count
+ * would leave an organizer with failed alerts and no sign of them, which is the silence this
+ * notice exists to break. Telling them delivery is paused AND why names the one action that
+ * resumes it, which the contact correction alone would not do: correcting the address is useless
+ * here until the plan is current again. The version that leaves them able to act is the version
+ * that says both.
+ */
+export function failedDeliveryNotice(failure: {
+  channel: string;
+  failedCount: number;
+  heldForReview?: boolean;
+}): string {
+  const name = CHANNEL_NAMES[failure.channel] ?? failure.channel;
+  const alerts = failure.failedCount === 1 ? "alert" : "alerts";
+  const have = failure.failedCount === 1 ? "has" : "have";
+  // UNCONFIRMED, NOT UNDELIVERED. A provider timeout or a lost response is recorded as failed while
+  // the message MAY have arrived — that ambiguity is the whole reason this module hands the
+  // provider an idempotency key and retries. Saying the alerts "failed to send" and "have not gone
+  // out" turned an unknown outcome into a definite non-delivery, which is the same overclaim in the
+  // opposite direction from the one the simulation notice refuses. The page cannot tell a rejection
+  // from a lost answer, because the reason lives in `payload.last_error` and is deliberately not
+  // sent to a client, so unconfirmed is the strongest thing that is true here.
+  const lead = `${failure.failedCount} ${name} ${alerts} for this event ${have} not been confirmed as delivered.`;
+  // Read from the plans the FAILED ROWS hang off, not from the latest plan, which is what
+  // `planStale` describes. Between a regeneration and a review the latest plan is current while
+  // these rows still point at the old revision and stay unclaimable.
+  return failure.heldForReview === true
+    ? `${lead} Retrying is paused because this event changed after their plan was made: ` +
+        `regenerate the plan and review the checklist to start it again.`
+    : `${lead} PopEngine keeps retrying them. If the ${name} address below is wrong, correcting ` +
+        `it will redirect the alerts that have not gone out.`;
+}
+
 export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eventId: string }) {
   const [state, setState] = useState<ChecklistState>({ status: "loading" });
   const [creating, setCreating] = useState(false);
@@ -74,6 +168,19 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const [meta, setMeta] = useState<RulesMetaResponse | null>(null);
 
   /**
+   * Where this event's deadline alerts go, as the organizer is editing it.
+   *
+   * Held here rather than read straight off the checklist because it is being typed into. Seeded
+   * once per event from what is stored, and deliberately NOT re-seeded by the reloads that follow
+   * every status change and note save: those land while the organizer may be mid-address, and
+   * re-seeding would delete what they were typing.
+   */
+  const [contacts, setContacts] = useState<{ email: string; phone: string }>({
+    email: "",
+    phone: "",
+  });
+
+  /**
    * Which event this page is showing. The create handler runs outside the effect, so it cannot
    * rely on the effect's cleanup: it re-checks this after its await and drops the result if the
    * page has moved to another event in the meantime.
@@ -89,6 +196,34 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
   const writeEpoch = useRef(0);
   const appliedEpoch = useRef(0);
 
+  /**
+   * Re-reads scheduled after a conversion, so a delivery failure can reach the screen it is for.
+   *
+   * The warning below renders `failedAlertDeliveries` out of the POST's own response, and that
+   * response is assembled before the alerts it just scheduled have been attempted — the poller
+   * cannot record a failure until after the state on screen was rendered. With no reload path, a
+   * failed reminder stayed silent forever unless the organizer happened to refresh, which closed
+   * the entry point to everything the contact-correction work built: the address is correctable,
+   * the corrected one no longer inherits the old one's failures, it gets a fresh provider identity,
+   * the audit row is no longer rewritten, and none of it is reachable by someone who is never told
+   * there is anything to correct.
+   *
+   * BOUNDED RE-READS RATHER THAN A LIVE UPDATE PATH, and the window is taken from the criterion
+   * instead of chosen. AC 2 promises delivery within two minutes of `send_at`, and the slack
+   * warning and any already-due reminder are written with `send_at` of now, so two minutes after
+   * the conversion is exactly when "it was attempted and failed" has become knowable. Reading at
+   * the poller's interval and again at the bound covers it in two requests that stop by
+   * themselves. A subscription or a general poll would promise freshness this page does not
+   * otherwise offer and would keep running for a fact that becomes true once.
+   *
+   * What this does NOT cover, said rather than implied: a reminder that fails days later, on its
+   * own filing date, with nobody on the page. That needs a channel this product does not have, and
+   * the checklist shows it on the next visit.
+   */
+  const deliveryReads = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const ALERT_POLL_INTERVAL_MS = 60_000;
+  const ALERT_DELIVERY_BOUND_MS = 120_000;
+
   useEffect(() => {
     active.current = showing;
     let abandoned = false;
@@ -103,10 +238,21 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     appliedEpoch.current = 0;
 
     setMeta(null);
+    // A contact belongs to one event, so it is cleared on the way in for the same reason the
+    // items are: nothing of one organizer's event may render under another's id.
+    setContacts({ email: "", phone: "" });
 
     void loadChecklist(apiBaseUrl, eventId).then((result) => {
       if (abandoned) return;
       setState(stateFrom(result));
+      // Seeded from what is stored, so the boxes show what alerts are actually going to and a
+      // review that changes nothing else re-states the same contact rather than clearing it.
+      if (result.ok) {
+        setContacts({
+          email: result.checklist.alertContacts.email ?? "",
+          phone: result.checklist.alertContacts.phone ?? "",
+        });
+      }
     });
 
     // The checklist never waits for this: the banner states its plan's own pinned pair without it,
@@ -118,6 +264,8 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
 
     return () => {
       abandoned = true;
+      // One organizer's pending re-read must never land on another organizer's checklist.
+      for (const timer of deliveryReads.current.splice(0)) clearTimeout(timer);
     };
   }, [apiBaseUrl, eventId, showing]);
 
@@ -136,7 +284,7 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     setCreating(true);
     setCreationFailure(null);
 
-    const result = await createChecklist(apiBaseUrl, eventId, displayedPlanId);
+    const result = await createChecklist(apiBaseUrl, eventId, displayedPlanId, contacts);
     if (active.current !== requested) return;
     if (!result.ok) {
       // Superseded is not a failure to report and stop at: the plan moved while this page was
@@ -166,6 +314,21 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
     // rule and an exception.
     setCreationFailure(await reload(requested));
     setCreating(false);
+
+    // Only when there is somewhere for an alert to go. With no contact the api schedules nothing
+    // and says so, and there is no delivery whose failure could arrive later.
+    if (contacts.email.trim() !== "" || contacts.phone.trim() !== "") {
+      for (const timer of deliveryReads.current.splice(0)) clearTimeout(timer);
+      for (const delay of [ALERT_POLL_INTERVAL_MS, ALERT_DELIVERY_BOUND_MS]) {
+        deliveryReads.current.push(
+          setTimeout(() => {
+            // Through the same epoch-ordered re-read as every other refresh, so a late one cannot
+            // put stale counts back over a status the organizer has changed since.
+            void reload(requested);
+          }, delay),
+        );
+      }
+    }
   };
 
   /**
@@ -350,8 +513,107 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
         </p>
       )}
 
-      {(!checklist.created || checklist.planChanged) && !checklist.planStale && (
+      {/* AC 5: an alert channel that reported sent without delivering. Placed with the other flags
+          rather than beside a requirement, because it is a fact about this event's alerts as a
+          whole and not about any one filing — and an organizer who reads nothing else on this page
+          still has to learn that a message they are counting on did not arrive. */}
+      {checklist.simulatedAlertDeliveries.map((delivery) => (
+        <p className="checklist__flag" role="alert" key={delivery.channel}>
+          {simulatedDeliveryNotice(delivery)}
+        </p>
+      ))}
+
+      {/* A channel that tried to send and failed. Its own block rather than folded into the one
+          above: "switched off by design" and "attempted and did not arrive" are different facts,
+          and an organizer needs to tell them apart. F-203 exists so a filing deadline does not
+          pass unnoticed, and an alert failing silently is precisely that — until this, nothing on
+          any surface said so. Nothing renders when no failure was observed, because an empty
+          count is not evidence the channel works. */}
+      {checklist.failedAlertDeliveries.map((failure) => (
+        <p className="checklist__flag" role="alert" key={`failed-${failure.channel}`}>
+          {failedDeliveryNotice(failure)}
+        </p>
+      ))}
+
+      {/* THE CONTACT OUTLIVES THE CONVERSION, so it is not rendered by the conversion's condition.
+          Both used to hang off "there is something to convert", which meant that the moment a
+          checklist was current the inputs and the only button that submits them disappeared: an
+          organizer who mistyped an address had no way to correct it, and the alerts already
+          scheduled went on retrying the unusable one until some unrelated regeneration happened to
+          bring the button back. `planStale` still hides it, because the api refuses the POST in
+          that state and a control that cannot succeed is worse than none. */}
+      {!checklist.planStale && (
         <div className="checklist__actions">
+          {/* F-203: where the deadline reminders go. Collected at conversion because that is the
+              moment the spec collects it, and editable afterwards because an address is a fact
+              about the event rather than about that one click. Left blank, no alerts are scheduled
+              and the api says so; there is no account to fall back on in the MVP. */}
+          <label className="intake__label" htmlFor="alert-email">
+            Email for deadline reminders
+          </label>
+          <input
+            id="alert-email"
+            className="intake__input"
+            type="email"
+            value={contacts.email}
+            onChange={(event) => setContacts({ ...contacts, email: event.target.value })}
+          />
+          <label className="intake__label" htmlFor="alert-phone">
+            Mobile number (optional)
+          </label>
+          <input
+            id="alert-phone"
+            className="intake__input"
+            type="tel"
+            value={contacts.phone}
+            onChange={(event) => setContacts({ ...contacts, phone: event.target.value })}
+          />
+          {/* Said before they type it, not after a message fails to arrive. A number entered on
+              the strength of an unqualified "mobile number" box would be one the organizer is
+              relying on, and text sending is not switched on yet.
+
+              WRITTEN FROM THIS EVENT'S CONTACTS, NOT FROM WHAT THE FEATURE CAN DO. Both contact
+              columns are nullable and the scheduler only takes channels that have a destination, so
+              phone-only is a supported configuration in which NO email alert is scheduled at all.
+              The unconditional version reassured that organizer about a delivery path they do not
+              have, which is the worst version of this sentence: it is read by exactly the person
+              for whom it is false.
+
+              The alternative was to require an email before offering reminders, and it is the wrong
+              trade. The schema permits phone-only deliberately, and refusing to store a number
+              until an address exists would break a configuration the api supports in order to make
+              one sentence easier to write. Saying what the current pair produces costs nothing and
+              tells the organizer something they can act on.
+
+              Tense, since it differs from the two notices above: those describe what HAS happened
+              and read it off the alert rows, while this describes what the form will produce and
+              reads it off the inputs. Both are state; only the state differs.
+
+              AND IT PROMISES ROUTING, NOT ARRIVAL, which is the second half and the one the first
+              pass missed. There are three things this sentence could key on and they are not the
+              same question: whether a CONTACT exists, whether the SENDER is configured, and whether
+              rows were actually SCHEDULED. Keying on the contact alone still told an organizer with
+              a perfectly good address that their reminders go to their email while
+              `sendersFromEnv` had selected `unconfiguredEmailSender`, which is the supported bare
+              and local configuration, and every one of those alerts fails and retries.
+
+              The page cannot key on the sender, and that is not an oversight to fix here: the
+              checklist response reports contacts and rows and says nothing about provider
+              credentials. `simulatedDeliveryNotice` above already refuses to reassure for exactly
+              this reason, in a comment written in round 7, and this sentence was breaking that rule
+              one function below where it is stated.
+
+              So it says where reminders are ADDRESSED, which the contacts settle on their own, and
+              claims nothing about arrival. What did not arrive is the failed-delivery notice's job,
+              and that one counts real rows. */}
+          <p className="checklist__lede">
+            {contacts.email.trim() === ""
+              ? "Text messages are not being sent yet, and no email address is set, so no deadline reminders will be delivered. Add an email address to receive them. A number entered now is stored for when text sending is switched on."
+              : "Text messages are not being sent yet, so deadline reminders are addressed to your email instead. A number entered now is stored for when text sending is switched on."}
+          </p>
+          {/* One endpoint, one button, because the conversion IS idempotent: posting the plan the
+              page is showing when nothing has changed creates nothing and records the contact.
+              What changes is what the button honestly says it will do. */}
           <button
             className="intake__submit"
             type="button"
@@ -360,9 +622,11 @@ export function ChecklistView({ apiBaseUrl, eventId }: { apiBaseUrl: string; eve
           >
             {creating
               ? "Working…"
-              : checklist.created
-                ? "Review items against the current plan"
-                : "Create the checklist from this plan"}
+              : !checklist.created
+                ? "Create the checklist from this plan"
+                : checklist.planChanged
+                  ? "Review items against the current plan"
+                  : "Save contact details"}
           </button>
         </div>
       )}

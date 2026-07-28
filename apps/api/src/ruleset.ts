@@ -387,6 +387,18 @@ function requireAlertOffsets(value: unknown, label: string): void {
   }
 }
 
+/**
+ * The reminder offsets F-203 schedules from, read off the artifact rather than restated as a
+ * constant — the spec says they are config and not code. Safe to assert the shape here because
+ * `requireAlertOffsets` refused the load otherwise; boot is where an unusable value fails.
+ */
+export function deadlineReminderOffsets(ruleset: PublishedRuleset): number[] {
+  const config = ruleset.document.config as {
+    alert_offsets: Record<string, { days_before: number[] }>;
+  };
+  return [...(config.alert_offsets[REQUIRED_ALERT_TYPE]?.days_before ?? [])];
+}
+
 function parseSource(value: unknown, label: string): JsonObject {
   const source = requireObject(value, label);
   requireString(source, "citation", label);

@@ -115,6 +115,52 @@ export type ChecklistItem = PlanContext & {
  */
 export type StatusRollup = Readonly<Record<ChecklistStatus, number>>;
 
+/**
+ * A channel that recorded alerts as sent without delivering them (F-203 AC 5).
+ *
+ * Twilio A2P 10DLC registration is not approved, so SMS is the labelled in-product simulation
+ * DESIGN.md permits — "simulated email send shown in-product" is on its list of permitted demo
+ * fallbacks, and AGENTS.md allows a simulation only while the UI labels it. The row carries an
+ * operator's version of that label; what an organizer needs is the plain fact that no message
+ * arrived, which is why this consumes the channel and the count and leaves the stored string to
+ * the audit record it belongs to.
+ *
+ * `channel` is a plain string for the reason `ConsumedDeadline.type` is: it is humanised for
+ * display, so pinning it to today's two values would make a future channel reject an entire
+ * checklist the page would otherwise render correctly.
+ */
+export type SimulatedAlertDelivery = {
+  readonly channel: string;
+  readonly sentCount: number;
+};
+
+/**
+ * Where this event's deadline alerts are sent (F-203 Inputs: entered at checklist creation, since
+ * the MVP has no account to read an address off).
+ *
+ * A fact about the EVENT, which is why it round-trips: the organizer sees what is on file and can
+ * correct it. It is not read off a sent alert — that records where one message went, which is a
+ * different fact that must not change once it is true.
+ */
+/**
+ * A channel whose alerts tried to send and did not (F-203).
+ *
+ * Observed, not inferred: the api counts rows whose latest attempt failed. An absent entry means
+ * no failures were observed, which is NOT the same as the channel working — nothing may have been
+ * attempted — so nothing is rendered from an absence.
+ */
+export type FailedAlertDelivery = {
+  readonly channel: string;
+  readonly failedCount: number;
+  /** Whether these rows are held because their own plan is behind the event, not the latest one. */
+  readonly heldForReview: boolean;
+};
+
+export type AlertContacts = {
+  readonly email: string | null;
+  readonly phone: string | null;
+};
+
 export type ChecklistResponse = {
   /**
    * The plan these rows were built from. Read so the page can say WHICH plan it is showing when
@@ -135,6 +181,11 @@ export type ChecklistResponse = {
   readonly items: readonly ChecklistItem[];
   /** Advisories and notes: read-only context, never trackable tasks. */
   readonly contextItems: readonly PlanContext[];
+  /** Empty in every configuration where every alert that reported sent was actually delivered. */
+  readonly simulatedAlertDeliveries: readonly SimulatedAlertDelivery[];
+  /** Empty when no alert for this event has an attempt behind it that failed. */
+  readonly failedAlertDeliveries: readonly FailedAlertDelivery[];
+  readonly alertContacts: AlertContacts;
 };
 
 export type ChecklistResult =
@@ -299,6 +350,22 @@ const ROLLUP_CHECKS = Object.fromEntries(
   CHECKLIST_STATUSES.map((status) => [status, isNumber]),
 ) as FieldChecks<StatusRollup>;
 
+const SIMULATED_DELIVERY_CHECKS: FieldChecks<SimulatedAlertDelivery> = {
+  channel: isString,
+  sentCount: isNumber,
+};
+
+const FAILED_DELIVERY_CHECKS: FieldChecks<FailedAlertDelivery> = {
+  channel: isString,
+  failedCount: isNumber,
+  heldForReview: isBoolean,
+};
+
+const ALERT_CONTACTS_CHECKS: FieldChecks<AlertContacts> = {
+  email: nullOr(isString),
+  phone: nullOr(isString),
+};
+
 const CHECKLIST_CHECKS: FieldChecks<ChecklistResponse> = {
   planId: isString,
   rulesetVersion: isString,
@@ -309,6 +376,9 @@ const CHECKLIST_CHECKS: FieldChecks<ChecklistResponse> = {
   statusRollup: shapedLike(ROLLUP_CHECKS),
   items: arrayOf(shapedLike(ITEM_CHECKS)),
   contextItems: arrayOf(shapedLike(PLAN_CONTEXT_CHECKS)),
+  simulatedAlertDeliveries: arrayOf(shapedLike(SIMULATED_DELIVERY_CHECKS)),
+  failedAlertDeliveries: arrayOf(shapedLike(FAILED_DELIVERY_CHECKS)),
+  alertContacts: shapedLike(ALERT_CONTACTS_CHECKS),
 };
 
 const ITEM_UPDATE_CHECKS: FieldChecks<ChecklistItemUpdate> = {
@@ -367,13 +437,26 @@ export async function createChecklist(
   apiBaseUrl: string,
   eventId: string,
   displayedPlanId: string,
+  contacts: AlertContacts,
 ): Promise<ChecklistResult> {
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}/api/events/${eventId}/checklist`, {
       method: "POST",
       ...CREDENTIALED,
-      body: JSON.stringify({ planId: displayedPlanId }),
+      // The plan the organizer was reading, and where the alerts go, in one body. The contact is
+      // sent WITH the conversion because that is the moment F-203 collects it: this call used to
+      // carry no contact at all, so the api resolved no channel and scheduled nothing, and the
+      // whole feature was unreachable from the product.
+      //
+      // An empty box is null rather than "", which is how the api tells "clear this" from "the
+      // request said nothing about it" — and a review that submits both boxes as the organizer
+      // left them is stating both, which is what should overwrite.
+      body: JSON.stringify({
+        planId: displayedPlanId,
+        contactEmail: contacts.email === null || contacts.email === "" ? null : contacts.email,
+        contactPhone: contacts.phone === null || contacts.phone === "" ? null : contacts.phone,
+      }),
     });
   } catch {
     return { ok: false, noPlan: false, message: UNREACHABLE };

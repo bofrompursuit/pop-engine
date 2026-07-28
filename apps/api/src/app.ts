@@ -1,5 +1,6 @@
 import express, { type Express, type Response } from "express";
 import { describeEngine, EvaluationError } from "@pop-engine/engine";
+import { createAlertsRouter, type AlertsDependencies } from "./alerts";
 import { createCheckinsRouter } from "./checkins";
 import { createChecklistRouter, type ChecklistDependencies } from "./checklist";
 import { createEventsRouter, type EventsDependencies } from "./events";
@@ -20,6 +21,8 @@ export type AppDependencies = EventsDependencies & {
   planService?: PlanService;
   /** Same contract for F-202: the checklist routes register only when storage is supplied. */
   checklist?: ChecklistDependencies;
+  /** Same contract for F-203: the alert test route registers only when senders are supplied. */
+  alerts?: AlertsDependencies;
   /** Absent in the scaffold's own tests; the rules-meta route registers only when it is supplied. */
   rulesMeta?: RulesMeta;
 };
@@ -78,6 +81,9 @@ export function createApp(dependencies: AppDependencies): Express {
   if (dependencies.planService !== undefined) registerPlanRoutes(app, dependencies.planService);
   if (dependencies.checklist !== undefined) {
     app.use("/api", createChecklistRouter(dependencies.checklist));
+  }
+  if (dependencies.alerts !== undefined) {
+    app.use("/api", createAlertsRouter(dependencies.alerts));
   }
   if (dependencies.rulesMeta !== undefined) registerRulesRoutes(app, dependencies.rulesMeta);
 

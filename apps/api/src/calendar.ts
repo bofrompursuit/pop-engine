@@ -227,6 +227,53 @@ export function todayInJurisdiction(jurisdiction: string, now: Date = new Date()
   }).format(now);
 }
 
+/**
+ * The instant a given local hour falls on, on a published calendar day in the jurisdiction.
+ *
+ * F-203 schedules from dates, and a date is not an instant. Scheduling `latest_apply_date − 7` at
+ * UTC midnight would send the reminder at 8pm New York time on the day BEFORE the one it names,
+ * which is a day the copy does not claim. The mapping this reads is the same deployment mapping
+ * `todayInJurisdiction` uses, so the whole api agrees on which clock a calendar day belongs to.
+ *
+ * The offset is read at the naive instant and applied once. Every jurisdiction here changes offset
+ * at 2am local, so a sending hour in the working day is never the ambiguous or skipped hour a
+ * two-pass resolution exists to handle.
+ */
+export function instantAtLocalHour(jurisdiction: string, isoDate: string, hour: number): Date {
+  const timeZone = JURISDICTION_TIME_ZONES[jurisdiction];
+  if (timeZone === undefined) throw new UnmappedJurisdictionError(jurisdiction);
+  const [year, month, day] = isoDate.split("-").map(Number) as [number, number, number];
+  const naive = Date.UTC(year, month - 1, day, hour);
+  return new Date(naive - zoneOffsetMs(new Date(naive), timeZone));
+}
+
+/** How far ahead of UTC the zone is at `instant`, in milliseconds. */
+function zoneOffsetMs(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(instant);
+  const field = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+  // `hour` formats midnight as 24 under hour12: false; Date.UTC normalizes it to the next day,
+  // which is the same instant, so no special case is needed.
+  const asUtc = Date.UTC(
+    field("year"),
+    field("month") - 1,
+    field("day"),
+    field("hour"),
+    field("minute"),
+    field("second"),
+  );
+  return asUtc - instant.getTime();
+}
+
 /** Operational warning at boot: plans still generate, but business-day lines will not be dated. */
 export function holidayCalendarWarning(calendar: HolidayCalendar): string | null {
   return calendar.holidays === null ? new MissingHolidayCalendarError(calendar.id).message : null;
