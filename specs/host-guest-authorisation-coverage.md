@@ -115,7 +115,7 @@ So the feature emits an ordinary finding, and the answer decides whether it is e
 | **`yes`** | emitted | **`may_be_required`** | direct the operator to confirm with DOB; assert no reduction |
 | **`no`** | emitted | **`may_be_required`** | state that the operator's own filing is unresolved |
 | **`unknown`** (explicit) | emitted, **both rules** | **`may_be_required`** | both texts; measured, see below |
-| **in scope, NO answer** | not reachable through the product | n/a | `validateIntake` refuses it; engine-level only |
+| **in scope, NO answer** | emitted, **both rules**, on the rescope path | **`may_be_required`** | a submission cannot be in this state; a rescope variant can and Scenario A's is |
 
 **Why `may_be_required` and not something else.** It is the disposition
 `DOB-ASSEMBLY-001` already publishes, and it means exactly what the sources support: the requirement
@@ -150,13 +150,14 @@ both artifacts move in the same commit.
 | `kind` | `note` | `note` | PINNED, derived below |
 | `trigger.all` | the published gate verbatim (`location_type eq private_venue`, `headcount gte 75`) plus `venue_has_assembly_approval eq yes` | the same gate plus `venue_has_assembly_approval in ["no", "unknown"]` | PINNED |
 | `output.disposition` | `MAY_BE_REQUIRED` | `MAY_BE_REQUIRED` | PINNED, and it must be written explicitly; see the default trap |
+| `output.requirement_name` | a short non-regulatory heading naming the question | the same heading | PINNED as PRESENT; see the double-render below |
 | `output.note_text` | confirms with DOB and asserts no reduction (F-1NN-AC-01) | states the operator's own filing is unresolved (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
 | `output.permit_name`, `agency`, `deadline`, `fee` | ABSENT | ABSENT | PINNED as absent |
 | `output.dedupe_key` | ABSENT | ABSENT | PINNED as absent, decided below |
-| `source.citation`, `source.urls` | drawn from `DOB-ASSEMBLY-001`'s existing block, no new source | same | **BLOCKED** on the verification owner |
-| `verification.status` | `RESEARCH_REQUIRED` is the only legend value that fits | same | **BLOCKED** on the verification owner |
-| `verification.qualification`, `evidence` | point at the existing record of the silence | same | **BLOCKED** on the verification owner |
-| `exercised_by_scenarios` | `["F", <the new explicit-no fixture>]` | same | PINNED, and NOT `A-rescope`; see below |
+| `source.citation`, `source.urls` | cannot be settled inside this spec | same | **BLOCKED**: contract conflict, see below |
+| `verification.status` | cannot be settled inside this spec | same | **BLOCKED**: contract conflict, see below |
+| `verification.qualification`, `evidence` | point at the existing record of the silence, whichever status is chosen | same | **BLOCKED** on the verification owner |
+| `exercised_by_scenarios` | `["F", "A-rescope"]` | `["F", "A-rescope", <the new explicit-no fixture>]` | PINNED per rule, derived against each trigger |
 
 **`kind: note`, and the alternative was measured rather than assumed.** A `permit`-kind finding is
 trackable: `apps/api/src/checklist.ts` limits tasks to `permit` and `insurance`, so a permit-kind
@@ -166,9 +167,26 @@ does not exist. `note` is the shipped shape for a rule that qualifies another re
 being one: `PARKS-INSURANCE-NOTE-001` is `kind: note`, publishes `note_text` alone, carries no
 `dedupe_key`, and sits beside `PARKS-EVENT-001`. Measured on the published ruleset with a note rule
 added: it renders as its own finding, `kind=note`, with `deadline=null` and its own
-`verificationStatus`, and `parseRule` falls `name` back to `note_text`
-(`packages/engine/src/ruleset.ts:454`), so the note text is also the line's heading and must read as
-one.
+`verificationStatus`. `note` is also not in `AGENCY_REQUIRED_KINDS`
+(`apps/api/src/ruleset.ts:148`), so omitting `agency` parses, which the `permit` kind would not
+allow.
+
+**`requirement_name` is PRESENT, and round 5's reading of the `name` fallback was half the story.**
+`parseRule` falls `name` back through `permit_name`, `requirement_name`, `advisory_text`,
+`note_text` (`packages/engine/src/ruleset.ts:454`), and round 5 concluded from that only that the
+note text becomes the heading. What it missed is that `PlanLine` renders BOTH: `finding.name` in the
+`<h3>` (`apps/web/app/plan/plan-line.tsx:98`) and `finding.noteText` in its own paragraph (`:126`),
+independently. A rule publishing `note_text` and nothing above it in the fallback chain therefore
+displays its whole sentence twice, once as the heading and once as the body.
+
+So each rule publishes a short `requirement_name` as well, and the pair is shipped practice rather
+than a new shape: `SAPO-BLOCK-PARTY-ELIG-001` publishes `requirement_name: "Block party eligibility
+conflict"` with a longer `note_text`, and `NYPD-SOUND-PARKS-DEP-001` does the same. The heading names
+the QUESTION and asserts no permit fact, in the manner of those two: it says which authorisation and
+whose filing are at issue, and says nothing about whether either is required, reduced or held. The
+alternative, suppressing the body when it equals the heading, is refused: it is a rendering change in
+`apps/web/app/plan`, a lane this feature otherwise does not touch at all, and PR #176 is changing
+those same components. A published heading costs one field.
 
 **THE DEFAULT TRAP, and it is the reason `disposition` may not be omitted.**
 `DEFAULT_DISPOSITION_BY_RULE_KIND` in `packages/engine/src/proposals.ts:55` maps `note` to
@@ -178,6 +196,81 @@ says nothing about its disposition renders the one output this feature must neve
 `MAY_BE_REQUIRED` explicitly is what prevents it, and `resolveDisposition` leaves a published
 `may_be_required` alone on an unknown trigger, since only `required` is downgraded.
 
+### The verification status and the source block are a contract conflict, not a wording choice
+
+Round 5 pinned `RESEARCH_REQUIRED` and told the implementer to draw the citation from
+`DOB-ASSEMBLY-001`'s existing block. **Those two instructions cannot both be followed honestly, and
+the reason is in the loader rather than in the prose.**
+
+- The published legend defines `RESEARCH_REQUIRED` as "no primary source located in two research
+  passes; rendered as 'confirm with agency'", and `PlanLine` renders exactly that meaning:
+  `apps/web/app/plan/plan-line.tsx:91` and `:117` put `CONFIRM_WITH_AGENCY` on the line, under a
+  comment reading "A RESEARCH_REQUIRED line has no located primary source".
+- `validateRuleset` requires a source for every status except `COVERAGE_GAP`
+  (`apps/api/src/ruleset.ts:486`: "source is required unless verification.status is COVERAGE_GAP").
+- So a `RESEARCH_REQUIRED` rule must carry a source to load, and carrying one contradicts the
+  status's published meaning. `PlanLine` renders the contradiction on one line: the
+  no-located-source sentence at `:117` and the citation list at `:199`.
+- And the sources that could be attached are the wrong kind of true. DOB-ASSEMBLY-001's own
+  verification block records that whether a filing is required at all at a venue already holding a
+  certificate "is NOT PUBLISHED in either direction". Its citations establish the instrument, not the
+  proposition these rules state, so they would sit beside an output they do not support.
+
+**Whether any other legend value is defensible: none is.** Each is refused on the published legend
+rather than on preference:
+
+| Status | Legend text | Why it is not this rule |
+| --- | --- | --- |
+| `SOURCE_CONFIRMED` | "fetch-confirmed primary-source quote on file" | there is no quote on file for this proposition; this is the laundering round 5 already refused |
+| `VERIFIED` | "verification owner confirmed ... (none at publication; only the verification owner assigns this)" | nothing is confirmed, and the legend reserves the value |
+| `OFFICIAL_CONFLICT` | "live official pages disagree; both readings encoded" | this is silence in the sources, not disagreement between them |
+| `COVERAGE_GAP` | "combination not modeled by this ruleset version; advisory asserts nothing" | the combination IS modelled once these rules exist, and three further consequences below |
+| `RESEARCH_REQUIRED` | "no primary source located in two research passes" | the only value whose meaning is close, and the loader will not let it stand without a source |
+
+`COVERAGE_GAP` is the one that parses without a source, so it deserves its refusal in full. It states
+that this ruleset version does not model the combination, which is false the moment these rules fire
+on it. `apps/web/app/verification-copy.ts` renders it to the operator as the plan possibly being
+incomplete for their event, which is a second false statement. And it silently breaks Scenario A:
+`buildRescopeSuggestions` drops any rescope that introduces a `COVERAGE_GAP` finding
+(`packages/engine/src/verdict.ts`, "a coverage gap asserts nothing"), so A's private-venue rescope
+would stop being suggested, `DOB-ASSEMBLY-001` would no longer be reached in `A-rescope`, and its own
+`exercised_by_scenarios` claim would fail the agreement suite. Both artifacts that carry
+`COVERAGE_GAP` today are advisories with no source, which is the shape the legend's wording describes.
+
+**Nothing in this ruleset publishes `RESEARCH_REQUIRED` today.** All 33 rules are `SOURCE_CONFIRMED`
+or `OFFICIAL_CONFLICT`; the two `COVERAGE_GAP` artifacts are advisories. So this feature would be the
+status's first use, and the conflict above has never been exercised. **This is the same shape as PR
+#170's finding that the schema cannot express a non-regulatory rule: the artifact format has no slot
+for "sources located, and expressly silent on this proposition".**
+
+**BLOCKED on the verification owner. Four options, with their owners, none chosen here:**
+
+1. **Widen the loader's exemption** so `RESEARCH_REQUIRED` may also omit a source: one condition at
+   `apps/api/src/ruleset.ts:486`. The rule then states the honest status and carries no citation,
+   which `PlanLine` already renders coherently (`CONFIRM_WITH_AGENCY`, no citation list) and F-206
+   Acceptance Criterion 3 already contemplates. Cost: it is a rules-schema contract change, so
+   governance §6's "Event Input, rules schema, OpenAPI, shared enum" row applies, requiring all
+   affected lane owners and the architecture owner, with the **engine owner** named. It also weakens
+   the guard for all 33 rules, since any rule could then omit its source by claiming this status.
+2. **Amend the published legend** so `RESEARCH_REQUIRED` distinguishes "no source located" from
+   "sources located and silent on this fact", and keep the source block. No code change; regulatory
+   status content, so verification owner plus rules reviewer, plus the documentation owner for the
+   rendered copy. Constraint to check before drafting: `apps/web/app/verification-copy-prose.test.ts`
+   denies the source-absence family across PRD, DESIGN, F-201, F-206 and `apps/web`, so the amendment
+   has to be worded to pass that guard rather than around it.
+3. **Publish the statement with `COVERAGE_GAP`.** Refused above on three counts, recorded as an
+   option only so the refusal is on the record.
+4. **Publish nothing**, which is this spec's existing fallback: the field stays in
+   `UNCONSUMED_INTAKE_FIELDS` and answering it changes no output.
+
+The author's recommendation, which is not a decision: option 1. It is the only one that leaves the
+artifact stating something true without amending a published meaning that four approved documents and
+a prose guard depend on, and its cost is a contract change that the engine owner reviews rather than a
+regulatory claim anyone has to stand behind. **One trap for whoever implements it:** the engine's own
+`parseSource` returns null for an absent source without complaint
+(`packages/engine/src/ruleset.ts:401`), so a source-less rule parses in the engine and the entire
+fixture suite stays green. The failure appears only at API boot and in `apps/api/src/ruleset.test.ts`.
+
 **NO SHARED `dedupe_key` WITH `DOB-ASSEMBLY-001`. One finding or two is a user-visible product
 choice, so it is decided here, and it is decided on three measured consequences of merging**, taken
 from the published ruleset with a shared key added:
@@ -186,8 +279,9 @@ from the published ruleset with a shared key added:
    the FIRST finding and concatenates only `ruleIds`, `notes`, `sources`, `triggeredBy` and
    `deadlineUnknownFields`. `verificationStatus` is not merged. With the note listed after
    `DOB-ASSEMBLY-001` the merged line carries `vstatus=SOURCE_CONFIRMED`, so F-206's per-line
-   rendering shows a confirmed status beside a statement whose own status is `RESEARCH_REQUIRED`, and
-   that status's "confirm with agency" rendering is lost.
+   rendering shows a confirmed status beside a statement that cannot honestly carry one, whatever the
+   status question above resolves to, and any weaker status's own rendering is lost. Merging also
+   makes that question unaskable: the merged line has one status for two rules.
 2. **Every displayed scalar depends on array order.** Listed AFTER, the merged line is
    `kind=permit` with DOB's name and its `business_days_minimum` deadline. Listed BEFORE, the same
    pair becomes `kind=note`, `name` = the note text, `deadline=null`: the TPA permit line stops being
@@ -218,17 +312,73 @@ guard firing):
 | `yes` | HELD only | the `in ["no", "unknown"]` term resolves false |
 | `no` | UNRESOLVED only | the `eq yes` term resolves false |
 | explicit `unknown` | **BOTH** | a rule that does not list `unknown` among its accepted values gets tri-state `unknown` for an explicit `unknown`, and `findings.ts` continues only on `false` |
-| in scope, no answer | not reachable through the product; see below | |
+| in scope, no answer | **BOTH**, and only on the rescope path | the terms read an absent answer as tri-state `unknown`; the submission path never gets there because `validateIntake` refuses the omission |
 
-**Two consequences the earlier table got wrong.** An explicit `unknown` emits BOTH notes, so the two
-note texts must be jointly true rather than alternatives, and F-1NN-AC-02 expects two findings.
-And the mapping's fourth row describes an intake the product refuses: measured through
-`parseIntakeContract` and `validateIntake`, a private-venue intake at headcount 75 or more with
-`venue_has_assembly_approval` omitted returns
-`{field: "venue_has_assembly_approval", code: "required"}`. F-101 validates on submission, so no
-stored event can be in scope with no answer. The case survives only at the engine level, by calling
-`evaluate` directly, which is why `A-rescope` is not in `exercised_by_scenarios`: a fixture for
-Scenario A's private-venue rescope must ANSWER the field or `validateIntake` rejects it.
+An explicit `unknown` emits BOTH notes, so the two note texts must be jointly true rather than
+alternatives, and F-1NN-AC-02 expects two findings.
+
+### Which path each output has been checked against
+
+Three rounds running, a conclusion true on one path has been carried onto another where it is false:
+round 4 described plan states the shared contract cannot carry, round 5 priced a rule shape without
+reading the renderer, and round 5 also retired the no-answer case on a validator that one of the two
+paths reaching it does not run. So the paths are named, and every output above states which of them it
+was checked against.
+
+| Path | What runs | Checked how |
+| --- | --- | --- |
+| Submission | `parseIntakeContract` then `validateIntake`, then `evaluate` (F-101, `POST /api/events`) | measured: the omission returns `{field: "venue_has_assembly_approval", code: "required"}` |
+| Rescope | `buildRescopeSuggestions` then `evaluateConditional`; the suite's `rescopeReachedIn` and `rescopePlan` then call `evaluate`. **No validator on either** | read in `packages/engine/src/verdict.ts` and `fixture-ruleset-agreement.test.ts:432` and `:462` |
+| Fixture and metadata | the agreement suite's bidirectional `exercised_by_scenarios` checks, plus `acceptance.test.ts` finding sets | read, and the entries below derived against each trigger |
+| Loader | `validateRuleset` at boot, `parseEngineRuleset` at load | read, and the unconsumed-field guard confirmed by firing |
+| Render | `PlanLine`, `verification-copy.ts`, F-206's per-line rules | read at `plan-line.tsx:98`, `:117`, `:126`, `:196`, `:199` |
+
+**The rescope path produces the no-answer case, so the spec specifies it rather than calling it
+invalid.** Round 5 was right that a submission cannot be in scope with no answer, and wrong to
+conclude the case does not arise. `buildRescopeSuggestions` builds each variant as
+`{ ...intake, [field]: value }`, ONE field changed, and evaluates it through `evaluateConditional`
+directly; the agreement suite's `rescopeReachedIn` and `rescopePlan` do the same through `evaluate`.
+Neither calls `validateIntake`. Scenario A's private-venue rescope therefore changes `location_type`
+alone, leaves `venue_has_assembly_approval` absent, satisfies both gate terms (`headcount: 75` meets
+`gte 75`), and reads the third term as a material unknown.
+
+That variant is not a valid submission, and not only on this field: measured through
+`validateIntake`, A with `location_type: private_venue` also reports `obstructs_public_way`,
+`sapo_event_type` and `street_event_size` as `not_applicable`. The one-field rescope is an
+engine-level artifact by construction, which is why treating it as an invalid intake is not available:
+the code produces it, the answer key documents it as rescope (c), and `DOB-ASSEMBLY-001` already
+claims `A-rescope` on the strength of it.
+
+**So both rules name `A-rescope`, and their output for it is specified here:** each is reached with
+its trigger resolving tri-state `unknown`, so each emits with `disposition: may_be_required` and its
+own note text, `venue_has_assembly_approval` appears in `missingFacts` with its branches evaluated,
+and the verdict remains CONDITIONAL on that unknown. Omitting the entry fails the agreement suite from
+the other direction: `metadataOmissions` requires every rule a rescope reaches, fired or conditional,
+to list it.
+
+**The coordinated multi-field rescope is NOT in scope**, and that is a decision rather than an
+omission. Making the variant a valid submission means `buildRescopeSuggestions` changing several
+fields at once, which changes what a rescope suggestion IS for every rule in the ruleset, is engine
+work under F-102's verdict machinery rather than this feature's, and would move Scenario A's
+documented rescopes. Recorded as a coordination point, not adopted.
+
+### `exercised_by_scenarios`, derived per rule against its own trigger
+
+Round 5 pinned the same list on both rules, which the agreement suite refuses in the other direction:
+`claimsButCannotReach` fails a rule listing a scenario it never reaches, and the explicit-`no` fixture
+is unreachable for the HELD rule because `eq yes` resolves false on it. With the `A-rescope` entry
+removed last round, that makes two entries wrong in the same table, so every entry is now derived
+against the trigger rather than copied:
+
+| Scenario | HELD (`eq yes`) | UNRESOLVED (`in ["no", "unknown"]`) | Why |
+| --- | --- | --- | --- |
+| F (explicit `unknown`) | listed | listed | measured: an explicit `unknown` resolves tri-state `unknown` for HELD and TRUE for UNRESOLVED, and both emit |
+| the new explicit-`no` fixture | **NOT listed** | listed | `eq yes` resolves false on `no`, so HELD is not reached, fired or conditional |
+| `A-rescope` (absent) | listed | listed | both terms read an absent in-scope answer as `unknown`, and the rescope path runs no validator |
+| A, B, C, D, E base | neither | neither | the gate needs `private_venue` and `headcount gte 75`; B is a private venue at 60 |
+
+Scenario B is the one worth stating explicitly, because it is a private venue and therefore looks like
+a candidate: its `headcount` is 60, so the published gate never opens and the field is never asked.
 
 ## State, Validation and Errors
 
@@ -329,19 +479,20 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    emits the finding with the unresolved-filing note text. This needs its own fixture: **no approved
    scenario contains an explicit `no` for this field**, so without one an implementation could omit
    or misclassify the known-negative path and still satisfy every other criterion here.
-4. **F-1NN-AC-04 · IN SCOPE WITH NO ANSWER IS REFUSED BY INTAKE, and the criterion says so rather
-   than defining plan output for it.** Round 4 defined this case as behaving like a stated `no`. It
-   cannot arise through the product: measured through `parseIntakeContract` and `validateIntake`, a
-   private-venue intake at `headcount` 75 or more with `venue_has_assembly_approval` omitted returns
-   `{field: "venue_has_assembly_approval", code: "required", message: "venue_has_assembly_approval
-   is required for this event"}`, and F-101 validates on submission. So the criterion is: intake
-   REFUSES the omission, and the fixture for Scenario A's private-venue rescope ANSWERS the field.
-   At the engine level, where `evaluate` can be called on an unvalidated intake, an omitted in-scope
-   answer resolves tri-state `unknown` for both rules, both emit, the field appears in
-   `missingFacts` and its branches are evaluated; that is stated for the implementer's benefit and
-   is not a product path any user can reach. `resolveAnswer`'s `isExplicitUnknown` distinction is
-   real and still matters for the `in ["no", "unknown"]` term, which an explicit `unknown` answers
-   TRUE and an absent one does not.
+4. **F-1NN-AC-04 · IN SCOPE WITH NO ANSWER IS TWO DIFFERENT ANSWERS, one per path, and the criterion
+   states both.** On the SUBMISSION path it cannot arise: measured through `parseIntakeContract` and
+   `validateIntake`, a private-venue intake at `headcount` 75 or more with
+   `venue_has_assembly_approval` omitted returns `{field: "venue_has_assembly_approval", code:
+   "required", message: "venue_has_assembly_approval is required for this event"}`, and F-101
+   validates on submission, so no stored event is in this state. On the RESCOPE path it does arise and
+   is the normal case: `buildRescopeSuggestions` changes one field and evaluates through
+   `evaluateConditional` with no validator, so Scenario A's private-venue variant leaves the field
+   absent. There, both rules are reached with their triggers resolving tri-state `unknown`, both emit
+   with `may_be_required` and their own note texts, the field appears in `missingFacts` with its
+   branches evaluated, and the verdict stays CONDITIONAL on it. Both rules therefore list `A-rescope`,
+   and this criterion is tested on that variant, built the way the agreement suite builds it.
+   `resolveAnswer`'s `isExplicitUnknown` distinction is real and still matters for the
+   `in ["no", "unknown"]` term, which an explicit `unknown` answers TRUE and an absent one does not.
 5. **F-1NN-AC-05 · A field the gate did not reach emits nothing**, per F-201 Acceptance Criterion
    4's rule that a field never asked is not a material unknown.
 6. **F-1NN-AC-06 · Alcohol is untouched, compared against an INDEPENDENT copy.** The three SLA
@@ -350,16 +501,15 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    deriving its expectation from the new file would pass a changed alcohol rule against itself.
    The expectation is pinned independently inside the test footprint, as either the exact expected
    bytes for those three rules or a digest of them, captured from v2.8 before it is deleted.
-7. **F-1NN-AC-07 · Scenario A's rescope is expected explicitly, and it gains an answer.** Scenario A
-   carries `headcount: 75`, which meets the `headcount gte 75` half of the gate, so its required
-   re-evaluation to `location_type = private_venue` puts `venue_has_assembly_approval` in scope. The
-   rescope therefore has to ANSWER it, per Acceptance Criterion 4: an omission is an intake
-   validation error, so a fixture that leaves it out is invalid rather than an unanswered-path test.
-   Which of the three answers the rescope records is a verification-owner call on what the scenario
-   is meant to demonstrate, and it changes that rescope's findings and its missing facts. Its
-   `A-rescope` exercise metadata moves only if that answer puts one of these two rules in it.
-   Expectations and tests for the rescope land with the change; moving Scenario F's answer-key output
-   alone is insufficient.
+7. **F-1NN-AC-07 · Scenario A's rescope is expected explicitly, with the field left absent, because
+   that is what the code builds.** Scenario A carries `headcount: 75`, which meets the
+   `headcount gte 75` half of the gate, so its documented re-evaluation to
+   `location_type = private_venue` puts `venue_has_assembly_approval` in scope with no answer. The
+   variant is not made valid and no answer is invented for it: the rescope machinery changes one field
+   and runs no validator, so the honest expectation is the unknown-path output of Acceptance Criterion
+   4, and both rules carry `A-rescope` in `exercised_by_scenarios`. The rescope's findings and its
+   missing facts move, and its exercise metadata gains both rules. Expectations and tests for the
+   rescope land with the change; moving Scenario F's answer-key output alone is insufficient.
 8. **F-1NN-AC-08 · The coupled constants, the publication record, the manifest and the
    current-version documents land together.** A published trigger reading
    `venue_has_assembly_approval` lands in ONE commit with:
@@ -395,9 +545,9 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 
 - The six approved scenarios in `docs/test-scenario-answer-key.md` are the baseline. **Two of them
   reach this gate, not one.** Scenario F answers `venue_has_assembly_approval` `"unknown"` today.
-  Scenario A carries `headcount: 75` and its required rescope to `location_type = private_venue`
-  puts the same field in scope, so that rescope must answer it and its findings and missing facts
-  move too. Its `A-rescope` metadata moves only if the answer chosen puts one of these rules in it.
+  Scenario A carries `headcount: 75` and its documented rescope to `location_type = private_venue`
+  puts the same field in scope with no answer, which the rescope machinery does not validate, so that
+  rescope's findings and missing facts move and both new rules carry `A-rescope`.
 - **A new fixture is required for the explicit `no` path**, because no approved scenario contains
   one for this field. Adding it is an answer-key change and carries the approvals below.
 - Any answer-key movement is a regulatory publication under the change-class table in
@@ -447,6 +597,13 @@ approvals then union rather than choosing.
 | `docs/BASELINE.md` | approval record | §4 defines the manifest and §6 has no row for it; amending approval status and digests is the product owner's, unchanged |
 | test pins | neither §6 regulatory row | assertions over constants and expectations; engine owner |
 | current-version documents | product scope | each artifact's own owner plus the product owner, unchanged |
+
+**One row this table does NOT yet grant.** If the verification-status conflict under Outputs is
+resolved by widening the loader's source exemption, that is a change to `apps/api/src/ruleset.ts`
+beyond the two constants this table permits, and it falls under §6's "Event Input, rules schema,
+OpenAPI, shared enum" row, which requires all affected lane owners and the architecture owner. The
+footprint stays as written until that decision lands, so an implementer who needs the loader change
+returns here rather than treating the existing `apps/api/src/ruleset.ts` row as cover for it.
 
 **This is the fourth trigger-semantics change routed without the engine owner, so the fix is the
 audit rather than the cited cell.** Any future row added to this table states its §6 class in the
@@ -625,6 +782,15 @@ None is resolved here.
 5. **Verification research** on whether a host's approval removes a guest's temporary filing, per
    Fixtures and Verification above. Not established; the rule asserts no exemption in either
    direction.
+   **And the artifact format has no slot for that state**, which is a second, separable blocker on the
+   same fact. `validateRuleset` requires a source for every verification status except
+   `COVERAGE_GAP`, while the published legend defines the only status whose meaning fits,
+   `RESEARCH_REQUIRED`, as no source having been located. So these rules cannot be published truthfully
+   without either a loader change (engine owner, plus the architecture owner under §6's rules-schema
+   row) or a legend amendment (verification owner plus rules reviewer). The four options and the
+   refusal of each other legend value are under Outputs. Nothing in the current ruleset publishes
+   `RESEARCH_REQUIRED`, so this feature would be its first use and the conflict is unexercised. Same
+   shape as PR #170's finding that the schema cannot express a non-regulatory rule.
 6. **F-207 · Multi-Jurisdiction** is the home for a genuinely travelling operator, and its own
    approval blocker is SPEC-CONFLICT #130, which is unresolved.
 7. **The manifest glob blocks the filename.** `docs/BASELINE.md` marks `specs/F-*.md` APPROVED, so
@@ -667,7 +833,19 @@ None is resolved here.
     to be copied from v2.8. Two corrections came out of measuring rather than reasoning: an explicit
     `unknown` emits BOTH notes, and an in-scope OMISSION is an intake validation error rather than a
     plan state, which retired a mapping row and rewrote Acceptance Criterion 4.
-12. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+12. **Round 6 found round 5's pinning right in the abstract and wrong against four specific pieces of
+    machinery.** The verification status and the source block turned out to be a contract conflict
+    rather than a wording choice, and it is the one finding this document cannot resolve: it is now
+    reported with all four options, each other legend value refused on the published legend, and the
+    owners named. The rest were the same mistake in different places, and the mistake is checking one
+    path: `exercised_by_scenarios` was pinned identically on two rules with different triggers, so the
+    HELD rule claimed a fixture its own `eq yes` term cannot reach; the no-answer case was retired on
+    the strength of `validateIntake` when the rescope path that produces it runs no validator; and the
+    `name` fallback was read for what it puts in the heading without reading that `PlanLine` renders
+    `noteText` again below it, so every note would have shown its sentence twice. Each output now
+    states which of the five paths it was checked against, because three rounds running a conclusion
+    true on one path was carried onto another where it is false.
+13. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
