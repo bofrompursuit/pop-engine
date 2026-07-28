@@ -212,8 +212,12 @@ the first three, so the change sets below are DERIVED rather than assembled, by 
 1. Search every approved artifact for the id being moved, AND for the capability being reassigned by
    name. The id search alone is what missed things: an artifact can assign a capability without
    naming the id, and a declared id RANGE can be broken by an id that does not appear in it yet.
-2. Classify every hit as **moves**, **stays**, or **flagged** for the product owner. Record the
-   classification, so a later round can disagree with a judgement rather than rediscover the hit.
+2. Classify every hit as **moves**, **stays**, or **flagged**, and for anything flagged NAME ITS
+   APPROVER from `DOCUMENTATION-GOVERNANCE.md`'s change-class table rather than defaulting to the
+   product owner. Record the classification, so a later round can disagree with a judgement rather
+   than rediscover the hit. Defaulting was itself a defect: three flags in this document routed an
+   architecture decision to the product owner because that is who the brief is addressed to, which
+   is not the same question as who approves it.
 3. For every artifact that MOVES, include its status header and its BASELINE row. That pairing has
    been the missing half three times, so it is now part of the derivation and not a step to remember.
 4. Record the searches themselves, below, so the next round re-runs them instead of re-deriving them.
@@ -244,8 +248,8 @@ grep -nE "F-[0-9]{3}[–-]F-[0-9]{3}" <approved artifacts>
 | `specs/F-203-deadline-alerts.md:53` | **moves** under A and B | names the destination; B rewrites it anyway |
 | `docs/DESIGN.md:34` STAGE 2 `F-201–F-214` | **moves** under A | saturated, so a new id extends it |
 | `docs/DESIGN.md:27` absorption policy | **moves or exception** under A | see below; found round 3 |
-| `docs/ARCHITECTURE-FUTURE.md:328` `F-208–F-214` | **flagged** | a new F-215 falls outside every ownership row in that table, and which row should cover it is a judgement this brief does not make. **Found by the range search, not by the id search** |
-| `docs/ARCHITECTURE-FUTURE.md:396` | **flagged** | lists F-203 among the outbound worker's consumers; whether the depth is a distinct consumer is a reading |
+| `docs/ARCHITECTURE-FUTURE.md:328` `F-208–F-214` | **flagged, architecture ADR approval** | a new F-215 falls outside every ownership row in §9.3. Which module owns it is a technical boundary, routed by governance to architecture, not to the product owner. **Found by the range search, not by the id search** |
+| `docs/ARCHITECTURE-FUTURE.md:396` | **flagged, architecture ADR approval** | lists F-203 among the outbound worker's consumers; whether the depth is a distinct consumer is a delivery-architecture reading, same route |
 | `docs/ARCHITECTURE.md:58` `COMPLY (F-201–F-206)` | **stays** | a Phase 0-1.5 subset, not an enumeration: F-207 to F-214 already exist and are already outside it |
 | `docs/DESIGN.md` 12, 16, 18, 73, 80, 86; `docs/PRD.md:167`; `docs/ROADMAP.md:29`, `:53`; `docs/ARCHITECTURE.md:193`, `:276`, `:281`; `specs/F-102`, `F-201`, `F-202` | **stay** | name F-203 as the Phase 1 feature: tracks, lanes, dependency graph, Twilio reuse, endpoints |
 
@@ -258,16 +262,23 @@ grep -nE "F-[0-9]{3}[–-]F-[0-9]{3}" <approved artifacts>
 | `docs/PRD.md:226` | **moves** under A and B | assigns the Square webhook to F-408; found round 2 for A, round 3 for B |
 | `docs/ARCHITECTURE-FUTURE.md:336` | **moves** under A | maps webhooks to F-408 and no other id; found round 2 |
 | `docs/DESIGN.md:36` STAGE 4 `F-401–F-413` | **moves** under A | saturated |
-| `docs/ARCHITECTURE-FUTURE.md:331` `F-401–F-413` | **flagged** | a second declared range covering the same band. A new F-414 sits outside it, and whether it belongs in this row or in the External integrations row at `:336` is a judgement. **Found by the range search, not by the id search** |
+| `docs/ARCHITECTURE-FUTURE.md:331` `F-401–F-413` | **flagged, architecture ADR approval** | a second declared range covering the same band. A new F-414 sits outside it, and whether it belongs here or in the External integrations row at `:336` is a module-boundary question, routed to architecture. **Found by the range search, not by the id search** |
 | `docs/ARCHITECTURE-FUTURE.md:67`, `:401` | **stay** | name POS and webhooks in a directory layout and a worker consumer list, both id-agnostic |
 
 **Does the derived set differ from the current one anywhere other than the three findings? Yes, in
 two places, and both are the same shape.** `docs/ARCHITECTURE-FUTURE.md:328` and `:331` are declared
 id ranges in a second approved artifact, and neither the id search nor the capability search reaches
 them, because the new id does not appear in either row and neither row names the capability. Both are
-flagged rather than moved, because which ownership row should cover a new id is a product-owner
-judgement and this brief makes none. They are recorded here so the fourth round starts from them
-rather than finding them.
+flagged rather than moved, because which ownership row should cover a new id is not this brief's to
+decide. **It is also not the product owner's.** `DOCUMENTATION-GOVERNANCE.md` routes "Technical
+boundaries and invariants" to `ARCHITECTURE.md` plus approved ADRs, and its change-class table routes
+a "Durable architecture decision or dependency" to **Architecture ADR approval**. §9.3 maps modules
+to feature ranges and the entities they own, which is exactly that. So both option-A costs were short
+an entire approval route, not just an artifact.
+
+An earlier revision routed all three of these to the product owner, which was defaulting to the
+person the brief is addressed to rather than reading the table. The method above now requires naming
+the approver for anything flagged, so that default cannot recur silently.
 
 ## Exact change sets
 
@@ -296,11 +307,13 @@ Line numbers are given only to locate the current text; the edits are described 
    `Phase 1–1.5 specs` row covering `specs/F-*.md`. The spec's row was missing for the same reason its
    header was: the change set listed the artifacts whose text changes and not the records that carry
    their approval.
-10. `docs/ARCHITECTURE-FUTURE.md:328`: **flagged, not priced.** Its ownership table maps
-    `F-208–F-214` to application execution, and a new F-215 falls outside every row in that table.
-    Which row should cover it, or whether a new row is needed, is a product-owner judgement this
-    brief does not make. Surfaced by the range search recorded above, which neither the id search nor
-    the capability search reaches.
+10. `docs/ARCHITECTURE-FUTURE.md:328`: **flagged, and it needs ARCHITECTURE ADR APPROVAL rather than
+    the product owner's.** Its §9.3 ownership table maps `F-208–F-214` to application execution, and a
+    new F-215 falls outside every row. Which module owns it, or whether a new row is needed, is a
+    technical boundary, which governance routes to `ARCHITECTURE.md` plus approved ADRs. **Option A
+    therefore needs a second approval route, not just a further artifact**, and an earlier revision
+    of this list routed it to the product owner by default. Surfaced by the range search recorded
+    above, which neither the id search nor the capability search reaches.
 11. Tracker: open the F-215 issue; F-203's own issue needs no change.
 12. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
    "Phase 2 (F-203 full, per ROADMAP)". Step 1 removes the `F-203 (full)` entry that sentence points
@@ -320,7 +333,17 @@ Line numbers are given only to locate the current text; the edits are described 
    boundary inside one spec rather than a deferral to a different id.
 3. `specs/F-203-deadline-alerts.md` status header, plus its BASELINE row.
 4. `docs/ROADMAP.md` status header and BASELINE row.
-5. No DESIGN.md change and no new tracker issue.
+5. `docs/PRD.md:206`, **on the RETAIN branch only.** Option B inherits the per-user preferences
+   question set out above, and it has the same two-branch shape as item 2's: the spec assigns four
+   Phase 2 capabilities and `ROADMAP.md:57` and `PRD.md:206` assign three. If the product owner
+   RETAINS per-user preferences under F-203, the PRD omits a capability F-203 would then carry and
+   must be amended, with its status header and BASELINE row. If they drop it, the PRD already matches
+   and none of that applies.
+6. No DESIGN.md change on either branch: expanding F-203 explicitly is absorption, which is what
+   `:26` points at, so neither branch engages the ID policy. No new tracker issue.
+
+**Per BRANCH: two artifacts if per-user preferences is dropped, three if it is retained.** An earlier
+revision priced this option at two unconditionally, which was right for one branch only.
 
 **Option B has no mirror of option A's step 7, and that was checked rather than assumed.** B keeps
 the `F-203 (full)` Roadmap entry, so the spec's "per ROADMAP" pointer still resolves and needs no
@@ -349,42 +372,51 @@ one being written more carefully: A touches an approved spec that B was already 
 6. Status headers and BASELINE rows for all FOUR documents: `docs/ROADMAP.md`, `docs/PRD.md`,
    `docs/ARCHITECTURE-FUTURE.md` and `docs/DESIGN.md`. An earlier revision said "both documents",
    which was counted before the sweep below was done.
-7. `docs/ARCHITECTURE-FUTURE.md:331`: **flagged, not priced.** Its ownership table maps
-   `F-401–F-413` to event operations, so a new F-414 sits outside that range, while the External
-   integrations row at `:336` is where a POS id would more naturally belong. Which row should carry
-   it is a product-owner judgement this brief does not make. Surfaced by the range search recorded
-   above.
+7. `docs/ARCHITECTURE-FUTURE.md:331`: **flagged, and it needs ARCHITECTURE ADR APPROVAL**, for the
+   same reason as its item 1 counterpart. Its §9.3 table maps `F-401–F-413` to event operations, so a
+   new F-414 sits outside that range, while the External integrations row at `:336` is where a POS id
+   would more naturally belong. Choosing between them is a module-boundary decision, not a product
+   one. **So item 2 option A is also short an approval route**, and both option-A costs now carry it.
 8. Tracker: open the F-414 issue.
 
 ### Item 2, option B: remove the standalone entry, keep POS inside F-408
 
-1. `docs/ROADMAP.md:103`: delete `- Square/POS integrations.`
-2. `docs/ROADMAP.md:90`: F-408's entry absorbs the scope explicitly, so the capability is not lost
-   with the bullet.
-3. `docs/PRD.md:226`: **required, and missing from an earlier revision of this list.** It assigns
-   F-408 a narrower scope than the absorption gives it: "inventory low-stock alerts (manual counts or
-   Square webhook)". Absorbing a standalone `Square/POS integrations` entry widens F-408 beyond the
-   inventory-specific webhook, so leaving the PRD alone either silently drops the broader POS
-   capability or expands F-408 while the authoritative product requirement still describes only
-   low-stock alerts.
+**Option B has two branches and they do not cost the same. The counts below are per BRANCH**, because
+an option-level figure is wrong for both: an earlier revision priced the option at two artifacts,
+which overstated one branch and understated the other.
 
-   **This is a decision, not just an edit, and the product owner has to make it explicitly:** either
-   the PRD is widened to match the absorbed scope, or the absorption is narrowed to the inventory
-   webhook that already exists and the broader POS capability is recorded as dropped. This brief does
-   not choose, and does not assume the first, because the second is a real answer: `ROADMAP.md:103` is
-   a one-line entry with no spec and no stated contents beyond its own title.
-4. `docs/DESIGN.md:25`, **on the widening branch only**: "Once assigned, an ID's meaning never
-   changes, and IDs are never reused." Widening F-408 from `Inventory Low-Stock Alerts` into the
-   broader standalone `Square/POS integrations` capability changes what F-408 means, which is the
-   case that rule names. The widening branch therefore needs the same treatment as item 1 option A:
-   an amendment to that line or a recorded approved exception, with its status-header entry.
-   **The narrowing branch needs none of this**, which is the sharpest practical difference between
-   the two branches and was not visible before: keeping F-408 at the existing inventory webhook and
-   recording the broader POS capability as dropped changes no id's meaning.
-5. `docs/PRD.md` status header, if it moves under the decision above.
-6. `docs/ROADMAP.md` status header, and the BASELINE rows for every document that moves, which is
-   two on the narrowing branch and three on the widening branch once DESIGN.md is included.
-7. No new id and no new tracker issue on either branch.
+The branch is a product-owner decision and this brief does not make it: either F-408 is widened to
+absorb the standalone capability, or the absorption is narrowed to the inventory webhook that already
+exists and the broader POS capability is recorded as dropped. The second is a real answer, not a
+formality: `ROADMAP.md:103` is a one-line entry with no spec and no stated contents beyond its title.
+
+**Branch 1, NARROWING. One artifact.**
+
+1. `docs/ROADMAP.md:103`: delete `- Square/POS integrations.`, and record the broader POS capability
+   as dropped rather than absorbed.
+2. `docs/ROADMAP.md` status header and its BASELINE row.
+3. **No `docs/PRD.md` change.** `:226` already scopes F-408 to "inventory low-stock alerts (manual
+   counts or Square webhook)", which is exactly what this branch keeps, so there is nothing to widen
+   and no status or baseline record to move. An earlier revision counted the PRD here, which
+   overpriced the cheapest branch on the board.
+4. **No `docs/DESIGN.md` change.** F-408 keeps its meaning, so `:25` is not engaged.
+5. No new id, no new tracker issue, no architecture route.
+
+**Branch 2, WIDENING. Three artifacts.**
+
+1. `docs/ROADMAP.md:103` and `:90`: delete the standalone entry and widen F-408's entry to absorb it.
+2. `docs/PRD.md:226`: widen the product requirement to match, since it currently describes only the
+   inventory webhook and would otherwise contradict the Roadmap.
+3. `docs/DESIGN.md:25`: "Once assigned, an ID's meaning never changes, and IDs are never reused."
+   Widening F-408 from `Inventory Low-Stock Alerts` into the broader capability changes what F-408
+   means, which is the case that rule names, so this branch needs an amendment or a recorded approved
+   exception.
+4. Status headers for all three, and their BASELINE rows.
+5. No new id and no new tracker issue.
+
+**So the two branches differ by two artifacts AND by a policy collision**, and the narrowing branch is
+the only one of the six branches in this brief that touches a single approved artifact and engages no
+policy rule. That pairing is stated here rather than left to be assembled from two sections.
 
 This is the option DESIGN.md's absorption rule and its two precedents point at, and still the
 cheapest of the four. It is no longer a single-artifact change: an earlier revision called it that,
@@ -452,7 +484,9 @@ both have `source: null`, and both assert regulatory content in `advisory_text`:
   year). Confirm with SAPO." Evidence ref: "VS Round2 #4-5".
 
 The legend they carry says "combination not modeled by this ruleset version; advisory asserts
-nothing". Both texts assert something. That contradiction is live and is the verification owner's
+nothing". Both texts assert something. That contradiction is live, and it belongs to the
+verification owner PLUS the rules reviewer, which is how governance's change-class table routes
+regulatory status and content; an earlier revision named only the first of the two
 under the issue's own authority section.
 
 ### Whether the claims are evidenced, re-derived claim by claim
@@ -536,9 +570,20 @@ publication it feeds is a ruleset version bump with its baseline row, digest, li
 constants, pinned tests, changelog and replay verification. The first is small and the second is not,
 and an earlier revision of this brief showed only the first.
 
-For the three alcohol categories there is nothing to promote and therefore none of this cost: that
-pass is a search for a source not located in two research rounds, and its outcome may be that none
-exists.
+**And finding no source does NOT avoid the publication cost**, which an earlier revision of this
+section claimed. If the search for the three alcohol categories comes back empty, that settles the
+question and does not close it: `ADV-ALCOHOL-PUBLIC-001` still asserts three prohibitions while its
+`COVERAGE_GAP` status promises an advisory that asserts nothing, and the only ways to resolve that
+are to narrow or remove `advisory_text`, or to change the verification status. Every one of those is
+an edit to the published ruleset, which is immutable, so every one is a new version carrying the same
+baseline row, digest, lineage record, boot constants, pinned tests, changelog and replay verification
+enumerated in PR #171 and cited above rather than restated here.
+
+So **both outcomes of the verification pass require a publication, and they differ only in what the
+publication says**: one records a promoted status against re-fetched sources, the other records an
+advisory narrowed to what the sources support. Only the promotion STEP disappears when no source is
+found. The workflow it feeds does not, and pricing the empty result at zero made the cheaper-looking
+outcome look free when it is the same publication.
 
 **So the issue's original statement is closer to right than either round-1 revision allowed**, and
 precisely: `ADV-ALCOHOL-PUBLIC-001` asserts a prohibition for three categories with no located
@@ -562,8 +607,9 @@ to call the claims evidenced: it is true of `ADV-SAPO-OTHER-CLASS-001` and false
 positions and this brief previously treated them as one.
 
 The legend contradiction stated above is unaffected: both texts assert while the legend they carry
-says an advisory asserts nothing. That remains the verification owner's under the issue's own
-authority section, and this brief decides none of it.
+says an advisory asserts nothing. That remains the verification owner's AND the rules reviewer's,
+which is the routing governance's change-class table gives regulatory status and content, and this
+brief decides none of it.
 
 ## Everything else in the issue, verified
 
@@ -643,8 +689,9 @@ Stated as observations, not recommendations.
 **#127 item 1** is narrower than filed, and narrower again than an earlier draft of this brief made
 it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
 scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
-choice that becomes live when that work is scheduled. Option B touches TWO approved artifacts, the
-Roadmap and the F-203 spec, plus both of their status headers and BASELINE rows, and its PR #131
+choice that becomes live when that work is scheduled. Option B touches TWO approved artifacts if per-user
+preferences is dropped and THREE if it is retained, the Roadmap and the F-203 spec plus
+`docs/PRD.md:206` on the retain branch, each with its status header and BASELINE row; its PR #131
 sequencing block has merged away. Option A touches FOUR approved artifacts at five locations once the
 derivation above is run rather than a list assembled: the Roadmap entry, `docs/PRD.md:206`, the F-203
 spec pointer its own step 1 invalidates, and `docs/DESIGN.md` twice, for its saturated STAGE 2 range
@@ -655,11 +702,14 @@ revision of this brief denied; it becomes compliant with a decision the product 
 make and has not yet been asked for.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
-cheapest of the four change sets. It is **not** a single-artifact change, which an earlier revision
-of this summary said twice: on the narrowing branch it touches the Roadmap and `docs/PRD.md:226`, and
-on the widening branch it touches `docs/DESIGN.md:25` as well, because widening F-408 changes an
-assigned id's meaning. Which branch is taken is itself a product-owner decision this brief does not
-make, and the two branches differ in artifact count as well as in scope.
+cheapest of the four change sets. Its two branches are priced separately, because no option-level
+figure is right for both: **narrowing is ONE artifact**, the Roadmap alone, since `docs/PRD.md:226`
+already scopes F-408 to the inventory webhook that branch keeps and F-408's meaning does not change;
+**widening is THREE**, adding the PRD and `docs/DESIGN.md:25`, because it changes an assigned id's
+meaning. Two earlier revisions priced this option at one artifact and then at two, and both were
+wrong for one branch. The narrowing branch is the only one of the six branches in this brief that
+touches a single approved artifact and engages no policy rule, which is the sharpest pricing fact
+available and was previously obscured by an option-level count.
 
 **#144** has lost one of its three internal-inconsistency bullets to #146 and retains one live
 regulatory item, the two claim-bearing advisories, which is the only part with a named owner who has
