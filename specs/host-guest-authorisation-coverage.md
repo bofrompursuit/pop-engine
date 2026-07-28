@@ -15,18 +15,80 @@ rather than worked around silently.
 ## Purpose and User Outcome
 
 A travelling pop-up operator rents space inside another business's premises: a stall in a shop, a
-counter in a food hall, a weekend residency in a bar. The host already holds authorisations for its
-own operation. The operator needs to know **which of the host's authorisations reach the operator's
-activity, and what the operator must still obtain in its own name.**
+counter in a food hall, a weekend residency in a bar. The venue already holds authorisations for its
+own operation. The operator needs to know **what the venue's existing approval does and does not
+settle about the operator's own filing**, which on the published sources is: it does not settle it.
 
-As an operator running inside someone else's venue, I answer what the host holds, and the plan tells
-me what that does and does not do for me, without ever telling me I am covered because my host is.
+As an operator running inside someone else's venue, I answer what the venue holds, and the plan
+declines to treat that answer as mine, without ever telling me I am covered because the venue is.
+
+**READ THE SECTION BELOW BEFORE ANYTHING ELSE.** The intake cannot express the relationship this
+paragraph describes, which is a question about whether the feature is publishable in this form rather
+than a question about its wording.
+
+## THE PREMISE IS NOT REPRESENTABLE IN INTAKE
+
+**No published intake field names a host, a renter, a tenant, an operator distinct from the venue, or
+any third party.** Checked mechanically against all 33 fields in `rules/nyc-rules.v2.8.json`, and
+against the three descriptive fields in `packages/engine/src/intake/validate.ts` (`name`,
+`location_name`, `capacity`), which a trigger cannot read in any case: `validateRuleset` fails a
+trigger naming a field the registry does not declare. The registry says only that a VENUE has an
+approval, in the field's own name: `venue_has_assembly_approval`.
+
+So the proposed triggers fire on `location_type`, `headcount` and that answer alone. **A private-venue
+event at 75 or more people run by the venue's own operator matches all three**, and under the framing
+above would be told about a third party's authorisation and about a guest's own filing. For that
+organizer there is no host and no guest, and the product would be describing a relationship that does
+not exist. The host and guest vocabulary is this document's addition; the registry's vocabulary is
+venue-shaped throughout, and `venue_license_covers_event_area` is named the same way.
+
+**BLOCKED on the product owner. Two routes, not chosen here.**
+
+**Route 1: make the output venue-neutral.** Say what is true of any private-venue event at that
+headcount and refer to no host, no guest and no ownership of the approval: an existing venue approval
+does not settle whether this event needs its own filing. Costs nothing outside this document. It
+requires no new field, no migration, no lane coordination, and no change to the two rules' triggers,
+which already read only venue-shaped facts. What moves is the framing: this document's title and
+filename, its user story, and the note texts, which stop saying whose approval it is.
+
+**Route 1 leaves a feature worth having, and it is worth saying plainly.** The output does not shrink,
+because nothing the sources license was ever about the relationship. The answer still changes what the
+operator is told: a venue reporting an approval gets the confirm-with-DOB text, a venue reporting none
+or an unknown gets the unresolved-filing text, and neither asserts a reduction. What is lost is a
+framing the sources never supported and the intake cannot represent, and what is gained is that the
+output is true for the venue-operated case as well, which route 2 has to detect before it can be
+correct. It also fits Approval Blocker 1's proposal better: absorbing this into
+**F-108 · Location & Authority Resolution** is a cleaner fit for "what does this venue's approval
+settle" than for a relationship model.
+
+**Route 2: add an approved relationship discriminator.** A new intake field, and the price is not one
+approval:
+
+| What it touches | Why | Governance §6 row |
+| --- | --- | --- |
+| `rules/nyc-rules.v<next>.json` `intake_fields` | the registry owns the field list, its enum and its `asked_when` | Event Input, rules schema, OpenAPI, shared enum: **all affected lane owners and the architecture owner** |
+| a new `events` column | every intake field is a column with a CHECK constraint (`001_initial_schema.ts`), and `plan.ts` rebuilds the intake from the row, so a field with no column is never read | Database migration touching shared/core tables: **database owner plus all affected lane owners** |
+| `apps/web` intake form | F-101 collects it, and this feature otherwise touches no web file at all | the web lane, which this footprint excludes |
+| `apps/api/src/ruleset.test.ts:77` | pins `intakeFields` at 33 | engine owner |
+| `specs/F-101-event-intake.md`, `docs/ARCHITECTURE.md` | the registry-authority statements | product owner plus each artifact's owner |
+
+Plus everything this document already enumerates for a publication: the version and rule-count
+constants, the `UNCONSUMED_INTAKE_FIELDS` entry, the answer key and its fixtures, the manifest, and
+the current-version documents. Route 2 is a registry change wearing a feature's clothes, and it needs
+the regulatory question answered as well, since a discriminator only helps if the sources say the
+answer differs by relationship, and DOB-ASSEMBLY-001 records that they do not say so in either
+direction.
+
+**What is NOT a route:** publishing the rules with the host framing and no discriminator. That states
+a relationship to organizers who do not have one, which is a permit-adjacent fact the product cannot
+back, and it is the same class of error as every finding this document has already recorded.
 
 ## Scope
 
-In scope: **one** field, `venue_has_assembly_approval`. It is the only field this feature touches
-that is both collected-but-unread and an authorisation held by the HOST rather than a claim made by
-the organizer. The first draft claimed two; see non-goal 3.
+In scope: **one** field, `venue_has_assembly_approval`. It is the only field this feature touches that
+is both collected-but-unread and an authorisation the VENUE reports holding rather than a claim the
+organizer makes about their own event. Who operates the venue is not in the field and not in the
+registry, per the section above. The first draft claimed two fields; see non-goal 3.
 
 ### Non-goals
 
@@ -37,9 +99,19 @@ the organizer. The first draft claimed two; see non-goal 3.
    > "AC 28-117.1.3 requires an amendment for any change inconsistent with the venue's certificate,
    > so an existing approval narrows the question rather than settling it."
 
-   A host authorisation **reduces what must be established. It does not establish it.** Any
-   acceptance criterion, copy string or rule output that reads a host's "yes" as the operator's
-   answer is wrong by construction and must fail review.
+   **THIS SPEC ASSERTS NOTHING ABOUT WHAT THE APPROVAL DOES**, and the sentence that used to sit here
+   did. It said the approval reduces what must be established, which is an affirmative claim about
+   effect, and DOB-ASSEMBLY-001's verification block records that whether a temporary filing is
+   required at all at a venue already holding a certificate "is NOT PUBLISHED in either direction".
+   Reduces, removes and does nothing are three claims and no source licenses any of them, so no
+   acceptance criterion, copy string or rule output may state one. Any output that reads a `yes` as
+   the operator's own answer, or as any change to the operator's obligation, is wrong by construction
+   and must fail review.
+
+   The quoted note above is the repository's record of WHY the question is open, and it is quoted
+   rather than adopted: its "narrows the question" is itself stronger than DOB-ASSEMBLY-001's
+   verification block licenses. Nothing carries it forward, because the entry containing it is the one
+   this feature deletes.
 2. **Not alcohol.** Already solved and out of scope. `SLA-VENUE-LICENSE-001`, `SLA-ONEDAY-001` and
    `SLA-CATERING-001` each read `venue_license_covers_event_area` in their published triggers, so
    the host/guest question for alcohol is answered by the shipped ruleset. This spec must not
@@ -97,8 +169,14 @@ No new inputs. **One field**, `venue_has_assembly_approval`, as `validateIntake`
 
 ## Outputs
 
-Per affected authorisation, one of three plan states. The distinction between the second and third
-is the whole feature:
+**Swept for affirmative claims about what the answer does, which is the third round one has survived.**
+Round 2 removed NARROWED, round 4 removed OPEN and UNRESOLVED, and round 7 found three statements left
+behind by those two removals: the non-goal's "reduces what must be established", the user story's
+promise that the plan says what the approval does for the operator, and this section's own opening
+line announcing three plan states and calling the distinction between the second and third the whole
+feature, two rounds after the states were deleted. The sweep axis is not the word "reduce": it is any
+sentence stating an EFFECT of the answer, and any survivor of a deleted state. All three are removed
+above and here.
 
 The mapping is **by the field's answer**, and it uses only fields the shared `Finding` contract
 already carries. Round 3's table invented two plan states, OPEN and UNRESOLVED, and **those states
@@ -138,6 +216,12 @@ required by `parseRule`, and the ones this spec left unmentioned are the ones an
 have had to invent. **In this repository an unmentioned regulatory field is an invitation to invent
 a permit fact**, which is the single thing this spec exists to prevent, so every field is either
 PINNED here or marked BLOCKED on a named owner. Nothing is left silent.
+
+**The ids below carry the word HOST and are therefore contingent on Approval Blocker 13.** Under route
+1 they name a relationship the output must not assert, and rule ids are visible: `PlanLine` renders
+`finding.ruleIds` on the line. Route 1 renames them on the same venue-neutral axis as the copy, for
+example `DOB-ASSEMBLY-VENUE-APPROVED-001` and `DOB-ASSEMBLY-VENUE-UNRESOLVED-001`. They are left as
+written here so the pinning stays readable against the earlier rounds, not because the choice is made.
 
 **Two rules, not one**, because a rule carries at most one `note_text` and the mapping above needs
 two texts. Their ids are pinned here because the answer key and the test files pin rule ids
@@ -464,12 +548,15 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 
 ## Acceptance Criteria
 
-1. **F-1NN-AC-01 · A host `yes` asserts no reduction.** For `venue_has_assembly_approval: yes` the
+1. **F-1NN-AC-01 · A `yes` asserts no effect of any kind.** For `venue_has_assembly_approval: yes` the
    finding is emitted with `disposition: may_be_required` and note text directing the operator to
    confirm with DOB. No output string may assert that the operator is covered, exempt, has a
-   reduced obligation, or has no obligation. The test asserts the ABSENCE of each of those claims,
-   not merely the presence of the correct one, because the failure mode is an extra sentence rather
-   than a missing one.
+   reduced obligation, or has no obligation. Reduces, removes and does nothing are three claims and
+   the sources license none of them. **And no output string may state or imply that the approval
+   belongs to a party other than the organizer**, since no intake field distinguishes them, unless
+   Approval Blocker 13 resolves as route 2 and a discriminator is published. The test asserts the
+   ABSENCE of each of those claims, not merely the presence of the correct one, because the failure
+   mode is an extra sentence rather than a missing one.
 2. **F-1NN-AC-02 · An explicit `unknown` emits BOTH notes, each with `may_be_required`**, and never
    a disposition asserting any reduction. Both, not one: an explicit `unknown` resolves tri-state
    `unknown` for the `eq yes` rule, which therefore emits as well, and `findings.ts` continues only
@@ -519,9 +606,12 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    describe this change rather than v2.8's deadline correction** (per Rollout item 1, and none of the
    three is caught by a guard: `status` passes on its `APPROVED` prefix alone and the other two are
    read by no code), the
-   `docs/BASELINE.md` update (current row repointed, new sha256, superseded-lineage row for v2.8),
-   the deletion of `rules/nyc-rules.v2.8.json`, and the current-version references in the approved
-   documents listed under System Impact. That commit boots AND passes `pnpm check:baseline`.
+   `docs/BASELINE.md` update (current row repointed, new sha256, superseded-lineage row for v2.8, and
+   the Scenario-fixtures row's version marker if the new fixture lands), the deletion of
+   `rules/nyc-rules.v2.8.json`, the current-version references in the approved documents listed under
+   System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, and **the
+   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**. That commit boots AND
+   passes `pnpm check:baseline`.
 9. **F-1NN-AC-09 · No fact beyond the ruleset.** Every regulatory statement rendered traces to a
    published rule's `output`, `notes`, `source` or `verification`. Nothing is asserted that the
    published artifact does not carry, and DOB-ASSEMBLY-001's position that the question is "NOT
@@ -531,7 +621,7 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 
 ## Edge Cases
 
-- Host answers `yes` and the operator's activity is plainly outside the host's certificate. The
+- The venue reports `yes` and the event is plainly outside what that certificate covers. The
   product cannot detect this: nothing in the intake describes the operator's activity in the terms a
   certificate uses. The note text is worded so this case cannot falsify it, which is a second
   reason the finding asserts nothing about the operator's obligation.
@@ -539,7 +629,7 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
   smaller event produces no assembly output at all. That is the gate as published and this spec does
   not change it.
 - A guest operating in a venue whose own authorisation has lapsed is not modelled and cannot be:
-  the intake collects the host's claim, not its status.
+  the intake collects the reported answer, not the authorisation's current status.
 
 ## Fixtures and Verification
 
@@ -574,8 +664,39 @@ Files this feature may touch, and who must be in the room:
 | `apps/api/src/ruleset.ts` | move `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` | engine owner |
 | `docs/test-scenario-answer-key.md` | expectations | verification owner + rules reviewer + **engine owner** |
 | `docs/BASELINE.md` | current row, new digest, superseded-lineage record | product owner |
+| **`packages/engine/src/intake/scenario-intake-fixtures.ts`** | **the new explicit-`no` scenario's intake** | verification owner + rules reviewer + engine owner |
 | the test files below | version, count and expectation pins | engine owner |
-| the documents below | current-version references | product owner + each artifact's owner |
+| the documents below, **including `AGENTS.md` and `CONTRIBUTING.md`** | current-version references | product owner + each artifact's owner |
+| `apps/api/src/ruleset.ts` | the version literal in the offset diagnostic at `:324` | engine owner |
+
+### The new fixture needs three artifacts, not one, and the id is pinned
+
+The footprint permitted the answer key and the test files, and a new scenario cannot be added with
+either. `fixture-ruleset-agreement.test.ts` opens with
+`expect(sorted(scenarioIdsIn.fixtures())).toEqual(sorted(scenarioIdsIn.answerKey()))`, where
+`fixtures()` reads `SCENARIO_INTAKE_FIXTURES` from
+`packages/engine/src/intake/scenario-intake-fixtures.ts` and `answerKey()` matches
+`/^## Scenario ([A-Z])\b/` over `docs/test-scenario-answer-key.md`. So:
+
+1. **The id is a single capital letter, and the next free one is `G`.** The regex takes one letter, and
+   `no rule claims a scenario that does not exist` validates every `exercised_by_scenarios` entry
+   against those ids, so an ad-hoc name like `no-answer-fixture` fails that check.
+2. **A `## Scenario G` section in the answer key**, carrying an `**Inputs:**` line, because
+   `documentedInputs` parses that line into field pairs and compares them against the fixture
+   submission. A section without it throws rather than skips.
+3. **An entry in `SCENARIO_INTAKE_FIXTURES`**, which is what the footprint was missing. A unit case
+   inside an allowed test file cannot satisfy the equality above, because the check reads the exported
+   fixture set and not the test that uses it.
+
+Adding G also enrols it in every parameterized check: reached-versus-key in both directions, metadata in
+both directions, and the documented-inputs comparison. And `docs/BASELINE.md`'s **Scenario fixtures**
+row is an APPROVED artifact carrying a version marker (`v5` today), so it moves with the new scenario,
+which is why the manifest row in the audit above covers more than the ruleset digest.
+
+**This is the third footprint gap found by following a required test to the file it actually reads**
+(after the engine's `UNCONSUMED_INTAKE_FIELDS` entry and the derived test pins). The method that finds
+them is the one used here: open the test the criterion names, read what it imports, and put every file
+in that chain in the footprint.
 
 ### Every row audited against the change class it actually describes
 
@@ -613,14 +734,29 @@ semantics names the engine owner without being asked.
 ### The current-version documents, DERIVED the same way as the tests
 
 Round 3 derived the pinned TESTS; this is the same method applied to DOCUMENTS, because deleting
-v2.8 while approved artifacts still name it leaves them pointing at a missing file. **Method:** grep
-`specs/*.md` and `docs/*.md` for `nyc.v2.8` and `nyc-rules.v2.8.json`, then separate references that
-ASSERT THE CURRENT VERSION from those recording lineage or history, which must not move.
+v2.8 while approved artifacts still name it leaves them pointing at a missing file. **The method was
+wrong and is replaced.** It grepped `specs/*.md` and `docs/*.md`, two directories, which cannot find a
+reference at the repository root, and both root documents carry one. **New method, and it is a sweep
+of every tracked file rather than of a directory list:**
+`git grep -c "nyc.v2\.8\|nyc-rules\.v2\.8\.json" -- .`, then sort every hit into four categories,
+because "assertion or lineage" was also too coarse to place them:
 
-Thirteen files match. Those carrying current-version assertions, which move:
+1. **Instructions and authority claims.** A reader is told to open the file, or told that the file is
+   the authority. These MUST move, and the two at the root are the ones the old method could not see.
+2. **Executable literals.** The version appears in code that runs, including inside a diagnostic
+   message. These MUST move; see the row below the table.
+3. **Assertions in tests.** Enumerated in the pinned-tests section, unchanged.
+4. **Comments and historical records.** A comment citing where a legend is published, or a dated
+   record of a past round. These do NOT move, which is the rule round 3 adopted for
+   `packages/engine/src/types.ts` and `scripts/check-baseline-drift.mjs`, now stated once and applied
+   to everything in the category.
+
+**Thirty-five tracked files match.** Category 1, the documents that move:
 
 | File | What asserts the current version |
 | --- | --- |
+| **`AGENTS.md`** | **line 13 directs every contributor to open `rules/nyc-rules.v2.8.json`; line 27 names it as the sole source of regulatory output. MISSED by the old two-directory method** |
+| **`CONTRIBUTING.md`** | **line 17 states every lead time, fee, agency and requirement comes from that path; line 22 puts it in the authority chain. MISSED the same way** |
 | `docs/ARCHITECTURE.md` | AD-2 names the authoritative file; the component diagram names it |
 | `docs/DESIGN.md` | the lane definition owning engine fidelity to the file; the ratification line |
 | `docs/PRD.md` | current-ruleset references |
@@ -631,9 +767,35 @@ Thirteen files match. Those carrying current-version assertions, which move:
 | `docs/test-scenario-answer-key.md` | the ruleset the key is derived from |
 | `docs/ROADMAP.md` | the current-ruleset pointer |
 
-Those that must NOT move: `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
-`docs/VERIFICATION-SOURCES.md`'s dated round records, and `docs/ARCHITECTURE-FUTURE.md`'s historical
-references. `specs/F-102-feasibility-verdict.md`'s single occurrence is in its `Updated:` history
+**The root documents are the reason this is not a tidiness item.** `AGENTS.md` line 5 of its own
+numbered list is mandatory pre-work: a worker is told to read the ruleset before touching rules, plans
+or verdicts. If the publication leaves that line naming a deleted path, the next worker's first
+instruction cannot be followed, and the honest response is to stop on the contradiction rather than
+guess which file replaced it. Both root documents therefore land in the same commit as the deletion,
+under Acceptance Criterion 8 and rollout item 7.
+
+**Category 2, the one executable literal outside the enumerated tests:**
+`apps/api/src/ruleset.ts:324`. When a published alert offset exceeds the product maximum,
+`requireDaysBefore` reports that "the longest window nyc.v2.8 publishes is 60 days". The 60 is
+unchanged by this feature and the version claim is not: it goes stale the moment v2.8 is deleted, and
+it is inside a string rather than inside an assertion, which is why round 3's sweep for pins did not
+model it. **It moves with the publication, or is derived from `EXPECTED_RULESET_VERSION`, which is in
+the same file and already moves.** Deriving it is preferable, because it is then impossible to leave
+behind on the next publication, and it costs one interpolation in a message no test asserts on. Either
+way it is in the same commit.
+
+Category 4, which does NOT move: `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
+`docs/VERIFICATION-SOURCES.md`'s dated round records, `docs/ARCHITECTURE-FUTURE.md`'s historical
+references, the three files under `docs/proposals/`, the comments in
+`packages/engine/src/types.ts`, `proposals.ts`, `intake/registry.ts` and
+`__fixtures__/published-ruleset.ts`, the twenty-five in `scripts/check-baseline-drift.mjs` (all of
+them commentary on path-matching bugs the guard has already fixed), and the six in `apps/web`
+(`rules-file.ts`, `verification-copy.ts`, `plan-line.tsx`, and three test comments), each of which
+cites where the published legend lives rather than asserting the current version. **The cost of that
+rule is stated rather than hidden:** those comments will name a superseded version until they are next
+edited. Moving them would widen this footprint into `apps/web`, which the feature otherwise does not
+touch and which PR #176 is currently changing, so it is recorded as a follow-up sweep for whoever owns
+those files and not taken here. `specs/F-102-feasibility-verdict.md`'s single occurrence is in its `Updated:` history
 line, which records a retarget rather than asserting the current version, so it does not move
 either. **That is why the footprint permits F-102 nothing:** round 3 forbade touching it and this
 derivation confirms nothing in it needs touching.
@@ -655,8 +817,10 @@ advisory count assertions, and for assertions over a complete set of published i
 | --- | --- | --- |
 | `apps/api/src/ruleset.ts` | 32 | `EXPECTED_RULESET_VERSION` |
 | `apps/api/src/ruleset.test.ts` | 75, 112 | asserted version, and a fixture carrying it |
+| `apps/api/src/ruleset.test.ts` | 76 | **`snapshotDate`. UNCONDITIONAL: rollout item 1 advances the date, so this pin always moves** |
 | `apps/api/src/plan.test.ts` | 127 | `rulesetVersion` on the plan response |
 | `packages/engine/src/engine.test.ts` | 972 | asserted version |
+| `apps/api/src/ruleset.ts` | 324 | the version inside the offset diagnostic message, per the sweep below |
 
 **Moves whenever a RULE is added:**
 
@@ -677,16 +841,25 @@ advisory count assertions, and for assertions over a complete set of published i
 | `apps/api/src/plan.test.ts`, `apps/api/src/rules-snapshot.test.ts` | fixture expectations pinning plan output |
 | `apps/api/src/checklist.test.ts` | complete per-scenario `ruleIds` lists, e.g. Scenario A at line 392 |
 
-**Does NOT move, recorded so the next reader does not re-derive it:** `apps/api/src/ruleset.test.ts:77`
-pins `intakeFields` at 33 and this feature adds no field; `:76` pins `snapshotDate` and moves only if
-the publication re-fetches a source; `EXPECTED_SCHEMA` and `EXPECTED_ADVISORY_COUNT` move only for a
-schema change or a new advisory. Occurrences of `nyc.v2.8` in `packages/engine/src/types.ts` and
-`scripts/check-baseline-drift.mjs` are prose and comments, not assertions.
+**Every conditional row audited, because the `snapshotDate` one had gone stale against Acceptance
+Criterion 8 and a condition nobody re-reads is how that happens.** The `snapshotDate` row said it moves
+only if the publication re-fetches a source, which was true when the rollout said nothing about the
+date and false the moment rollout item 1 advanced it. An implementer following the old row would have
+published the next ruleset with the test and the F-206 banner still pinned to July 26. It is now in the
+unconditional table above. The rest:
 
-`apps/api/src/checklist.test.ts` is marked **conditional**: whether it moves depends on which
-scenarios the new rule reaches, and checklist items derive from the base plan rather than from a
-rescope. It is in the footprint so an implementer is not blocked, not because it is certain to
-change.
+| Row | Condition it carried | Resolved |
+| --- | --- | --- |
+| `ruleset.test.ts:76` `snapshotDate` | "only if the publication re-fetches a source" | **WRONG, removed.** Rollout item 1 advances `snapshot_date`, so it always moves |
+| `ruleset.test.ts:77` `intakeFields` at 33 | "this feature adds no field" | **LIVE, and it now depends on a decision.** True under route 1 of the premise section, false under route 2, which adds a field and moves this pin, an `events` column and the registry |
+| `EXPECTED_ADVISORY_COUNT` | "only for a new advisory" | **settled false.** Both rules are `kind: note` and live in `rules`, not in `advisories` |
+| `EXPECTED_SCHEMA` | "only for a schema change" | settled false under route 1; a new field does not change the schema family either |
+| `apps/api/src/checklist.test.ts` | "depends on which scenarios the new rule reaches" | **settled: it does not move.** Only Scenarios A and C are materialized into checklists in that suite, 40 cases on A and one on C, and neither reaches the gate. It stays in the footprint so a new fixture's checklist case is not blocked |
+
+The `checklist.test.ts` resolution needed one more fact than round 3 had, and it is worth stating
+because it cuts the other way from the obvious reading: `contextItems` pins complete rule-id lists too,
+not only trackable `items`, so a `note`-kind finding WOULD move that assertion for any scenario the
+rules reach. It is safe only because no such scenario is materialized in that suite today.
 
 The first draft permitted only `packages/engine/src/ruleset.ts` under the engine, which made the
 feature **unimplementable**.
@@ -736,16 +909,26 @@ Rollout is one change or none. In it:
    sha256 recomputed over the new bytes, and a superseded-lineage row recorded for v2.8 with its
    commit. Without this `pnpm check:baseline` fails, and the new artifact carries none of the
    approval metadata this spec requires of it.
-5. The derived test pins updated, per the footprint, including the `snapshotDate` pin.
-6. The answer key updated for Scenario F and Scenario A's rescope.
+5. The derived test pins updated, per the footprint, including the `snapshotDate` pin, which moves
+   unconditionally because item 1 advances the date.
+6. The answer key updated for Scenario F and Scenario A's rescope, plus the new explicit-`no` scenario
+   and its entry in `SCENARIO_INTAKE_FIXTURES`, which the agreement suite requires to name the same
+   set.
 7. The current-version references in the approved documents updated, per the derivation in the
-   footprint.
+   footprint, **including `AGENTS.md` and `CONTRIBUTING.md`**. These are not documentation tidying:
+   `AGENTS.md` tells every worker to open the ruleset before touching rules, plans or verdicts, so a
+   stale path there makes the mandatory pre-work instruction unfollowable.
+8. **The version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message** moved, or derived
+   from `EXPECTED_RULESET_VERSION` in the same file. It is executable text rather than an assertion,
+   which is the category round 3's sweep did not model.
 
 Items 1 to 4 each fail independently: 1 and 2 at boot, 3 at load, 4 in CI. No subset starts. There is
-no partial state worth shipping. **The exception is item 1's publication record**, which fails
-nothing: a stale `supersedes` or `provenance` is read by no code, and a copied `status` satisfies the
-one check there is. It is in the atomic set because it is unenforceable, not because a guard will
-catch it.
+no partial state worth shipping. **Two parts of the set fail nothing and are in it anyway.** Item 1's
+publication record: a stale `supersedes` or `provenance` is read by no code, and a copied `status`
+satisfies the one check there is. And items 7 and 8: no guard reads `AGENTS.md`, `CONTRIBUTING.md` or a
+diagnostic message, so a stale path in the contributor instructions ships green and is discovered by
+the next worker who tries to follow them. Both are in the atomic set because they are unenforceable,
+not because something will catch them.
 
 Fallback is to publish nothing and leave the field in `UNCONSUMED_INTAKE_FIELDS`. That is the
 current state, it is stable, and its cost is recorded honestly there: the field is collected and
@@ -755,7 +938,8 @@ visible rather than silent.
 ## Approval Blockers
 
 Every one of these is open, and this spec cannot be approved until each is resolved by its owner.
-None is resolved here.
+None is resolved here. **Blocker 13 comes first in practice**, because it decides whether the feature
+has a describable subject at all; the ones above it are about publishing a feature that 13 may reshape.
 
 1. **F-ID ASSIGNMENT, and the range is saturated.** Stage 1 (IDEATE) is stated in `docs/DESIGN.md`
    as F-101 to F-109, and all nine are assigned. `docs/ROADMAP.md` is the authoritative registry per
@@ -845,7 +1029,29 @@ None is resolved here.
     `noteText` again below it, so every note would have shown its sentence twice. Each output now
     states which of the five paths it was checked against, because three rounds running a conclusion
     true on one path was carried onto another where it is false.
-13. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+13. **THE PREMISE IS NOT REPRESENTABLE IN INTAKE, and the product owner chooses the route.** No
+    published intake field names a host, a renter, a tenant or a third party, checked against all 33,
+    so the triggers cannot tell a guest operator from the venue's own operator and would describe a
+    relationship the second one does not have. Route 1 makes the output venue-neutral and costs nothing
+    outside this document. Route 2 adds an intake field and costs an Event Input change (all affected
+    lane owners plus the architecture owner), a migration on `events` (database owner plus all affected
+    lane owners), the web intake form, and the regulatory question answered, which DOB-ASSEMBLY-001
+    records as unpublished in either direction. The section under Purpose states both in full. Route 1
+    leaves a feature worth having, which is recorded as a finding rather than as a choice.
+14. **Round 7 found the framing asserting a relationship the intake cannot express, and five
+    consequences of sweeping by the wrong unit.** The premise finding is blocker 13. The other five were
+    all the same mistake: a sweep whose unit was too narrow. A reduction claim survived two rounds of
+    state removals because the sweep looked for the word rather than for any statement of effect, and
+    two more survivors turned up once it did: the user story's promise that the plan says what the
+    approval does, and the Outputs section still announcing three plan states. The document sweep read
+    two directories and so could not see `AGENTS.md` and `CONTRIBUTING.md`, which direct every
+    contributor to the file the rollout deletes; it is now a sweep of every tracked file, sorted into
+    instructions, executable literals, test assertions and comments, which also caught a version
+    literal inside a diagnostic message. The footprint permitted the answer key without the fixture
+    file its own required test reads. And a derived-test row still carried a condition Acceptance
+    Criterion 8 had made unconditional, so every conditional row is now audited, which settled two of
+    them and showed a third depends on blocker 13's route.
+15. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
