@@ -305,3 +305,68 @@ body {
   border-radius: 0.5rem;
   color: var(--muted);
 }
+
+/* F-205: the insurance panel. AC 2's whole distinction lives in these two rules and nowhere else
+   — the design system's own "Triggered Permit Warning (Amber)" vocabulary for a required card
+   (the same var(--warning-bg)/var(--warning-line) pair `.intake__warning` and `.line__conflict`
+   already use for a triggered, must-not-miss requirement), plain var(--line) for an informational
+   one. No accent device beyond what is already in this file. */
+.insurance {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+}
+
+.insurance__card {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+
+.insurance__card--required {
+  background: var(--warning-bg);
+  border-color: var(--warning-line);
+}
+
+.insurance__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.insurance__name {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.insurance__badge {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  color: var(--muted);
+}
+
+.insurance__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.insurance__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+.insurance__action {
+  margin: 0.6rem 0 0;
+  font-size: 0.9375rem;
+}
