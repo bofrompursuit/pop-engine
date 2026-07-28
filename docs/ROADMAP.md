@@ -103,8 +103,10 @@ Worked separately from the core per `DESIGN.md` Decision 10; doubles as the fall
 
 **Dropped 2026-07-28, product-owner approved (SPEC-CONFLICT #127 item 2, narrowing branch):** a
 standalone `Square/POS integrations` entry sat here with no F-id and no spec, contradicting
-`PRD.md:226` and `ARCHITECTURE-FUTURE.md` §9.3, which both assign the Square capability to F-408 and
-scope it to the inventory webhook. The broader standalone POS capability is DROPPED, not deferred
+`PRD.md:226`, which assigns the Square capability to F-408 and scopes it to the inventory low-stock
+webhook. `ARCHITECTURE-FUTURE.md` §9.3 is not a second source for that scope: its row places F-408
+in the generic External integrations module beside F-108, F-212 and F-308 and lists generic
+integration entities, naming neither Square, nor inventory, nor a webhook. The broader standalone POS capability is DROPPED, not deferred
 and not absorbed: F-408 keeps exactly its established meaning, Inventory Low-Stock Alerts, because
 widening it would change an assigned ID's meaning against the policy above. Reintroducing the
 broader capability is a new ID and a new product decision, not a restoration. Recorded here so the
