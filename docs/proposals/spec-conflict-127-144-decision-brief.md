@@ -1,6 +1,6 @@
 # Decision brief: SPEC-CONFLICT #127 and #144
 
-**Status:** NOT APPROVED, and not a decision. This document resolves nothing. It records what is
+**Status:** PROPOSED, and not a decision. This document resolves nothing. It records what is
 verifiably true on `main` at `048bff3` so that the two product-owner decisions can be made against
 the current tree rather than against issue text written days ago.
 
@@ -39,12 +39,30 @@ F-203's own APPROVED spec already assigns the Phase 2 scope to F-203. Its "Phase
 > per ROADMAP).
 
 So `ROADMAP.md:57` and the approved F-203 spec **agree**. There is no disagreement between artifacts
-about what F-203 means, which is what the issue's §5 citation implies. The whole of the tension is
-with §7's requirement that every scheduled F-id receive one spec: the Phase 2 depth is scheduled
-under an F-id whose one spec already exists and is approved for the Phase 1 cut of it.
+about what F-203 means, which is what the issue's §5 citation implies.
 
-That reframes item 1 from "whose meaning wins" to "how a second phase of one feature gets a
-compliant spec", which is a narrower question with a cheaper answer.
+**And there is no §7 problem either, which an earlier draft of this brief got wrong.** That draft
+read §7's "Every scheduled F-id receives one spec" as already biting, and reframed item 1 as how a
+second phase of one feature gets a compliant spec. The word doing the work is SCHEDULED, and on
+`main` the Phase 2 depth is not:
+
+> `docs/PRD.md:187` — "## 5. REQUIREMENTS — PLANNED SCOPE (Phases 2–4; outlined for delegation,
+> specs written when scheduled)"
+
+> `docs/DESIGN.md:105` — "Phases 2+ get specs when scheduled, not now."
+
+Listing the F-203 expansion in the Phase 2 roadmap is what those two artifacts call planned scope,
+not scheduling. §7 therefore demands no spec for it today, and nothing in the tree is out of
+compliance. The correction is a reduction: item 1 has no live compliance problem attached to it, and
+the finding that `ROADMAP.md:57` and the approved spec agree stands on its own with nothing left to
+be in tension with.
+
+**What the product owner is actually choosing, and when.** The choice is whether the Phase 2 depth
+of alerting is eventually delivered under F-203 or under a new id, and it is a naming and tracking
+decision rather than a compliance one. It becomes live at the moment that work is SCHEDULED, because
+scheduling is what turns §7's one-spec requirement on. Until then either answer leaves the tree
+compliant, and deciding early buys only the ability to write the id into the Roadmap now. Deciding
+late costs nothing that this brief could find.
 
 ## What governance permits and forbids here
 
@@ -57,7 +75,10 @@ Rather than leaving these to be re-derived:
 - **§7 forbids silent expansion, not decided expansion.** "A spec may clarify but may not silently
   expand its Roadmap feature." An explicit, recorded Roadmap decision is the permitted path; an
   implementer widening F-203 on their own is not.
-- **§7 requires one spec per scheduled F-id**, which is the actual constraint biting item 1.
+- **§7 requires one spec per SCHEDULED F-id**, and that is what makes item 1 a question for later
+  rather than now. `PRD.md:187` and `DESIGN.md:105` both put Phases 2-4 in planned scope with specs
+  written when scheduled, so the requirement does not bite until the Phase 2 depth is scheduled. It
+  is the constraint that will decide item 1; it is not one the tree is failing today.
 - **DESIGN.md's approved ID policy adds two rules the issue does not cite.** "Once assigned, an ID's
   meaning never changes, and IDs are never reused." And, directly relevant to item 2: "Closely
   related capabilities are absorbed into existing IDs rather than split: run-of-show lives in F-405
@@ -118,9 +139,13 @@ Line numbers are given only to locate the current text; the edits are described 
 4. `docs/DESIGN.md` status header: record the range extension.
 5. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md` and `docs/DESIGN.md`.
 6. Tracker: open the F-215 issue; F-203's own issue needs no change.
-7. `specs/F-203-deadline-alerts.md`: **no edit required.** Its Scope Cut sentence points at
-   "F-203 full, per ROADMAP"; whether that pointer should be retargeted to F-215 is itself part of
-   the decision. If retargeted, see the sequencing note below.
+7. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
+   "Phase 2 (F-203 full, per ROADMAP)". Step 1 removes the `F-203 (full)` entry that sentence points
+   at, so without this edit an APPROVED spec cites a Roadmap entry that no longer exists. Governance
+   §5 makes that a conflict requiring reconciliation, so option A either retargets the pointer to the
+   new id in the same change set or opens a tracked reconciliation for it. An earlier draft of this
+   brief called the edit unnecessary and the retarget optional; that was wrong, and it understated
+   option A by one approved artifact. See the sequencing note below.
 
 ### Item 1, option B: expand F-203 explicitly, without changing its meaning
 
@@ -133,6 +158,12 @@ Line numbers are given only to locate the current text; the edits are described 
 3. `specs/F-203-deadline-alerts.md` status header, plus its BASELINE row.
 4. `docs/ROADMAP.md` status header and BASELINE row.
 5. No DESIGN.md change and no new tracker issue.
+
+**Option B has no mirror of option A's step 7, and that was checked rather than assumed.** B keeps
+the `F-203 (full)` Roadmap entry, so the spec's "per ROADMAP" pointer still resolves and needs no
+retarget on that account; and B's step 2 already rewrites the Scope Cut section, so the sentence is
+priced there in any case. The asymmetry in the two lists is therefore real and not an artefact of
+one being written more carefully: A touches an approved spec that B was already touching.
 
 **This option is cheaper in artifacts and blocked in sequencing.** See below.
 
@@ -219,11 +250,79 @@ The legend they carry says "combination not modeled by this ruleset version; adv
 nothing". Both texts assert something. That contradiction is live and is the verification owner's
 under the issue's own authority section.
 
-**One precision correction to the issue.** It says these advisories "state regulatory facts without
-source records". Both carry `evidence` references into `VERIFICATION-SOURCES.md`; what they lack is a
-`source` object, which SPEC-CONFLICT #75's exemption expressly permits for an assertion-free
-COVERAGE_GAP. So the defect is that the text asserts while the legend says it does not, not that the
-claims are unevidenced. That distinction changes what a fix would have to do.
+### Whether the claims are evidenced, re-derived claim by claim
+
+An earlier draft of this brief said the issue's "without source records" was imprecise because both
+advisories carry `evidence` references, and treated the claims as evidenced on that basis. **That
+inherited a citation label as if it were a source record.** The labels have now been read against the
+source text. The result does not go the way either the earlier draft or the review expected, so each
+claim is set out separately with the located text quoted rather than summarised.
+
+**ADV-ALCOHOL-PUBLIC-001** claims a prohibition for four categories. Its evidence ref is "CECM FAQ
+prohibition quote, VS Round2 #6". Round 2 #6 reads, in full:
+
+> **Block party** (`block-parties.page`): community-sponsored public event, "no sales of goods or
+> services"; "Alcohol, vendors, commercial branding and sponsorships are not permitted"; applicant
+> "must be a member of a block association and given permission by their neighbors"; 60-day
+> deadline. Community-board recommendation per SAPO rules §1-04(h).
+
+| claim | located support |
+|---|---|
+| block parties | **supported**, by the quoted line above |
+| street events | **no source located** |
+| festivals | **no source located** |
+| parades | **no source located.** The word "parade" does not appear anywhere in `VERIFICATION-SOURCES.md` |
+
+Two further precisions. The located prohibition is on `block-parties.page`, not on the CECM FAQ the
+advisory names, so the attribution does not match the record even for the one supported category.
+And the whole document was searched, not only the cited entry, before writing "no source located".
+
+**So the issue is right about this advisory.** Three of its four named categories assert a
+prohibition no located source supports, and the earlier draft's framing of the claims as evidenced
+would have steered a resolution toward keeping them.
+
+**ADV-SAPO-OTHER-CLASS-001** claims four deadlines. Its evidence ref is "VS Round2 #4-5", and those
+two entries do not cover all four:
+
+> 4. **Open Culture**: 15 days (`open-culture.page` + deadlines page).
+
+> 5. **Single Block Festival OFFICIAL CONFLICT**: `single-block-festivals.page` + deadlines page say
+> 90 days; the CECM FAQ says December 31 of the preceding year. Both live.
+
+But the other two ARE located in the same document, under a different reference. RF-2, in the table
+whose column heading is "What primary text says", records:
+
+> CECM FAQ publishes deadlines **by event type**: block parties/clean-ups/farmers markets/religious
+> 60 days; **street events 14–45 days**; plaza events 14–60; press/rallies/**productions 10 days**;
+> **street festivals: December 31 of the prior year**
+
+corroborated in section "7. R1 — SAPO fee schedule by event type":
+
+> https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731 (50 RCNY §1-08):
+> codified fee + deadline table matching the CECM page.
+
+| claim | located support |
+|---|---|
+| production 10 days | **supported**, by RF-2, not by the cited #4-5 |
+| open culture 15 days | **supported**, by #4 as cited |
+| street festival Dec 31 of prior year | **supported**, by RF-2, not by the cited #4-5 |
+| single block festival 90 days vs Dec 31 | **supported**, by #5 as cited |
+
+**So for this advisory the defect is the citation, not the claims.** All four deadlines are located
+in `VERIFICATION-SOURCES.md`; two of them are simply not where the evidence ref points. Reading the
+label alone would have produced the opposite conclusion, and acting on it would have removed
+regulatory text the record does support.
+
+**What survives of the earlier draft's correction.** The distinction between a missing `source`
+object and unevidenced claims is still real, and SPEC-CONFLICT #75's exemption still permits the
+absent `source` for an assertion-free COVERAGE_GAP. What does not survive is using that distinction
+to call the claims evidenced: it is true of `ADV-SAPO-OTHER-CLASS-001` and false of
+`ADV-ALCOHOL-PUBLIC-001` for three of its four categories. The two advisories are in different
+positions and this brief previously treated them as one.
+
+The legend contradiction stated above is unaffected: both texts assert while the legend they carry
+says an advisory asserts nothing. That remains the verification owner's under the issue's own
+authority section, and this brief decides none of it.
 
 ## Everything else in the issue, verified
 
@@ -298,10 +397,12 @@ three of its citations lead nowhere.
 
 Stated as observations, not recommendations.
 
-**#127 item 1** is narrower than filed: the two artifacts already agree on F-203's meaning, so the
-question is only how the Phase 2 depth gets a §7-compliant spec. Option B touches one spec and one
-Roadmap line but is sequencing-blocked behind PR #131. Option A touches two approved artifacts
-because STAGE 2's declared id range is saturated.
+**#127 item 1** is narrower than filed, and narrower again than an earlier draft of this brief made
+it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
+scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
+choice that becomes live when that work is scheduled. Option B touches one spec and one Roadmap line
+but is sequencing-blocked behind PR #131. Option A touches two approved artifacts because STAGE 2's
+declared id range is saturated, plus the F-203 spec pointer its own step 1 invalidates.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
 only one of the four change sets that touches a single artifact.
