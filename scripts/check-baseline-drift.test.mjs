@@ -1708,3 +1708,139 @@ describe.concurrent("round 15: ignored files, substitution, and values that span
     expect(output).toContain(`.github/workflows/ci.yml:6 names ${MISSING}`);
   });
 });
+
+// The SPEC-CONFLICT #127 item 2 rule (governance §5 step 7). The reconciliation dropped a
+// standalone `Square/POS integrations` bullet from the Roadmap because it contradicted the PRD and
+// ARCHITECTURE-FUTURE, which assign the Square capability to F-408. A one-time edit closes that
+// once; these cases are what stop it returning.
+//
+// The three artifacts are planted per case rather than seeded, because the seed tree deliberately
+// carries no docs beyond a row-less manifest, and every other rule in this file is proved against a
+// tree holding only what its case needs.
+describe.concurrent("Square/POS scope agreement (SPEC-CONFLICT #127 item 2)", () => {
+  /** A tree in the reconciled state: the capability is F-408's in all three artifacts. */
+  const reconciled = (overrides = {}) => ({
+    "docs/ROADMAP.md":
+      "# Roadmap\n\n- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook.\n",
+    "docs/PRD.md":
+      "# PRD\n\n- **F-308 / F-408** — ticketing; inventory low-stock alerts (Square webhook).\n",
+    "docs/ARCHITECTURE-FUTURE.md":
+      "# Architecture\n\n| External integrations | F-108, F-212, F-308, F-408 | webhook events |\n",
+    ...overrides,
+  });
+
+  it("passes the reconciled tree, so a failure below means something", async () => {
+    const { status, output } = await runOn(reconciled());
+
+    expect(status).toBe(0);
+    expect(output).toContain("Square/POS scope check passed");
+  });
+
+  // THE REGRESSION ITSELF. This is the exact line the reconciliation removed.
+  it("fails when the standalone Square/POS entry returns to the Roadmap", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/ROADMAP.md":
+          "# Roadmap\n\n- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook.\n" +
+          "- Square/POS integrations.\n",
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("docs/ROADMAP.md:4 carries a Square/POS scope line");
+  });
+
+  // A standalone entry that never says "Square" is the same defect wearing a different word.
+  it("fails on a standalone POS entry that does not name the vendor", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/PRD.md":
+          "# PRD\n\n- **F-308 / F-408** — ticketing; inventory low-stock alerts (Square webhook).\n" +
+          "- POS integrations, provider to be chosen.\n",
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("docs/PRD.md:4 carries a Square/POS scope line");
+  });
+
+  // Assigning the capability to a NEW id is the branch the product owner did not take, and it is
+  // the shape a later reader is most likely to reintroduce by hand.
+  it("fails when the capability is assigned to an id other than F-408", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/ROADMAP.md":
+          "# Roadmap\n\n- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook.\n" +
+          "- **F-414 · Square/POS Integrations** — the broader capability.\n",
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("F-414");
+  });
+
+  // The other half of "agree": deleting the assignment cannot pass by leaving nothing to disagree
+  // with. A rule that only looks for contradictions is satisfied by an empty document.
+  it("fails when the Roadmap drops the F-408 assignment entirely", async () => {
+    const { status, output } = await runOn(
+      reconciled({ "docs/ROADMAP.md": "# Roadmap\n\nNothing assigned here.\n" }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("docs/ROADMAP.md no longer assigns the Square capability to F-408");
+  });
+
+  it("fails when the PRD drops the F-408 assignment entirely", async () => {
+    const { status, output } = await runOn(
+      reconciled({ "docs/PRD.md": "# PRD\n\nNothing assigned here.\n" }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("docs/PRD.md no longer assigns the Square capability to F-408");
+  });
+
+  it("fails when ARCHITECTURE-FUTURE stops owning F-408 on its external integrations row", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/ARCHITECTURE-FUTURE.md":
+          "# Architecture\n\n| External integrations | F-108, F-212, F-308 | webhook events |\n",
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(output).toContain("no longer lists F-408 on its External integrations");
+  });
+
+  // The three false positives this rule had to be shaped around, kept as cases so a later
+  // simplification to "any line mentioning POS" fails here rather than in CI on a compliant tree.
+  it("accepts POS named as a provider class rather than as a capability entry", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/ARCHITECTURE-FUTURE.md":
+          "# Architecture\n\n| External integrations | F-108, F-212, F-308, F-408 | webhook events |\n" +
+          "\n| AD-13 | Put every external service behind an adapter. | POS providers cannot leak. |\n" +
+          "\n- calendar/ticketing/POS synchronization and webhook processing;\n" +
+          "\n```\n/packages/integrations   Calendar, ticketing, POS, geocoding adapters\n```\n",
+      }),
+    );
+
+    expect(status).toBe(0);
+    expect(output).toContain("Square/POS scope check passed");
+  });
+
+  // The record of the drop is prose ABOUT the removed entry and necessarily repeats its words. If
+  // the rule matched prose, the reconciliation PR could not describe what it had done.
+  it("accepts the prose record of the drop, which repeats the dropped entry's words", async () => {
+    const { status, output } = await runOn(
+      reconciled({
+        "docs/ROADMAP.md":
+          "# Roadmap\n\n- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook.\n" +
+          "\n**Dropped 2026-07-28:** a standalone `Square/POS integrations` entry sat here with no\n" +
+          "F-id, contradicting the PRD.\n",
+      }),
+    );
+
+    expect(status).toBe(0);
+    expect(output).toContain("Square/POS scope check passed");
+  });
+});
