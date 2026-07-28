@@ -131,6 +131,7 @@ type AlertRow = {
     last_error?: string;
     test?: boolean;
     controlling_apply_by?: string;
+    intended_at?: string;
   };
 };
 
@@ -3707,6 +3708,95 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(provider.delivered).toHaveLength(1);
     });
 
+    it("gives a revived alert a fresh send_at rather than its pre-cancellation one", async () => {
+      // The transition set was incomplete when send_at started keying on the intended slot. A
+      // cancelled row was NOT in the queue while it was cancelled, so its stored send_at is not a
+      // record of having been due; returning it to pending with that value made it deliverable
+      // immediately, recorded as blowing AC 2's bound by however long it sat, and sorted ahead of
+      // genuinely older work.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const gated = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, gated.planId, contacts);
+        const unlock = (await alertsOf(eventId)).find(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        // Days in the past, as a long-cancelled row's stored slot would be.
+        await pool.query(
+          "UPDATE alerts SET send_at = clock_timestamp() - interval '9 days' WHERE id = $1",
+          [unlock?.id],
+        );
+        const stale = (await alertsOf(eventId)).find((row) => row.id === unlock?.id);
+
+        // The requirement disappears, so the alert is cancelled.
+        const ungated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, ungated.planId, contacts);
+        expect((await alertsOf(eventId)).find((row) => row.id === unlock?.id)?.status).toBe(
+          "cancelled",
+        );
+
+        // And returns.
+        const regated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          applyAfterDate: dayFromToday(21),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, regated.planId, contacts);
+
+        const revived = (await alertsOf(eventId)).find((row) => row.id === unlock?.id);
+        expect(revived?.status).toBe("pending");
+        expect(revived?.send_at.getTime()).not.toBe(stale?.send_at.getTime());
+        // Not days behind: a revival is a fresh schedule, so the bound is measurable from it.
+        expect(Date.now() - (revived?.send_at.getTime() ?? 0)).toBeLessThan(DELIVERY_BOUND_MS);
+      } finally {
+        client.release();
+      }
+    });
+
+    it("keeps a slack warning's send_at and backoff across a review", async () => {
+      // The plan-level warning is the only alert with no intended slot, so both sides of the
+      // comparison are NULL and it takes the unchanged branch on every review. That is deliberate
+      // rather than an accident of NULL comparison: the warning has been genuinely due since it was
+      // written, so keeping its send_at reports real lateness instead of manufacturing freshness,
+      // and its backoff is evidence about a destination that has not changed, which is round 9.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "dead@example.test", phone: null };
+      const { planId } = await insertDuePlan(eventId, {
+        verdict: "feasible_at_risk",
+        minSlackDays: 9,
+        latestApplyDate: dayFromToday(9),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, planId, contacts);
+        const warning = (await alertsOf(eventId)).find((row) => row.alert_type === "slack_warning");
+        expect(warning?.payload.intended_at).toBeUndefined();
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 3,
+                             next_attempt_at = clock_timestamp() + interval '15 minutes'
+            WHERE id = $1`,
+          [warning?.id],
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        await schedulerWith()(client, eventId, planId, contacts);
+
+        const after = (await alertsOf(eventId)).find((row) => row.id === warning?.id);
+        expect(after?.send_at.getTime()).toBe(warning?.send_at.getTime());
+        expect(after?.next_attempt_at).not.toBeNull();
+      } finally {
+        client.release();
+      }
+    });
+
     it("clears the retry state when a cancelled alert is revived", async () => {
       // The third transition this clause has had to answer. Round 9 decided an unchanged
       // destination keeps its evidence and round 11 decided a corrected address gets its own row,
@@ -4116,6 +4206,36 @@ describe("F-203 delivery channels (AC 5)", () => {
     body: "…",
     idempotencyKey: "event:item:deadline_reminder:email:2026-08-19",
   };
+
+  it.runIf(databaseUrl !== "")("gives the due-alert scan a partial index to walk", async () => {
+    // Issue #151. `alerts` had only its primary key and the idempotency unique index, so the scan
+    // that runs every sixty seconds read the whole table — and sent and cancelled rows are kept
+    // indefinitely because they are the audit record, so the table grows while the queue does not.
+    //
+    // WHAT THIS PINS AND WHAT IT DOES NOT. It pins that the index exists, is partial to the queued
+    // statuses, and leads on the columns the scan orders by. It does NOT assert that the planner
+    // chooses it, because on the empty table CI runs against a sequential scan is the correct plan
+    // and a test demanding otherwise would be asserting a lie. The planner's choice was measured
+    // instead, on 200000 rows with 200 queued: parallel sequential scan at 23.2ms with 66600 rows
+    // discarded per worker, against an index scan at 1.3ms, with the partial index at 16kB beside
+    // a 79MB table. That number belongs in the review record rather than in an assertion.
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const { rows } = await pool.query<{ indexdef: string }>(
+        "SELECT indexdef FROM pg_indexes WHERE tablename = 'alerts' AND indexname = $1",
+        ["alerts_due_queue_idx"],
+      );
+      const definition = rows[0]?.indexdef ?? "";
+      expect(definition).toContain("failure_count");
+      expect(definition).toContain("send_at");
+      // Partial, which is what keeps it proportional to the QUEUE rather than to the audit trail.
+      expect(definition).toContain("WHERE");
+      expect(definition).toMatch(/pending/);
+      expect(definition).toMatch(/failed/);
+    } finally {
+      await pool.end();
+    }
+  });
 
   it("releases the response body on both the accepted and the rejected path", async () => {
     // Undici holds a connection open until its body is consumed or cancelled, so a body nobody

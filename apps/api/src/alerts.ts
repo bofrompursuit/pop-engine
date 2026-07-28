@@ -216,6 +216,35 @@ const FILING_WINDOW_HAS_SHUT = (day: string): string => `(
        OR coalesce((alerts.payload->>'controlling_apply_by')::date < ${day}::date, false)
      )`;
 
+/**
+ * Whether this upsert is giving the row a FRESH SCHEDULE, as opposed to recomputing the same one.
+ *
+ * THE FOURTH TRANSITION RULE ON THIS CLAUSE, written where the other three are. Round 9 decided an
+ * unchanged destination keeps its evidence. Round 11 decided a corrected address gets its own row.
+ * Round 27 decided a derived value cannot outlive what it was derived from. This decides when the
+ * schedule itself is new, and both schedule-derived columns read it so they cannot disagree; the
+ * predicate used to be written out twice, which is how one of them acquired a branch the other
+ * lacked.
+ *
+ * A REVIVAL IS A FRESH SCHEDULE. A cancelled row was not in the queue while it was cancelled, so
+ * its stored `send_at` is not a record of having been due — it stopped being due. Returning it to
+ * `pending` with a `send_at` from before the cancellation made it deliverable immediately, recorded
+ * as blowing AC 2's bound by however long it sat, and sorted ahead of genuinely older work.
+ *
+ * A MISSING `intended_at` MEANS THE SCHEDULE DID NOT CHANGE, and that is a decision rather than an
+ * accident of NULL comparison, so it is stated. The plan-level slack warning is the only alert with
+ * no intended slot: it is due at the moment it is written, and `NULL IS DISTINCT FROM NULL` is
+ * false, so it takes this branch on every review. That is the right answer for it. Such a warning
+ * has been genuinely due since it was written, so keeping its `send_at` reports real lateness
+ * rather than manufacturing freshness, and its backoff is evidence about a destination that has not
+ * changed, which is round 9. The case where an old `send_at` is NOT a record of being due is
+ * revival, and that is handled above rather than by widening this.
+ */
+const HAS_A_FRESH_SCHEDULE = `(
+       alerts.status = 'cancelled'
+       OR alerts.payload->>'intended_at' IS DISTINCT FROM EXCLUDED.payload->>'intended_at'
+     )`;
+
 const NOT_FROM_A_STALE_PLAN = `NOT EXISTS (
        SELECT 1
          FROM checklist_items AS stale_checklist
@@ -1490,11 +1519,11 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- round 11 made a changed destination a different row. send_at was the only field left
              -- that moved when nothing had.
              SET payload = alerts.payload || EXCLUDED.payload,
-                 send_at = CASE
-                   WHEN alerts.payload->>'intended_at'
-                        IS DISTINCT FROM EXCLUDED.payload->>'intended_at' THEN EXCLUDED.send_at
-                   ELSE alerts.send_at
-                 END,
+                 -- Both schedule-derived columns read ONE predicate, so a branch cannot be added
+                 -- to one and missed on the other. See HAS_A_FRESH_SCHEDULE for the rule and for
+                 -- why a missing intended slot deliberately counts as unchanged.
+                 send_at = CASE WHEN ${HAS_A_FRESH_SCHEDULE} THEN EXCLUDED.send_at
+                                ELSE alerts.send_at END,
                  status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END,
                  -- A REVIVED ALERT STARTS CLEAN, which is the third transition this clause has had
                  -- to answer and the one that was never given a rule. Round 9 decided an unchanged
@@ -1539,18 +1568,8 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
                  -- scan orders it behind untried work regardless.
                  failure_count = CASE WHEN alerts.status = 'cancelled' THEN 0
                                       ELSE alerts.failure_count END,
-                 next_attempt_at = CASE
-                   WHEN alerts.status = 'cancelled' THEN NULL
-                   -- THE INTENDED SLOT, NOT THE COMPUTED INSTANT. send_at is clamped forward to
-                   -- the request clock whenever its slot has already gone, so it differs on every
-                   -- review of an overdue alert even though nothing was rescheduled. Keying the
-                   -- clear on it let a repeated submission grant repeated immediate retries and
-                   -- made an old alert look newly scheduled. The rule is unchanged and this is the
-                   -- fact it was always about.
-                   WHEN alerts.payload->>'intended_at'
-                        IS DISTINCT FROM EXCLUDED.payload->>'intended_at' THEN NULL
-                   ELSE alerts.next_attempt_at
-                 END
+                 next_attempt_at = CASE WHEN ${HAS_A_FRESH_SCHEDULE} THEN NULL
+                                        ELSE alerts.next_attempt_at END
              WHERE alerts.status IN ('pending', 'cancelled', 'failed')
            -- xmax = 0 is true only for a row this statement inserted, which is what separates a
            -- newly scheduled alert from one that already existed and was recomputed in place.
