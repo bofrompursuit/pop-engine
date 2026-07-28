@@ -1518,7 +1518,33 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- and next_attempt_at already key on it; and recipient is not set here at all, because
              -- round 11 made a changed destination a different row. send_at was the only field left
              -- that moved when nothing had.
-             SET payload = alerts.payload || EXCLUDED.payload,
+             -- DELIVERY EVIDENCE DOES NOT SURVIVE A REVIVAL, which is the fourth transition rule on
+             -- this clause and follows from the third rather than adding to it. Round 33 decided a
+             -- revival is a fresh schedule because a cancelled row was not in the queue while it was
+             -- cancelled; last_error is evidence from exactly that ended queue membership, so it
+             -- goes with the failure_count the branch below already clears. Left behind, a revived
+             -- pending row, and later a successfully sent one, kept reporting a provider error from
+             -- a lifecycle that had finished.
+             --
+             -- CHECKED THE REST OF THE MERGED PAYLOAD, since this clause has now needed four rules.
+             -- Exactly two keys are written by the delivery path rather than by the scheduler:
+             -- last_error on failure and delivery on success. Everything else on the right-hand
+             -- side, the copy and intended_at and event_revision and controlling_apply_by, is
+             -- written by the scheduler and therefore refreshed on every upsert already. Both
+             -- delivery keys are dropped here. A cancelled row cannot in fact be carrying delivery,
+             -- because a sent row is cancelled by no path in this file, but stating that as a proof
+             -- makes it something a later change has to keep true; dropping both costs one token
+             -- and removes the obligation.
+             --
+             -- ON cancelled, NOT on a fresh schedule, and the distinction is the same one round 27
+             -- drew. A reminder whose date moved kept its queue membership: the attempt really
+             -- happened against that destination, so its evidence survives what the plan
+             -- recomputes. Only a withdrawal ends the membership the evidence belongs to.
+             SET payload = CASE
+                   WHEN alerts.status = 'cancelled'
+                     THEN (alerts.payload - 'last_error' - 'delivery') || EXCLUDED.payload
+                   ELSE alerts.payload || EXCLUDED.payload
+                 END,
                  -- Both schedule-derived columns read ONE predicate, so a branch cannot be added
                  -- to one and missed on the other. See HAS_A_FRESH_SCHEDULE for the rule and for
                  -- why a missing intended slot deliberately counts as unchanged.
@@ -2522,7 +2548,16 @@ export function parseContacts(
     contactPhone?: unknown;
   };
   if (contactEmail !== undefined && contactEmail !== null) {
-    if (typeof contactEmail !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+    // TRIMMED BEFORE IT IS VALIDATED, and the untrimmed version shipped a real failure. The regex
+    // forbids whitespace, `canonicalEmail` documents trimming as part of the canonical form, and
+    // this ran first, so a pasted address with a trailing space was rejected here before the
+    // trimming could ever apply. The checklist submits with a click handler rather than a native
+    // form, so the browser's own email validation never sees it either: the organizer got a 400 on
+    // saving the contact, and with it every email reminder for the event, with nothing on screen
+    // naming a space as the cause.
+    //
+    // The phone branch below already had this shape, which is why only one of the two broke.
+    if (typeof contactEmail !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())) {
       return { error: "contactEmail must be an email address" };
     }
   }
@@ -2536,7 +2571,11 @@ export function parseContacts(
   // field the organizer cleared, and that IS an instruction to clear it.
   return {
     contacts: {
-      ...(contactEmail === undefined ? {} : { email: contactEmail as string | null }),
+      // The value that was validated is the value that is stored, so storage never sees a form the
+      // check did not accept.
+      ...(contactEmail === undefined
+        ? {}
+        : { email: contactEmail === null ? null : (contactEmail as string).trim() }),
       ...(contactPhone === undefined
         ? {}
         : { phone: contactPhone === null ? null : (contactPhone as string).trim() }),

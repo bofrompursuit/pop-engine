@@ -1807,6 +1807,23 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(after.length).toBeGreaterThan(before.length);
     });
 
+    it("accepts an address the organizer pasted with surrounding whitespace", async () => {
+      // The regex forbids whitespace and ran before the trimming canonicalEmail documents, and the
+      // checklist submits with a click handler rather than a native form, so the browser never
+      // caught it either. A pasted address with a trailing space failed the whole review with a 400
+      // and took every email reminder for the event with it.
+      const eventId = await createEvent(scenario("C"));
+
+      const response = await materialize(eventId, { contactEmail: " organizer@example.test " });
+
+      // Not rejected: the first conversion answers 201, and the defect was a 400 here.
+      expect(response.status).toBeLessThan(300);
+      const rows = await alertsOf(eventId);
+      expect(rows.length).toBeGreaterThan(0);
+      // Stored as validated, so nothing downstream sees a form the check did not accept.
+      expect(rows.every((row) => row.recipient === "organizer@example.test")).toBe(true);
+    });
+
     it("treats a reformatted phone number as the same destination", async () => {
       // The asymmetry was on one line: the email went through a canonical form and the number
       // beside it did not, so two spellings of one number hashed as two destinations. Under AC 7's
@@ -3795,6 +3812,76 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       } finally {
         client.release();
       }
+    });
+
+    it("does not carry a withdrawn lifecycle's provider error into a revived alert", async () => {
+      // Round 33 decided a revival is a fresh schedule because a cancelled row was not in the queue
+      // while it was cancelled. last_error is evidence from exactly that ended membership, so it
+      // goes with the failure_count that branch already cleared. Left behind, a revived pending row
+      // and later a successfully sent one kept reporting a provider error from a finished lifecycle.
+      const eventId = await createEvent(scenario("C"));
+      const contacts = { email: "organizer@example.test", phone: null };
+      const gated = await insertDuePlan(eventId, {
+        latestApplyDate: dayFromToday(30),
+        applyAfterDate: dayFromToday(21),
+      });
+      const client = await pool.connect();
+      try {
+        await schedulerWith()(client, eventId, gated.planId, contacts);
+        const unlock = (await alertsOf(eventId)).find(
+          (row) => row.alert_type === "dependency_unlocked",
+        );
+        await pool.query(
+          `UPDATE alerts SET status = 'failed', failure_count = 2,
+                             payload = payload || '{"last_error":"provider rejected 550"}'::jsonb
+            WHERE id = $1`,
+          [unlock?.id],
+        );
+
+        // The requirement disappears, so the alert is withdrawn.
+        const ungated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, ungated.planId, contacts);
+        expect((await alertsOf(eventId)).find((row) => row.id === unlock?.id)?.status).toBe(
+          "cancelled",
+        );
+
+        // And returns.
+        const regated = await insertDuePlan(eventId, {
+          latestApplyDate: dayFromToday(30),
+          applyAfterDate: dayFromToday(21),
+          reuseChecklistItemId: gated.checklistItemId,
+        });
+        await schedulerWith()(client, eventId, regated.planId, contacts);
+
+        const revived = (await alertsOf(eventId)).find((row) => row.id === unlock?.id);
+        expect(revived?.status).toBe("pending");
+        expect(revived?.payload.last_error).toBeUndefined();
+        // The copy is still recomputed, so this is not passing by the payload having been frozen.
+        expect(revived?.payload.subject).toBeDefined();
+      } finally {
+        client.release();
+      }
+    });
+
+    it("keeps the failure reason on a failed row the review did not withdraw", async () => {
+      // The other half. A reminder that stayed in the queue keeps its evidence, which is round 9
+      // and round 27, so the rule above cannot be rewritten as always clearing.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+      await pool.query(
+        `UPDATE alerts SET status = 'failed', failure_count = 1,
+                           payload = payload || '{"last_error":"provider rejected 550"}'::jsonb
+          WHERE event_id = $1`,
+        [eventId],
+      );
+
+      await materialize(eventId, { contactEmail: "dead@example.test" });
+
+      const after = await alertsOf(eventId);
+      expect(after.every((row) => row.payload.last_error === "provider rejected 550")).toBe(true);
     });
 
     it("clears the retry state when a cancelled alert is revived", async () => {
