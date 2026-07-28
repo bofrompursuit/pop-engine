@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
 import { Disclosure } from "../disclosure";
+import { FEE_NOT_PUBLISHED, isFeeBearing } from "../fee";
 import { PortalBlock } from "../portal-block";
 import { formatSnapshotDate } from "../plan/snapshot-banner";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
@@ -64,12 +65,6 @@ const samePlan = (left: SourcePlan, right: SourcePlan): boolean =>
  * because the two say exactly the same things about a requirement and only differ in whether the
  * organizer can act on them.
  */
-/**
- * A fee the ruleset does not publish, said explicitly rather than left blank. See
- * apps/web/app/plan/plan-line.tsx for why a blank is wrong and a total is impossible.
- */
-const FEE_NOT_PUBLISHED = "fee not published";
-
 /** One citation with click-through to each official page it rests on. */
 function ContextCitation({ source }: { source: PlanContext["sources"][number] }) {
   return (
@@ -84,7 +79,15 @@ function ContextCitation({ source }: { source: PlanContext["sources"][number] })
   );
 }
 
-/** Whether this row has anything behind its expand, so an empty control is never rendered. */
+/**
+ * Whether this row has anything behind its expand, so an empty control is never rendered.
+ *
+ * Every field the panel renders is listed here, and only fields the panel renders are. `ruleIds` and
+ * `lastVerifiedDate` are absent from both because the row states them in its summary, above — a
+ * checklist row is worked rather than scanned, so its provenance stays on the row. That is also why
+ * this row can gate its panel while the plan line's is unconditional: there, the rule ids are IN the
+ * panel, so a row with no optional fields would have dropped them off the page.
+ */
 const hasContextDetail = (context: PlanContext): boolean =>
   context.sources.length > 1 ||
   context.conflictText !== null ||
@@ -94,8 +97,7 @@ const hasContextDetail = (context: PlanContext): boolean =>
   context.portalUrl !== null ||
   context.portalInstructions !== null ||
   context.timelineUnresolvedReason !== null ||
-  context.deadlineUnknownFields.length > 0 ||
-  context.lastVerifiedDate !== null;
+  context.deadlineUnknownFields.length > 0;
 
 export function PlanContextBody({
   context,
@@ -181,11 +183,18 @@ export function PlanContextBody({
         </p>
       )}
 
-      <p className="check-item__text">
-        {context.feeDisplay ?? (
-          <span className="check-item__fee--absent">{FEE_NOT_PUBLISHED}</span>
-        )}
-      </p>
+      {/* A published amount renders whatever the kind; the "not published" line is asserted only of
+          a filing. A read-only context row is very often an advisory, a prohibition or a
+          no-new-requirement note, none of which has a price to withhold. See ../fee.ts. */}
+      {context.feeDisplay !== null ? (
+        <p className="check-item__text">{context.feeDisplay}</p>
+      ) : (
+        isFeeBearing(context.kind) && (
+          <p className="check-item__text">
+            <span className="check-item__fee--absent">{FEE_NOT_PUBLISHED}</span>
+          </p>
+        )
+      )}
 
       {/* Same copy as the plan line, for the same reason: COVERAGE_GAP is an unmodelled
           combination, not a missing source. A summary field, because it explains why no citation
@@ -201,18 +210,8 @@ export function PlanContextBody({
 
       {hasContextDetail(context) && (
         <Disclosure label={`Details for ${displayName(context)}`} className="check-item__detail">
-          <p className="check-item__meta">
-            <span className="check-item__rule-ids">{ruleIds}</span>
-            {/* F-206 AC 5: the date the plan item stored, and only when it stored one. A null
-                renders nothing at all — the snapshot's publication date is a different fact, and
-                standing it in here would state a verification that never happened. */}
-            {context.lastVerifiedDate !== null && (
-              <span className="check-item__verified-date">
-                last verified {context.lastVerifiedDate}
-              </span>
-            )}
-          </p>
-
+          {/* No rule ids and no last-verified date here: the summary above already states both, and
+              repeating them rendered each row's provenance twice once the row was expanded. */}
           {/* Both readings of an official conflict, verbatim; never resolved to one silently. The
               badge in the summary already says OFFICIAL CONFLICT. */}
           {context.conflictText !== null && (

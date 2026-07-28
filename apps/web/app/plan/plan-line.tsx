@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
 import { Disclosure } from "../disclosure";
+import { FEE_NOT_PUBLISHED, isFeeBearing } from "../fee";
 import { PortalBlock } from "../portal-block";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import type { ConsumedFinding } from "./plan-api";
@@ -77,26 +78,41 @@ function VerificationBadge({ status }: { status: ConsumedFinding["verificationSt
 }
 
 /**
- * A citation with click-through to each official page it rests on. A source with no resolved URL
- * renders its citation text and nothing clickable, so a line never offers a dead link.
+ * Report EVERY source that has no resolved URL, whether or not its citation is currently on screen.
  *
- * F-206's Edge Cases pair that fallback with "log loudly", and loudly is the operative half. The
- * state should be unreachable — every rule in the published ruleset carries at least one URL on its
- * source — so reaching it means a stored plan has lost its click-through, and a plan row is
- * immutable with nothing re-deriving it, so no later read repairs or reports it. The log is the
- * only way an operator finds out. Not surfaced to the organizer: they can do nothing with it, and
- * the citation text they see is still correct.
+ * F-206's Edge Cases pair the text-only fallback below with "log loudly", and loudly is the
+ * operative half. The state should be unreachable — every rule in the published ruleset carries at
+ * least one URL on its source — so reaching it means a stored plan has lost its click-through, and
+ * a plan row is immutable with nothing re-deriving it, so no later read repairs or reports it. The
+ * log is the only way an operator finds out. Not surfaced to the organizer: they can do nothing
+ * with it, and the citation text they see is still correct.
+ *
+ * ON THE LINE RATHER THAN INSIDE `Citation`, which is where it used to be. Every source past the
+ * first renders inside the disclosure, and the disclosure is UNMOUNTED while collapsed, so an
+ * effect inside the citation never ran for them: a second source that had lost its URL was reported
+ * only if an operator happened to expand that one line, which is not a check. The line is mounted
+ * whatever the disclosure is doing, so the audit sees all of `finding.sources` and the panel can
+ * stay unmounted.
+ */
+function useSourceUrlAudit(sources: readonly FindingSource[]): void {
+  useEffect(() => {
+    for (const source of sources) {
+      if (source.urls.length > 0) continue;
+      console.error(
+        "F-206: a stored plan finding carries citation text with no source URL; rendering the citation without a link",
+        { ruleId: source.ruleId, citation: source.citation },
+      );
+    }
+  }, [sources]);
+}
+
+/**
+ * A citation with click-through to each official page it rests on. A source with no resolved URL
+ * renders its citation text and nothing clickable, so a line never offers a dead link. The reporting
+ * of that state is `useSourceUrlAudit` above, deliberately not here.
  */
 function Citation({ source }: { source: FindingSource }) {
   const hasNoUrl = source.urls.length === 0;
-
-  useEffect(() => {
-    if (!hasNoUrl) return;
-    console.error(
-      "F-206: a stored plan finding carries citation text with no source URL; rendering the citation without a link",
-      { ruleId: source.ruleId, citation: source.citation },
-    );
-  }, [hasNoUrl, source.ruleId, source.citation]);
 
   return (
     <li className="line__citation">
@@ -114,34 +130,13 @@ function Citation({ source }: { source: FindingSource }) {
   );
 }
 
-/**
- * A fee the ruleset does not publish, said explicitly.
- *
- * Twelve of thirty-three rules publish no fee, and several publish hedged text ("varies - confirm",
- * "premium varies"). A blank cell reads as a rendering fault and a zero would be an amount no
- * source states, so the absence is rendered as itself. Fees are never summed for the same reason:
- * `output.fee.display` is published TEXT, and a total would be a number this product computes and
- * no agency publishes.
- */
-const FEE_NOT_PUBLISHED = "fee not published";
-
 export function PlanLine({ finding }: { finding: ConsumedFinding }) {
   const ruleIds = finding.ruleIds.join(", ");
   const isResearchRequired = finding.verificationStatus === "RESEARCH_REQUIRED";
   const name = finding.name ?? ruleIds;
   const [primarySource, ...furtherSources] = finding.sources;
-  const hasDetail =
-    furtherSources.length > 0 ||
-    finding.conflictText !== null ||
-    (finding.noteText !== null && finding.noteText !== finding.conflictText) ||
-    finding.notes.length > 0 ||
-    finding.portalName !== null ||
-    finding.portalUrl !== null ||
-    finding.portalInstructions !== null ||
-    finding.applyAfterDate !== null ||
-    finding.timelineUnresolvedReason !== null ||
-    finding.deadlineUnknownFields.length > 0 ||
-    finding.lastVerifiedDate !== null;
+
+  useSourceUrlAudit(finding.sources);
 
   return (
     /* An article rather than a list item: each finding is a self-contained requirement, and its
@@ -187,9 +182,20 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         </p>
       )}
 
-      <p className="line__fee">
-        {finding.feeDisplay ?? <span className="line__fee--absent">{FEE_NOT_PUBLISHED}</span>}
-      </p>
+      {/* A published amount renders whatever the kind, so nothing can suppress one. The "not
+          published" line is asserted ONLY of a filing: a prohibition, an exemption and a
+          no-new-requirement note have no price, and telling the organizer one was not published
+          states that a price exists. `../fee.ts` carries the reasoning and why the fee value itself
+          cannot decide it. */}
+      {finding.feeDisplay !== null ? (
+        <p className="line__fee">{finding.feeDisplay}</p>
+      ) : (
+        isFeeBearing(finding.kind) && (
+          <p className="line__fee">
+            <span className="line__fee--absent">{FEE_NOT_PUBLISHED}</span>
+          </p>
+        )
+      )}
 
       {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
           on the line itself rather than discover behind an expand: the absence IS the finding. */}
@@ -213,23 +219,29 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         </ul>
       )}
 
-      {hasDetail && (
-        <Disclosure label={`Details for ${name}`} className="line__detail">
-          <p className="line__meta">
-            <span className="line__rule-ids">{ruleIds}</span>
-            {finding.lastVerifiedDate !== null && (
-              <span className="line__verified-date">last verified {finding.lastVerifiedDate}</span>
-            )}
-          </p>
-
-          {/* Both readings of an official conflict, verbatim. The badge in the summary already
-              says OFFICIAL CONFLICT, so this states what the summary signals. */}
-          {finding.conflictText !== null && <p className="line__conflict">{finding.conflictText}</p>}
-          {finding.noteText !== null && finding.noteText !== finding.conflictText && (
-            <p className="line__note">{finding.noteText}</p>
+      {/* UNCONDITIONAL, and that is a correctness property rather than a preference. `ruleIds` is
+          always non-empty — F-201 AC 1 requires every finding to reference its rule ID — but it
+          renders inside this panel, so gating the panel on the OPTIONAL fields took the rule ids off
+          the page entirely for a finding that has none of them. DOHMH-EXEMPTION-001 in Scenario B is
+          exactly that shape: one source, no notes, no portal, no conflict. Rendering the panel
+          always means no field moved into it can disappear with it, for any finding shape, rather
+          than that one hole being patched. */}
+      <Disclosure label={`Details for ${name}`} className="line__detail">
+        <p className="line__meta">
+          <span className="line__rule-ids">{ruleIds}</span>
+          {finding.lastVerifiedDate !== null && (
+            <span className="line__verified-date">last verified {finding.lastVerifiedDate}</span>
           )}
+        </p>
 
-          {/* When pursuit can realistically begin, NOT a bar on filing earlier. The engine dates
+        {/* Both readings of an official conflict, verbatim. The badge in the summary already
+              says OFFICIAL CONFLICT, so this states what the summary signals. */}
+        {finding.conflictText !== null && <p className="line__conflict">{finding.conflictText}</p>}
+        {finding.noteText !== null && finding.noteText !== finding.conflictText && (
+          <p className="line__note">{finding.noteText}</p>
+        )}
+
+        {/* When pursuit can realistically begin, NOT a bar on filing earlier. The engine dates
               this from the upstream's published processing range and says in findings.ts why it
               stops short of the stronger claim: the strictness of the ordering is
               RESEARCH_REQUIRED on the dependency rule, whose own note_text — rendered just above —
@@ -237,44 +249,41 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
               text. "Not before" would assert the sequencing the verification owner declined to
               assert. It sits beside that note rather than in the summary for that reason: the
               caveat and the date are one fact. */}
-          {finding.applyAfterDate !== null && (
-            <p className="line__deadline-after">
-              earliest realistic filing {finding.applyAfterDate}
-            </p>
-          )}
-          {finding.timelineUnresolvedReason !== null && (
-            <p className="line__timeline">{finding.timelineUnresolvedReason}</p>
-          )}
-          {finding.deadlineUnknownFields.length > 0 && (
-            <p className="line__unknowns">
-              depends on: {finding.deadlineUnknownFields.map(humanize).join(", ")}
-            </p>
-          )}
+        {finding.applyAfterDate !== null && (
+          <p className="line__deadline-after">earliest realistic filing {finding.applyAfterDate}</p>
+        )}
+        {finding.timelineUnresolvedReason !== null && (
+          <p className="line__timeline">{finding.timelineUnresolvedReason}</p>
+        )}
+        {finding.deadlineUnknownFields.length > 0 && (
+          <p className="line__unknowns">
+            depends on: {finding.deadlineUnknownFields.map(humanize).join(", ")}
+          </p>
+        )}
 
-          {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
-          <PortalBlock
-            portalName={finding.portalName}
-            portalUrl={finding.portalUrl}
-            portalInstructions={finding.portalInstructions}
-            className="line__portal"
-            instructionsClassName="line__portal-instructions"
-          />
+        {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
+        <PortalBlock
+          portalName={finding.portalName}
+          portalUrl={finding.portalUrl}
+          portalInstructions={finding.portalInstructions}
+          className="line__portal"
+          instructionsClassName="line__portal-instructions"
+        />
 
-          {finding.notes.map((note) => (
-            <p className="line__note" key={note}>
-              {note}
-            </p>
-          ))}
+        {finding.notes.map((note) => (
+          <p className="line__note" key={note}>
+            {note}
+          </p>
+        ))}
 
-          {furtherSources.length > 0 && (
-            <ul className="line__citations">
-              {furtherSources.map((source) => (
-                <Citation key={`${source.ruleId}:${source.citation}`} source={source} />
-              ))}
-            </ul>
-          )}
-        </Disclosure>
-      )}
+        {furtherSources.length > 0 && (
+          <ul className="line__citations">
+            {furtherSources.map((source) => (
+              <Citation key={`${source.ruleId}:${source.citation}`} source={source} />
+            ))}
+          </ul>
+        )}
+      </Disclosure>
     </article>
   );
 }

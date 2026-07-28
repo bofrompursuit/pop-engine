@@ -843,7 +843,10 @@ describe("AC 5 · deadline context lives where the work happens", () => {
     expect(within(row).queryByRole("link", { name: portalName })).toBeNull();
     expect(
       within(row).getByText((_content, element) => {
-        return element?.tagName === "P" && (element.textContent ?? "").startsWith(`apply at ${portalName}`);
+        return (
+          element?.tagName === "P" &&
+          (element.textContent ?? "").startsWith(`apply at ${portalName}`)
+        );
       }),
     ).toBeDefined();
   });
@@ -1369,7 +1372,9 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     await renderView();
 
     const notice = screen.getByText(/not been confirmed as delivered/);
-    expect(notice.textContent).toContain("2 email alerts for this event have not been confirmed as delivered.");
+    expect(notice.textContent).toContain(
+      "2 email alerts for this event have not been confirmed as delivered.",
+    );
     expect(notice.textContent).toContain(
       "Retrying is paused because this event changed after their plan was made: regenerate the " +
         "plan and review the checklist to start it again.",
@@ -2001,5 +2006,86 @@ describe("the checklist route", () => {
       ),
     );
     vi.unstubAllEnvs();
+  });
+});
+
+describe("a fee said only of something that can have one", () => {
+  it("renders no fee row on a read-only advisory row", async () => {
+    // ADV-NOISE-CODE-001 is an advisory: it describes a condition rather than a filing, so it has
+    // no price. "fee not published" told the organizer a price existed and had been withheld.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, contextItems: [planContext(NOISE_ADVISORY)] }),
+    });
+    await renderView();
+
+    const row = await expandedRowFor(NOISE_ADVISORY);
+    expect(within(row).queryByText("fee not published")).toBeNull();
+    expect(row.querySelector(".check-item__fee--absent")).toBeNull();
+  });
+
+  it("still says so for a permit whose amount the ruleset does not publish", async () => {
+    // The nearest true positive: a filing IS charged for, and an amount the artifact does not carry
+    // is a publication gap the organizer has to know about. Narrowing the claim must not lose it.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem(STREET_MEDIUM, { feeDisplay: null })],
+      }),
+    });
+    await renderView();
+
+    expect(
+      within(await expandedRowFor(STREET_MEDIUM)).getByText("fee not published"),
+    ).toBeDefined();
+  });
+
+  it("states each row's rule ids once, not twice, when the row is expanded", async () => {
+    // The summary already carries them, so the copy added inside the panel rendered a row's
+    // provenance twice as soon as anyone opened it.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem(STREET_MEDIUM, { lastVerifiedDate: "2026-07-01" })],
+      }),
+    });
+    await renderView();
+
+    const row = await expandedRowFor(STREET_MEDIUM);
+    expect(row.querySelectorAll(".check-item__rule-ids")).toHaveLength(1);
+    expect(row.querySelectorAll(".check-item__verified-date")).toHaveLength(1);
+  });
+});
+
+describe("the checklist's expand control matches what is behind it", () => {
+  it("offers no expand on a row whose only extra fact is stated in its summary", async () => {
+    // `lastVerifiedDate` renders in the row's SUMMARY, so it must not open the panel: it used to be
+    // listed as detail, and a row carrying only that date rendered a control over an empty panel.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        contextItems: [
+          planContext(NOISE_ADVISORY, {
+            lastVerifiedDate: "2026-06-15",
+            noteText: null,
+            conflictText: null,
+            publishedNotes: [],
+            portalName: null,
+            portalUrl: null,
+            portalInstructions: null,
+            timelineUnresolvedReason: null,
+            deadlineUnknownFields: [],
+            sources: [],
+          }),
+        ],
+      }),
+    });
+    await renderView();
+
+    const row = rowFor(NOISE_ADVISORY);
+    expect(within(row).queryByRole("button", { name: /^Details for/ })).toBeNull();
+    // And the date it carries is on the row regardless, not lost with the control.
+    expect(within(row).getByText("last verified 2026-06-15")).toBeDefined();
+    // Nor are the rule ids, which the plan line keeps in its panel and this row keeps in its head.
+    expect(row.querySelectorAll(".check-item__rule-ids")).toHaveLength(1);
   });
 });

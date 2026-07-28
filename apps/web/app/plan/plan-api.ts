@@ -8,6 +8,7 @@ import type {
   DeadlineStatus,
   Disposition,
   Finding,
+  FindingKind,
   FindingSource,
   MissingFact,
   PermitPlan,
@@ -76,14 +77,19 @@ export type PlanResponse = Omit<
 };
 
 /**
- * The `Finding` members this feature reads, and only those. `kind`, `slackDays` and `triggeredBy`
- * are deliberately absent: nothing here reads them, so they stay the engine's schema to police
- * rather than the client's — F-206's boundary, unchanged, and now enforced the same way.
+ * The `Finding` members this feature reads, and only those. `slackDays` and `triggeredBy` are
+ * deliberately absent: nothing here reads them, so they stay the engine's schema to police rather
+ * than the client's — F-206's boundary, unchanged, and now enforced the same way.
+ *
+ * `kind` is read, and only for one decision: whether this finding is a filing that can carry a fee,
+ * so an absent amount is reported as unpublished rather than asserted of something with no price.
+ * See `../fee.ts`.
  */
 export type ConsumedFinding = Omit<
   Pick<
     Finding,
     | "ruleIds"
+    | "kind"
     | "disposition"
     | "name"
     | "agency"
@@ -209,6 +215,27 @@ const VERIFICATION_STATUSES = tokensOf<VerificationStatus>({
   VERIFIED: true,
 });
 
+/**
+ * The persisted finding kinds. `classification` is absent because it is a rule role and never a
+ * persisted finding kind (#73), and `FindingKind` excludes it, so listing it here would not compile.
+ *
+ * Exhaustive by construction, which is the point: a kind added upstream fails this file's BUILD,
+ * where someone has to decide whether it is fee-bearing. That is the opposite tradeoff from
+ * `ConsumedDeadline["type"]` above, and deliberately so — a deadline type is only humanised for
+ * display, so widening it costs nothing, while a kind decides whether this page makes a claim.
+ */
+const FINDING_KINDS = tokensOf<FindingKind>({
+  permit: true,
+  insurance: true,
+  notification: true,
+  registration: true,
+  eligibility: true,
+  prohibition: true,
+  dependency: true,
+  advisory: true,
+  note: true,
+});
+
 const DISPOSITIONS = tokensOf<Disposition>({
   required: true,
   may_be_required: true,
@@ -236,6 +263,7 @@ const SOURCE_CHECKS: FieldChecks<FindingSource> = {
 
 const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
   ruleIds: arrayOf(isString),
+  kind: isToken(FINDING_KINDS),
   disposition: isToken(DISPOSITIONS),
   name: nullOr(isString),
   agency: nullOr(isString),

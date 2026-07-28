@@ -1861,6 +1861,146 @@ describe("a scannable line (progressive disclosure)", () => {
     expect(line.getByText(/One source says 90 days/)).toBeDefined();
   });
 
+  /**
+   * The three shapes the "fee not published" line was wrong about. None of them is a filing, so
+   * none of them has a price that could have been withheld, and saying one was not published makes
+   * a claim about the world no source supports.
+   */
+  const NOT_A_FILING = [
+    {
+      label: "an exemption advisory (DOHMH-EXEMPTION-001)",
+      kind: "advisory" as const,
+      disposition: "may_be_required" as const,
+    },
+    {
+      label: "a no-new-requirement note (SAPO-SCOPE-001)",
+      kind: "note" as const,
+      disposition: "no_new_requirement" as const,
+    },
+    {
+      label: "a prohibition (PARKS-PROPANE-001)",
+      kind: "prohibition" as const,
+      disposition: "prohibited_or_ineligible" as const,
+    },
+  ];
+
+  it.each(NOT_A_FILING)(
+    "says nothing at all about a fee for $label",
+    async ({ kind, disposition }) => {
+      const line = await collapsedLine(finding({ kind, disposition, feeDisplay: null }));
+
+      // Not "fee not published", and not a blank row standing where one would be either.
+      expect(line.queryByText("fee not published")).toBeNull();
+      // One line is rendered, so the document is the line: no fee row exists at all, rather than an
+      // empty one standing where the amount would be.
+      expect(document.querySelector(".line__fee")).toBeNull();
+    },
+  );
+
+  it.each(["permit", "insurance", "notification", "registration"] as const)(
+    "still reports an unpublished fee for a %s, which is a filing",
+    async (kind) => {
+      // The nearest true positive, and the case the line was written for: DOB-PROP-TRUSS-001 is a
+      // permit whose amount the artifact does not carry. Narrowing the claim must not lose it.
+      const line = await collapsedLine(finding({ kind, feeDisplay: null }));
+      expect(line.getByText("fee not published")).toBeDefined();
+    },
+  );
+
+  it("renders a published amount whatever the kind, so nothing can suppress one", async () => {
+    // The suppression only ever applies to the ASSERTION of an absence. An amount that exists is
+    // rendered by every kind, including one this file does not treat as a filing.
+    const line = await collapsedLine(finding({ kind: "note", feeDisplay: "$25 processing fee" }));
+    expect(line.getByText("$25 processing fee")).toBeDefined();
+  });
+
+  /** Scenario B's DOHMH-EXEMPTION-001: one source, and none of the optional detail fields. */
+  const bareFinding = () =>
+    finding({
+      ruleIds: ["DOHMH-EXEMPTION-001"],
+      kind: "advisory",
+      name: "Temporary food service exemption",
+      disposition: "may_be_required",
+      noteText: null,
+      conflictText: null,
+      notes: [],
+      portalName: null,
+      portalUrl: null,
+      portalInstructions: null,
+      applyAfterDate: null,
+      timelineUnresolvedReason: null,
+      deadlineUnknownFields: [],
+      lastVerifiedDate: null,
+      sources: [
+        {
+          ruleId: "DOHMH-EXEMPTION-001",
+          citation: "DOHMH temporary food service FAQ",
+          urls: ["https://example.gov/dohmh"],
+        },
+      ],
+    });
+
+  it("keeps the rule ids reachable on a finding that has no optional detail", async () => {
+    // F-201 AC 1: every finding references its rule ID. The rule ids render inside the panel, so
+    // gating the panel on the OPTIONAL fields took them off the page entirely for this shape —
+    // not hidden behind an expand, absent, with no control to reveal them.
+    const line = await collapsedLine(bareFinding());
+
+    const toggle = line.getByRole("button", {
+      name: "Details for Temporary food service exemption",
+    });
+    await userEvent.click(toggle);
+    expect(line.getByText("DOHMH-EXEMPTION-001")).toBeDefined();
+  });
+
+  it("offers the expand on every finding shape, so no panel field can vanish with the panel", async () => {
+    // The general form of the case above: the panel is unconditional, so a finding shape can never
+    // drop a field that was moved into it. Asserted on the emptiest shape the plan produces.
+    for (const shape of [bareFinding(), finding({ sources: [] }), full()]) {
+      cleanup();
+      const line = await collapsedLine(shape);
+      expect(line.queryByRole("button", { name: /^Details for/ })).not.toBeNull();
+    }
+  });
+
+  it("reports a URL-less source that is behind the expand, without anyone expanding it", async () => {
+    // The log is how an operator learns a stored plan has lost its click-through, and a plan row is
+    // immutable, so nothing else reports it. A source past the first renders inside the panel, and
+    // the panel is UNMOUNTED while collapsed: while the check lived inside the citation it ran only
+    // if someone happened to expand that one line. The existing case above covers a url-less
+    // PRIMARY source, which stays mounted, and passes either way.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const line = await collapsedLine(
+        finding({
+          sources: [
+            { ruleId: "PARKS-EVENT-001", citation: "Parks FAQ", urls: ["https://example.gov/faq"] },
+            {
+              ruleId: "PARKS-EVENT-EXACTLY-20-001",
+              citation: "Parks borough office, by phone",
+              urls: [],
+            },
+          ],
+        }),
+      );
+
+      // Still collapsed, and the second citation is genuinely absent rather than hidden.
+      expect(line.queryByText("Parks borough office, by phone")).toBeNull();
+
+      await waitFor(() =>
+        expect(logged).toHaveBeenCalledWith(
+          expect.stringContaining("no source URL"),
+          expect.objectContaining({
+            ruleId: "PARKS-EVENT-EXACTLY-20-001",
+            citation: "Parks borough office, by phone",
+          }),
+        ),
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("is operable from the keyboard and reports its state programmatically", async () => {
     const line = await collapsedLine(full());
     const toggle = line.getByRole("button", { name: "Details for Special Event Permit" });
