@@ -8,7 +8,6 @@ import type {
   DeadlineStatus,
   Disposition,
   Finding,
-  FindingKind,
   FindingSource,
   MissingFact,
   PermitPlan,
@@ -77,19 +76,21 @@ export type PlanResponse = Omit<
 };
 
 /**
- * The `Finding` members this feature reads, and only those. `slackDays` and `triggeredBy` are
- * deliberately absent: nothing here reads them, so they stay the engine's schema to police rather
- * than the client's — F-206's boundary, unchanged, and now enforced the same way.
+ * The `Finding` members this feature reads, and only those. `kind`, `slackDays` and `triggeredBy`
+ * are deliberately absent: nothing here reads them, so they stay the engine's schema to police
+ * rather than the client's — F-206's boundary, unchanged, and now enforced the same way.
  *
- * `kind` is read, and only for one decision: whether this finding is a filing that can carry a fee,
- * so an absent amount is reported as unpublished rather than asserted of something with no price.
- * See `../fee.ts`.
+ * `kind` was briefly consumed, to decide whether a finding was the sort of filing that could carry a
+ * fee, so that a null `feeDisplay` could be reported as an unpublished amount. That split is
+ * withdrawn: an absent fee and an explicit `fee: null` are one value by the time a finding carries
+ * one, so no reading of `kind` could say which a given finding was, and deciding it from what OTHER
+ * rules of the same kind publish is a claim about this filing taken from a fact about another. A
+ * null fee now renders nothing, which needs no kind.
  */
 export type ConsumedFinding = Omit<
   Pick<
     Finding,
     | "ruleIds"
-    | "kind"
     | "disposition"
     | "name"
     | "agency"
@@ -215,27 +216,6 @@ const VERIFICATION_STATUSES = tokensOf<VerificationStatus>({
   VERIFIED: true,
 });
 
-/**
- * The persisted finding kinds. `classification` is absent because it is a rule role and never a
- * persisted finding kind (#73), and `FindingKind` excludes it, so listing it here would not compile.
- *
- * Exhaustive by construction, which is the point: a kind added upstream fails this file's BUILD,
- * where someone has to decide whether it is fee-bearing. That is the opposite tradeoff from
- * `ConsumedDeadline["type"]` above, and deliberately so — a deadline type is only humanised for
- * display, so widening it costs nothing, while a kind decides whether this page makes a claim.
- */
-const FINDING_KINDS = tokensOf<FindingKind>({
-  permit: true,
-  insurance: true,
-  notification: true,
-  registration: true,
-  eligibility: true,
-  prohibition: true,
-  dependency: true,
-  advisory: true,
-  note: true,
-});
-
 const DISPOSITIONS = tokensOf<Disposition>({
   required: true,
   may_be_required: true,
@@ -263,7 +243,6 @@ const SOURCE_CHECKS: FieldChecks<FindingSource> = {
 
 const FINDING_CHECKS: FieldChecks<ConsumedFinding> = {
   ruleIds: arrayOf(isString),
-  kind: isToken(FINDING_KINDS),
   disposition: isToken(DISPOSITIONS),
   name: nullOr(isString),
   agency: nullOr(isString),

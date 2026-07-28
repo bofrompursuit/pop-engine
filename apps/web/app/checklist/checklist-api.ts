@@ -15,7 +15,6 @@ import type {
   Deadline,
   DeadlineStatus,
   Disposition,
-  FindingKind,
   FindingSource,
   VerificationStatus,
 } from "@pop-engine/engine";
@@ -64,12 +63,6 @@ export type ConsumedDeadline = {
  */
 export type PlanContext = {
   readonly ruleIds: readonly string[];
-  /**
-   * Read for one decision only: whether this row is a filing that can carry a fee, so an absent
-   * amount is reported as unpublished rather than asserted of something with no price. See
-   * `../fee.ts`.
-   */
-  readonly kind: FindingKind;
   readonly permitName: string | null;
   readonly agency: string | null;
   readonly disposition: Disposition;
@@ -267,24 +260,6 @@ function failureMessage(body: unknown, fallback: string): string {
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 
-/**
- * The persisted finding kinds. `classification` is a rule role and never a persisted finding kind
- * (#73), so `FindingKind` excludes it and listing it here would not compile. Exhaustive by
- * construction: a kind added upstream fails this file's build, where someone decides whether it is
- * fee-bearing.
- */
-const FINDING_KINDS = tokensOf<FindingKind>({
-  permit: true,
-  insurance: true,
-  notification: true,
-  registration: true,
-  eligibility: true,
-  prohibition: true,
-  dependency: true,
-  advisory: true,
-  note: true,
-});
-
 const DISPOSITIONS = tokensOf<Disposition>({
   required: true,
   may_be_required: true,
@@ -333,7 +308,6 @@ const SOURCE_CHECKS: FieldChecks<FindingSource> = {
 
 const PLAN_CONTEXT_CHECKS: FieldChecks<PlanContext> = {
   ruleIds: arrayOf(isString),
-  kind: isToken(FINDING_KINDS),
   permitName: nullOr(isString),
   agency: nullOr(isString),
   disposition: isToken(DISPOSITIONS),

@@ -56,8 +56,6 @@ const findingFor = (
   overrides: Partial<ConsumedFinding> = {},
 ): ConsumedFinding => ({
   ruleIds: [rule.id],
-  // The same mapping `findings.ts` applies: a classification rule persists as a note finding (#73).
-  kind: rule.kind === "classification" ? "note" : rule.kind,
   disposition: DEFAULT_DISPOSITION_BY_RULE_KIND[rule.kind],
   name: rule.output.requirement_name ?? null,
   agency: rule.output.agency ?? null,
@@ -89,7 +87,6 @@ const findingFor = (
  */
 const nonInsuranceFinding = (ruleId: string, name: string): ConsumedFinding => ({
   ruleIds: [ruleId],
-  kind: "permit",
   disposition: "required",
   name,
   agency: "NYPD",

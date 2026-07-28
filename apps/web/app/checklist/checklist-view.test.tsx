@@ -2009,34 +2009,38 @@ describe("the checklist route", () => {
   });
 });
 
-describe("a fee said only of something that can have one", () => {
-  it("renders no fee row on a read-only advisory row", async () => {
-    // ADV-NOISE-CODE-001 is an advisory: it describes a condition rather than a filing, so it has
-    // no price. "fee not published" told the organizer a price existed and had been withheld.
-    stubApi({
-      [GET_CHECKLIST]: checklistOf({ created: true, contextItems: [planContext(NOISE_ADVISORY)] }),
-    });
-    await renderView();
-
-    const row = await expandedRowFor(NOISE_ADVISORY);
-    expect(within(row).queryByText("fee not published")).toBeNull();
-    expect(row.querySelector(".check-item__fee--absent")).toBeNull();
-  });
-
-  it("still says so for a permit whose amount the ruleset does not publish", async () => {
-    // The nearest true positive: a filing IS charged for, and an amount the artifact does not carry
-    // is a publication gap the organizer has to know about. Narrowing the claim must not lose it.
+describe("a fee stated only where the ruleset states one", () => {
+  it("renders no fee row when the row carries no amount, whatever the row is", async () => {
+    // Neither an advisory nor a permit is captioned for a null fee. A finding cannot tell "this
+    // filing has no fee" from "the amount was not published" — both arrive as null — and reading it
+    // off the row's KIND only relocates the guess to what other rules of that kind publish. So the
+    // row says nothing, which is the one thing the data supports.
     stubApi({
       [GET_CHECKLIST]: checklistOf({
         created: true,
         items: [trackedItem(STREET_MEDIUM, { feeDisplay: null })],
+        contextItems: [planContext(NOISE_ADVISORY)],
       }),
     });
     await renderView();
 
-    expect(
-      within(await expandedRowFor(STREET_MEDIUM)).getByText("fee not published"),
-    ).toBeDefined();
+    for (const ruleId of [STREET_MEDIUM, NOISE_ADVISORY]) {
+      const row = await expandedRowFor(ruleId);
+      expect(within(row).queryByText("fee not published")).toBeNull();
+      expect(row.querySelector(".check-item__text:empty")).toBeNull();
+    }
+  });
+
+  it("renders the published amount when the ruleset publishes one", async () => {
+    // The withdrawal is of the CAPTION, not of the fee: an amount that exists still renders.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+    });
+    await renderView();
+
+    const fee = feeOf(STREET_MEDIUM);
+    expect(fee).not.toBeNull();
+    expect(within(await expandedRowFor(STREET_MEDIUM)).getByText(fee as string)).toBeDefined();
   });
 
   it("states each row's rule ids once, not twice, when the row is expanded", async () => {

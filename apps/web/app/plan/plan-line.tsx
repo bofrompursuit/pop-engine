@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
 import { Disclosure } from "../disclosure";
-import { FEE_NOT_PUBLISHED, isFeeBearing } from "../fee";
 import { PortalBlock } from "../portal-block";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import type { ConsumedFinding } from "./plan-api";
@@ -182,20 +181,13 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
         </p>
       )}
 
-      {/* A published amount renders whatever the kind, so nothing can suppress one. The "not
-          published" line is asserted ONLY of a filing: a prohibition, an exemption and a
-          no-new-requirement note have no price, and telling the organizer one was not published
-          states that a price exists. `../fee.ts` carries the reasoning and why the fee value itself
-          cannot decide it. */}
-      {finding.feeDisplay !== null ? (
-        <p className="line__fee">{finding.feeDisplay}</p>
-      ) : (
-        isFeeBearing(finding.kind) && (
-          <p className="line__fee">
-            <span className="line__fee--absent">{FEE_NOT_PUBLISHED}</span>
-          </p>
-        )
-      )}
+      {/* Rendered when the ruleset publishes an amount, and NOTHING when it does not.
+          No "fee not published" line: `ruleset.ts` collapses an absent `fee` and an explicit
+          `fee: null` to one value, so a finding cannot distinguish "this filing has no fee" from
+          "the amount was not published", and nothing downstream can recover the difference. Saying
+          either would be a claim the data does not carry. A blank row is not the alternative — the
+          row is absent, so nothing reads as a rendering fault. */}
+      {finding.feeDisplay !== null && <p className="line__fee">{finding.feeDisplay}</p>}
 
       {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
           on the line itself rather than discover behind an expand: the absence IS the finding. */}

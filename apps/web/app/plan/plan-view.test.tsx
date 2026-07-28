@@ -1824,16 +1824,6 @@ describe("a scannable line (progressive disclosure)", () => {
     expect(line.getByText("SOURCE CONFIRMED")).toBeDefined();
   });
 
-  it("states a missing fee rather than rendering a blank or a zero", async () => {
-    // Twelve of thirty-three published rules carry no fee. A blank cell reads as a rendering
-    // fault, and a zero would be an amount no source publishes.
-    const line = await collapsedLine(finding({ feeDisplay: null }));
-
-    expect(line.getByText("fee not published")).toBeDefined();
-    expect(line.queryByText("$0")).toBeNull();
-    expect(line.queryByText("0")).toBeNull();
-  });
-
   it("shows a RESEARCH_REQUIRED line's absent source on the line itself", async () => {
     // The absence IS the information, so it cannot sit behind the expand: an empty citation slot
     // would read as a rendering fault instead of a finding.
@@ -1861,70 +1851,24 @@ describe("a scannable line (progressive disclosure)", () => {
     expect(line.getByText(/One source says 90 days/)).toBeDefined();
   });
 
-  /**
-   * The three shapes the "fee not published" line was wrong about. None of them is a filing, so
-   * none of them has a price that could have been withheld, and saying one was not published makes
-   * a claim about the world no source supports.
-   */
-  const NOT_A_FILING = [
-    {
-      label: "an exemption advisory (DOHMH-EXEMPTION-001)",
-      kind: "advisory" as const,
-      disposition: "may_be_required" as const,
-    },
-    {
-      label: "a no-new-requirement note (SAPO-SCOPE-001)",
-      kind: "note" as const,
-      disposition: "no_new_requirement" as const,
-    },
-    {
-      label: "a prohibition (PARKS-PROPANE-001)",
-      kind: "prohibition" as const,
-      disposition: "prohibited_or_ineligible" as const,
-    },
-  ];
+  it("renders a published fee, and nothing at all when none is published", async () => {
+    // The line used to say "fee not published" for a null fee. That sentence asserted two things at
+    // once — that a price exists, and that its amount was withheld — and a finding carries evidence
+    // for neither: `ruleset.ts` collapses an absent `fee` and an explicit `fee: null` to one value,
+    // so "this filing has no fee" and "the amount is unpublished" arrive here identical. Deciding it
+    // from the finding's KIND only moved the inference up a level, to what OTHER rules of that kind
+    // publish, which is a fact about a different filing. SAPO-INSURANCE-BLOCK-PARTY-RIDE-001,
+    // PARKS-EVENT-EXACTLY-20-001 and DOB-PROP-TRUSS-001 are all fee-bearing kinds carrying no fee,
+    // and all three would have been captioned on that basis alone.
+    const published = await collapsedLine(finding({ feeDisplay: "$25 processing fee" }));
+    expect(published.getByText("$25 processing fee")).toBeDefined();
 
-  it.each(NOT_A_FILING)(
-    "says nothing at all about a fee for $label",
-    async ({ kind, disposition }) => {
-      const line = await collapsedLine(finding({ kind, disposition, feeDisplay: null }));
-
-      // Not "fee not published", and not a blank row standing where one would be either.
-      expect(line.queryByText("fee not published")).toBeNull();
-      // One line is rendered, so the document is the line: no fee row exists at all, rather than an
-      // empty one standing where the amount would be.
-      expect(document.querySelector(".line__fee")).toBeNull();
-    },
-  );
-
-  it.each(["permit", "insurance"] as const)(
-    "still reports an unpublished fee for a %s, a kind the artifact does charge for",
-    async (kind) => {
-      // The nearest true positive, and the case the line was written for: DOB-PROP-TRUSS-001 is a
-      // permit whose amount the artifact does not carry. Narrowing the claim must not lose it.
-      const line = await collapsedLine(finding({ kind, feeDisplay: null }));
-      expect(line.getByText("fee not published")).toBeDefined();
-    },
-  );
-
-  it.each(["notification", "registration"] as const)(
-    "says nothing about a fee for a %s, which is a filing but not an evidenced charge",
-    async (kind) => {
-      // These two ARE filings, which was the argument for speaking for them. It is not enough:
-      // DOHMH-ORGANIZER-NOTIFY-001 and DEP-GENERATOR-REG-001 are the only rules of these kinds and
-      // neither publishes an amount, so "fee not published" would assert both that a price exists
-      // and that it was withheld. Showing nothing and saying nothing are the same act here.
-      const line = await collapsedLine(finding({ kind, feeDisplay: null }));
-      expect(line.queryByText("fee not published")).toBeNull();
-      expect(document.querySelector(".line__fee")).toBeNull();
-    },
-  );
-
-  it("renders a published amount whatever the kind, so nothing can suppress one", async () => {
-    // The suppression only ever applies to the ASSERTION of an absence. An amount that exists is
-    // rendered by every kind, including one this file does not treat as a filing.
-    const line = await collapsedLine(finding({ kind: "note", feeDisplay: "$25 processing fee" }));
-    expect(line.getByText("$25 processing fee")).toBeDefined();
+    cleanup();
+    const absent = await collapsedLine(finding({ feeDisplay: null }));
+    expect(absent.queryByText("fee not published")).toBeNull();
+    // No blank row standing where the amount would be: the row is not rendered at all.
+    expect(document.querySelector(".line__fee")).toBeNull();
+    expect(absent.queryByText("$0")).toBeNull();
   });
 
   /** Scenario B's DOHMH-EXEMPTION-001: one source, and none of the optional detail fields. */

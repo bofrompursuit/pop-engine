@@ -40,7 +40,6 @@ const storedPlan = {
 /** A finding as the api serves one, carrying every member the plan lines read. */
 const storedFinding = {
   ruleIds: ["PARKS-EVENT-001"],
-  kind: "permit",
   disposition: "required",
   name: "Special Event Permit",
   agency: "NYC Parks",
@@ -308,16 +307,18 @@ describe("coverage of every field this feature reads", () => {
       "verdict",
       "verdictDetail",
     ]);
-    // `slackDays` and `triggeredBy` are absent by decision: nothing under app/plan reads them, so
-    // they stay the engine's schema to police rather than this client's.
+    // `kind`, `slackDays` and `triggeredBy` are absent by decision: nothing under app/plan reads
+    // them, so they stay the engine's schema to police rather than this client's.
+    //
+    // `kind` was consumed for one release of this branch, to decide whether a null `feeDisplay`
+    // meant "not published" or "no fee at all". That split is withdrawn and the field is back out:
+    // an absent fee and an explicit `fee: null` are one value by the time a finding carries one, so
+    // no kind could distinguish them, and inferring this filing's fee from what other rules of the
+    // same kind publish is a fact about a different filing. Nothing reads `kind` now, and a field
+    // consumed by nothing does not belong on this list.
+    expect(CONSUMED_FINDING_FIELDS).not.toContain("kind");
     expect(CONSUMED_FINDING_FIELDS).not.toContain("slackDays");
     expect(CONSUMED_FINDING_FIELDS).not.toContain("triggeredBy");
-    // `kind` WAS in that list and is now read, for exactly one decision: whether a finding is a
-    // filing that can carry a fee. Rendering "fee not published" on a prohibition or a
-    // no-new-requirement note told the organizer a price existed and had been withheld, which no
-    // source says. The fee value cannot decide it — the parser normalises an absent fee and an
-    // explicit null to one value — so the kind is the only thing on the finding that can.
-    expect(CONSUMED_FINDING_FIELDS).toContain("kind");
   });
 
   it.each(CONSUMED_PLAN_FIELDS)("refuses a plan with no %s", async (field) => {

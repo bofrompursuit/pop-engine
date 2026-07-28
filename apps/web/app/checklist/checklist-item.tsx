@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
 import { Disclosure } from "../disclosure";
-import { FEE_NOT_PUBLISHED, isFeeBearing } from "../fee";
 import { PortalBlock } from "../portal-block";
 import { formatSnapshotDate } from "../plan/snapshot-banner";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
@@ -183,18 +182,10 @@ export function PlanContextBody({
         </p>
       )}
 
-      {/* A published amount renders whatever the kind; the "not published" line is asserted only of
-          a filing. A read-only context row is very often an advisory, a prohibition or a
-          no-new-requirement note, none of which has a price to withhold. See ../fee.ts. */}
-      {context.feeDisplay !== null ? (
-        <p className="check-item__text">{context.feeDisplay}</p>
-      ) : (
-        isFeeBearing(context.kind) && (
-          <p className="check-item__text">
-            <span className="check-item__fee--absent">{FEE_NOT_PUBLISHED}</span>
-          </p>
-        )
-      )}
+      {/* Rendered only when the ruleset publishes an amount. See apps/web/app/plan/plan-line.tsx:
+          an absent fee and an explicit null are one value by the time a finding carries it, so no
+          sentence here can say which this row is. */}
+      {context.feeDisplay !== null && <p className="check-item__text">{context.feeDisplay}</p>}
 
       {/* Same copy as the plan line, for the same reason: COVERAGE_GAP is an unmodelled
           combination, not a missing source. A summary field, because it explains why no citation
