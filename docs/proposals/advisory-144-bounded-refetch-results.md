@@ -17,6 +17,25 @@ that adopting it is a copy rather than a rewrite.
 owner's decision of 2026-07-28 on issue #144 and the amendment of the same date. The publication half
 is separately blocked on issue #178, where four pieces of work already claim the next ruleset version.
 
+> ## MERGE ORDER: this file must not merge before PR #177
+>
+> `docs/proposals/advisory-144-bounded-reconciliation-scope.md` **is not in this tree.** It is PR
+> #177's file and PR #177 is unmerged. The section 3 fetch list this document executes and the
+> section 4 outcome functions it maps through therefore **cannot be opened by a reviewer of this
+> branch alone**, and a reader who lands on `main` after this merges but before #177 does would find
+> every cross-reference below dangling.
+>
+> **This document depends on that file and does not treat it as available or authoritative.** Every
+> claim below rests on a quote from a page retrieved on 2026-07-28, reproduced here and committed
+> alongside this file, not on anything PR #177 asserts. What #177 supplies is the question list and
+> the outcome mapping, which is why the order matters and the dependency is not removable by
+> restructuring.
+>
+> **The rule this states, learned on #177 itself:** a document may DEPEND on an unmerged artifact and
+> must not treat it as available or authoritative. #177 was first told to cite an unmerged file, then
+> told to defer to one, and both were wrong for the same reason. Stating the dependency and the order
+> is the version that is neither.
+
 **Headline, because it changes the shape of the decision.** The CECM FAQ **does** carry an alcohol
 prohibition, and it names all four of the categories `ADV-ALCOHOL-PUBLIC-001` prints. The dossier
 fetched that page four times without capturing the sentence. Section 5 states what that does and does
@@ -46,22 +65,36 @@ dossier in place of a retrieval.
 **None of the eight publishes a "last updated" date**, checked rather than assumed, so **the retrieval
 date is the as-of date**, exactly as Rounds 3 and 4 record for the same pages.
 
-**Digests of the retrieved bytes**, so a later reader can tell whether they are looking at the same
-page this document read:
+**The retrieved bytes are committed alongside this file**, under
+`docs/proposals/advisory-144-refetch-2026-07-28/`, 240 KB across eight files. An earlier revision
+recorded only the digests, which **proves nothing once the page changes**: a hash with no preimage
+cannot be recomputed by anyone, so a later reviewer holding only the number can neither confirm the
+quote nor detect a substitution. **This reconciliation exists because a dossier recorded a page and
+that page's content is now in question**, which is the strongest possible argument for keeping the
+bytes rather than a fingerprint of them.
 
-| Row | File | sha256 of the retrieved HTML |
+| Row | Committed preimage | sha256 |
 | --- | --- | --- |
-| 1 | `block-parties.page` | `646dc3b274456dc5a722205c6c1059a93c790aaf0aa08bde8af3f33f2dbb56bb` |
-| 2 | `frequently-asked-questions.page` | `abdada1ace8b3eaef356959c7a7d009825648dc28a28f139035b58a5c1c40f8d` |
-| 3 | `permit-deadlines.page` | `95a1501394e7fc381647191d3ceb05c700d2fadfea1aafc2736dc3e85b67cec6` |
-| 4 | `open-culture.page` | `8783f4b568e3ec30cbfea2d7bb579e6a27fdd4cc24639ebe94d0e96eadf9cda1` |
-| 5 | `single-block-festivals.page` | `c846b615e7adbe12cc0804299a4e006a71ae3fbd12de18897a94ac13e262d4ff` |
-| 6 | `street-events.page` | `80829da4f5d65761c470a3f6df4d9e3fbef5f1c3ecc2a37760b49f5b2713a8f0` |
-| 7 | `street-festivals.page` | `11f4e567bdb64aca13735244302ea8fd68d937f25570221112ba07445f95ebce` |
-| 8 | `fees.page` | `d02117d5b7b4aa91808961f3d20f573f128beb0f666b96cbc3ed85c80e4d36cb` |
+| 1 | `01-block-parties.page.html` | `646dc3b274456dc5a722205c6c1059a93c790aaf0aa08bde8af3f33f2dbb56bb` |
+| 2 | `02-frequently-asked-questions.page.html` | `abdada1ace8b3eaef356959c7a7d009825648dc28a28f139035b58a5c1c40f8d` |
+| 3 | `03-permit-deadlines.page.html` | `95a1501394e7fc381647191d3ceb05c700d2fadfea1aafc2736dc3e85b67cec6` |
+| 4 | `04-open-culture.page.html` | `8783f4b568e3ec30cbfea2d7bb579e6a27fdd4cc24639ebe94d0e96eadf9cda1` |
+| 5 | `05-single-block-festivals.page.html` | `c846b615e7adbe12cc0804299a4e006a71ae3fbd12de18897a94ac13e262d4ff` |
+| 6 | `06-street-events.page.html` | `80829da4f5d65761c470a3f6df4d9e3fbef5f1c3ecc2a37760b49f5b2713a8f0` |
+| 7 | `07-street-festivals.page.html` | `11f4e567bdb64aca13735244302ea8fd68d937f25570221112ba07445f95ebce` |
+| 8 | `08-fees.page.html` | `d02117d5b7b4aa91808961f3d20f573f128beb0f666b96cbc3ed85c80e4d36cb` |
 
-**The digests are of the fetched bytes, not of the quoted text.** They prove which retrieval a quote
-came from. They do not certify the quote, which is why every quote below is reproduced verbatim.
+Recomputable with one command from the repository root, and it depends on nothing but the files:
+
+```
+sha256sum docs/proposals/advisory-144-refetch-2026-07-28/*.html
+```
+
+**What the preimages do and do not settle.** They let anyone verify that a quote below appears in the
+document that was retrieved, and they let anyone diff a future retrieval against this one. **They do
+not establish that the page said the same thing before 2026-07-28**, which is section 4's point and
+the reason section 5 leaves a question open rather than closing it. A stored copy is evidence of one
+retrieval, not of a page's history.
 
 ---
 
@@ -205,11 +238,38 @@ section 4 of the scope document predicted this observation exactly.
 
 | claim | inputs observed | section 4 outcome |
 | --- | --- | --- |
-| **A-1** block parties | row 1 present as quoted; row 2(a) names Block Parties | **Supported by both pages.** Retained iff the verification owner promotes; sourced to `block-parties.page` **and** the CECM FAQ |
-| **A-2** street events | row 2(a) names Street Event; row 6 no provision | **Supported by the FAQ.** Retained iff promoted; sourced to the FAQ alone |
-| **A-3** festivals | row 2(a) names Street Festivals; row 7(a) no provision | **Supported by the FAQ for street festivals only.** See section 6, defect 1: the claim is broader than the sentence |
-| **A-4** parades | row 2(a) names Parades | **Supported by the FAQ.** See section 6, defect 2: the sentence names no acting agency and the same page attributes parade permits to NYPD |
-| **A-5** attribution | derived | Every supported category is carried by the FAQ, so **"per the CECM FAQ" is accurate for all four**. A-1 is additionally carried by `block-parties.page` and its clause can name both |
+| **A-1** block parties | row 1 present as quoted; row 2(a) names Block Parties | **The prohibition is supported by both pages. The actor is not.** See A-0 below. Retained iff the verification owner promotes |
+| **A-2** street events | row 2(a) names Street Event; row 6 no provision | **The prohibition is supported by the FAQ. The actor is not.** Same |
+| **A-3** festivals | row 2(a) names Street Festivals; row 7(a) no provision | **The prohibition is supported for street festivals only, and the actor is not.** See section 6, defect 1: the claim is broader than the sentence |
+| **A-4** parades | row 2(a) names Parades | **The prohibition is supported by the FAQ. The actor is not, and here the record points the other way**: the same page says parade permits are issued by NYPD. See section 6, defect 2 |
+| **A-0** the actor, "**SAPO** prohibits" | row 2(a); row 1 | **UNRESOLVED.** Neither page attributes the prohibition to an agency. This is a claim in its own right and it is not settled by this fetch |
+| **A-5** attribution to a source | derived | Every category with a supported prohibition is carried by the FAQ, so **"per the CECM FAQ" is accurate for all four as a source citation**. A-1 is additionally carried by `block-parties.page`. This is separate from A-0: naming the page a claim comes from is not naming the agency that prohibits |
+
+**A-0 is split out because an earlier revision of this document did not have it, and calling A-1
+confirmed without it overstated the fetch.** The advisory does not say alcohol is prohibited at block
+parties. It says "**SAPO prohibits** alcohol at block parties, street events, festivals, and parades".
+That is two claims: a prohibition, and an agency holding the authority behind it.
+
+**The fetch settles the first and not the second.** The FAQ sentence is agentless: "Alcohol is
+prohibited at Parades, Block Parties, Street Event and Street Festivals." The block-parties page is
+likewise passive: "Alcohol, vendors, commercial branding and sponsorships are not permitted at block
+parties." **Neither says who prohibits.** Both pages are published by CECM, which houses SAPO, and
+that is context rather than a statement of authority. For parades the record actively cuts against
+the advisory's wording, since the same FAQ says parade permits are NYPD's.
+
+**Why this is not pedantry:** which agency holds authority is a regulatory claim, and the promotion
+decision rests on this mapping. An organizer told that SAPO prohibits something knows who to ask; one
+told the wrong agency does not. **This document asserts nothing about which agency prohibits what.**
+
+**What would settle A-0**, stated so it can be scoped rather than guessed at:
+
+- **A codified rule naming the actor.** The FAQ's own alcohol answer links to the Administrative Code
+  on `library.amlegal.com`, title 10 chapter 1, anchor `JD_10-125`. That link was not followed, per
+  section 8. Following it is the smallest bounded step available and it is **not** taken here.
+- **50 RCNY §1-01 to §1-12**, the codified SAPO rules, read for an alcohol provision. Round 1 and
+  Round 2 of the dossier already fetched §1-01, §1-03 and §1-08, so the access path is known.
+- **Failing both, dropping the actor from the claim.** "Alcohol is prohibited at ..." is what the
+  sources say, and it is a smaller claim than the advisory currently makes.
 
 **None of that promotes anything.** Section 4's retention rule is "supported **and** promoted", and
 this document performs only the first half. All four categories remain unpromoted, and
@@ -262,38 +322,94 @@ page is not new to the record; the sentence is.
 those passes ran. No fetched artifact bears a date, the page publishes no revision history, and this
 retrieval says only what the page says today. **Whether the earlier passes missed the sentence or the
 sentence postdates them is not determinable from anything fetched here**, and this document does not
-guess. Either way the record was incomplete on 2026-07-28 and now has a quote.
+guess. Either way the record was incomplete on 2026-07-28 and now has a quote. **Section 5 sets out
+the two readings that survive and declines to pick one**, which an earlier revision of this document
+did not do.
 
 ---
 
-## 5. Issue #181, which this fetch decides against today's page
+## 5. Issue #181, which this fetch narrows without closing
 
 Issue #181 records that `SAPO-BLOCK-PARTY-ELIG-001` carries `verification.status: SOURCE_CONFIRMED`
 with a `source.citation` reading "CECM block-parties page; FAQ alcohol prohibition", and states that
 the CECM FAQ "is named as a second source for the same prohibition and does not carry it."
 
 **Against the page retrieved on 2026-07-28, the FAQ does carry it**, in the sentence quoted in row 2
-above, and it names Block Parties explicitly. **Both sources named in that citation carry the
-block-party alcohol prohibition today.** So the citation is accurate as of this retrieval.
+above, and it names Block Parties explicitly. **So the citation is accurate as of this retrieval**,
+in the narrow sense that both named sources carry the block-party prohibition today.
 
-**Stated precisely, because the distinction matters for what #181 is for.** This does not show that
-#181 was wrong about the repository. It was right that the dossier records the prohibition only on
-`block-parties.page`, and PR #158's derivation from the record was sound on the record it had. What
-the fetch changes is the conclusion drawn from that gap: **the defect was an incomplete evidence
-record, not a false attribution.** A citation naming a source the dossier does not quote is a real
-problem, because nobody can check it without going back to the page, and that is the problem this
-document just solved by going back to the page.
+**That is as far as a current fetch reaches, and an earlier revision of this document went further
+than it should have.** It concluded that "the defect was an incomplete evidence record, not a false
+attribution", which is a claim about the state of the world in July, decided from a page read in
+July six days later. **A current fetch cannot settle a historical question.** Section 4 above says the
+timing is not determinable and the categorisation then quietly assumed one of the two readings.
 
-**The same correction applies to `ADV-ALCOHOL-PUBLIC-001`'s "per the CECM FAQ".** PR #158 established
-that the located prohibition was on `block-parties.page` while the advisory cited the FAQ, and treated
-the attribution as unsupported. On today's page **the advisory's attribution is supported**, for all
-four categories rather than one.
+**Both readings survive this fetch and neither is eliminated by it:**
+
+- **The sentence was on the page and four research passes missed it.** Then the citation was correct
+  when written, the dossier was incomplete, and #181's premise fails.
+- **The sentence postdates those passes.** Then the citation named a source that did not carry the
+  claim at the time it was written, **#181's premise holds for the period it describes**, and today's
+  page has since made the citation true by accident rather than by verification.
+
+Nothing retrieved distinguishes them. No page bears a date or a revision history, the committed
+preimages are evidence of one retrieval rather than of a page's history, and this document has no
+standing to guess. **Issue #181's premise is therefore open, not failed**, and any summary of this
+work that says otherwise, including an earlier revision of this document, overstates it.
+
+**What would close it** is a dated copy of the FAQ from before 2026-07-22: a web archive capture, or
+a retrieval artifact from one of the four research passes if any was kept. **Neither was looked for**,
+because that is source discovery and section 8 records why it is out of scope.
+
+**The same open question applies to `ADV-ALCOHOL-PUBLIC-001`'s "per the CECM FAQ".** PR #158
+established from the record that the located prohibition was on `block-parties.page` while the
+advisory cited the FAQ. On today's page the advisory's source attribution holds for all four
+categories. Whether it held when written is the same undecided question, and it is separate again
+from A-0 in section 3.1, which asks who prohibits rather than which page says so.
 
 **What this does to the amendment's pricing.** The amendment prices leaving the block-party claim on
 `SAPO-BLOCK-PARTY-ELIG-001` as cheapest of three shapes precisely because that rule already carries
 the claim at `SOURCE_CONFIRMED`, and flags that if the citation is wrong the pricing needs
-re-checking. **The citation is not wrong against today's page, so that pricing stands unchanged.**
-This document does not choose a shape.
+re-checking. **The pricing rests on the claim being supported, which it is on both readings**: the
+block-parties page carries the prohibition, and neither reading above questions that. So the pricing
+stands, and it stands for a narrower reason than "the citation is fine".
+
+### 5.1 What a citation fix actually costs, since it is not an artifact-field edit
+
+Recorded because issue #181 describes the correction as "a `source.citation` edit to an immutable
+published artifact", which understates its reach.
+
+**`packages/engine/src/findings.ts:66-69` copies the citation into every generated `Finding`:**
+
+```
+return rule.source === null
+  ? []
+  : [{ ruleId: rule.id, citation: rule.source.citation, urls: rule.source.urls }];
+```
+
+From there it is **serialized engine output and user-visible text**, not a field only a rules reader
+sees:
+
+| Reached | Where |
+| --- | --- |
+| Rendered on the plan | `apps/web/app/plan/plan-line.tsx`, the per-line citation F-206 AC 2 requires |
+| Rendered on the checklist | `apps/web/app/checklist/checklist-item.tsx:71` prints `{source.citation}` |
+| **Persisted** | `apps/api/src/plan.ts:191` writes `JSON.stringify(finding.sources)` into `permit_plan_items.sources`, a `jsonb` column declared in migration `001_initial_schema.ts:208` |
+| Persisted again | the checklist's own `sources` column, read back at `apps/api/src/checklist.ts:199` |
+
+**And the persistence cuts the other way from the obvious reading.** `docs/ARCHITECTURE.md:128`
+describes that column as "immutable citation + URL snapshots", and AD-7 makes plans immutable
+snapshots. So a corrected citation **does not reach plans already generated**: every existing row
+keeps the text it was written with, by design. A citation fix changes what future plans say and
+leaves the past ones alone, which is the correct behaviour for an immutable snapshot and is also the
+reason a correction cannot be described as making the record right.
+
+**So the cost of correcting `SAPO-BLOCK-PARTY-ELIG-001`'s citation is a publication, plus moved
+engine output, plus rendered user-visible text, plus a divergence between old and new stored plans.**
+That is issue #181's to weigh; this document does not propose the correction and, per section 5
+above, does not conclude that one is needed.
+
+**This document does not choose a shape** for the block-party claim either.
 
 ---
 
@@ -352,7 +468,7 @@ promotion decision sees them, from the amendment on issue #144 and PR #177 secti
 | Promoting `ADV-ALCOHOL-PUBLIC-001` off `COVERAGE_GAP` | `packages/engine/src/intake/validate.ts:248` emits the issue code as the literal `coverage_gap` while the status travels separately from the advisory, and the intake page renders both together. Four tests pin the pair |
 | Promoting `ADV-SAPO-OTHER-CLASS-001` off `COVERAGE_GAP` | `packages/engine/src/verdict.ts:345` drops a rescope suggestion only for a `COVERAGE_GAP` finding, and `packages/engine/src/proposals.ts:152-155` names "hold it as some other SAPO class" as the case that clause exists to prevent |
 | Leaving both at `COVERAGE_GAP` and narrowing the text | Neither site moves |
-| Correcting `SAPO-BLOCK-PARTY-ELIG-001`'s citation only | Neither site moves. It is a `source.citation` edit, and section 5 above finds nothing needing correction against today's page |
+| Correcting `SAPO-BLOCK-PARTY-ELIG-001`'s citation only | Neither of the two sites above moves, but **it is not free either**: `findings.ts:66-69` copies the citation into every generated `Finding`, so it moves serialized engine output, the plan and checklist rendering, and diverges new stored plans from old. Section 5.1, and issue #181 |
 
 **The three constraints from the decision are unchanged by these results.** A status change is still
 not a remedy, both outcomes still require a publication, and **retaining the block-party category is
@@ -373,3 +489,8 @@ that condition for A-1 and leaves the second where it belongs.
   record it and stop, which is what section 2 row 2 does.
 - **No advisory text drafted.** PR #177 section 4 holds the drafts. This document reports which
   outcome each claim lands on, not what the resulting sentence should say.
+- **No archived capture sought.** Closing the timing question in section 5 needs a dated copy of the
+  FAQ from before 2026-07-22. None was looked for; that is discovery, and it is named there as what
+  would close the question rather than done here.
+- **No citation correction proposed.** Section 5.1 prices one because issue #181 understates its
+  reach. Whether to make it is #181's decision.
