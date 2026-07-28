@@ -15,7 +15,8 @@ persistence measurement below; round 7's surfacing-versus-silence separation in 
 answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` correction in R5, and
 the live restatement of both conditions in S4; round 9's level-field finding-set diff in S4 and the
 answer-key confirmation in R1; round 10's provenance diff in S4, the authority order in R1, and the
-per-measurement method table below; round 11's row-by-row walk of that table.
+per-measurement method table below; round 11's row-by-row walk of that table; round 12's envelope
+audit and re-measured render.
 
 **What layer each result requires, and what the harness was where this document records it.** Five
 statements of this have now been wrong, each in a different way, and the reason the last one failed
@@ -28,11 +29,17 @@ stated result requires**, which can be verified from the result itself, plus the
 cases where the document does record it (round 2's method header, section 4's own sentence, and
 every measurement from round 5 on, which were run for these rounds).
 
-Every row was walked against the text it covers before this was written. **Nine rows checked, four
-moved**: section 1's scoping columns and section 3's scope claim need a scope resolver rather than a
-parse; section 4 is fixture reading rather than validation and evaluation; R3 contains three kinds
-of measurement rather than one; and R1 contains a rendered Scenario F run, not only artifact
-reading, which is what round 10's version got wrong.
+Every row has been walked against the text it covers. Round 11 walked the nine rows of the table it
+replaced and reported that count above a table of eleven, which left two rows without audit
+provenance; this round walked **all eleven rows, and two moved**. Both are the same correction:
+R5's six-scenario table has a "Branch reasons on screen" column, which is a component-path result
+and was sitting in the evaluation-only row. R5 therefore joins R1 and R3 as a section holding
+measurements of more than one kind, and being split once in round 9 did not make it settled.
+
+The nine that did not move, listed so the count is checkable: the parsed-ruleset row, the
+scope-resolution row, the validator-only row, the fixture-reading row, section 2 and the rest of the
+evaluation row, R3's direct-parser row, the S2/S3 row, S4's per-rule row, the persistence row and
+the no-submission row. The four corrections round 11 made, from the previous walk, still stand.
 
 | Result | Lowest layer it requires |
 | --- | --- |
@@ -40,8 +47,8 @@ reading, which is what round 10's version got wrong.
 | Section 1's `"unknown"` holds and dependents-scoped-out columns; section 3's "leaves scope" claim | scope resolution over an intake (`createScopeResolver`, `termHolds`). No `evaluate`. |
 | Section 1's `"unknown"` acceptance results; **R5's two recounts** (the 8 non-nullable enumerable fields, and `headcount` and `food_vendor_count`) | `parseIntakeContract` -> `validateIntake` ONLY. Most of these probes are REJECTED by the validator, which IS the result; they never reach `evaluate`. |
 | Section 4's per-scenario answer table | reading `SCENARIO_INTAKE_FIXTURES` through `fixtureSubmission`, as section 4 states. No validator, no engine. |
-| Section 2; **R5's per-scenario missing-fact measurements** and its `plaza_level` and `DOB-TENT-001` results; R3's AC 6 split; S4's plan-level results and diffs | `parseIntakeContract` -> `validateIntake` -> `evaluate`. R5's `DOB-TENT-001` result pairs an evaluated finding with a read of `plan-line.tsx`. |
-| **R1's Scenario F block** (verdict, missing-fact and branch counts, and the branch text absent from the screen); R2; R3's "On screen" column | the component path: `PlanView` rendered with `@testing-library/react` and a stubbed `fetch` in the page's three-call shape, over a plan body from `validateIntake` -> `evaluate`, per round 2's method header. `apps/api/src/plan.ts` is NOT in the loop; the stub stands in for it. |
+| Section 2; **R5's per-scenario missing-fact and branch-count columns** and its `plaza_level` and `DOB-TENT-001` results; R3's AC 6 split; S4's plan-level results and diffs | `parseIntakeContract` -> `validateIntake` -> `evaluate`. R5's `DOB-TENT-001` result pairs an evaluated finding with a read of `plan-line.tsx`. |
+| **R1's Scenario F block** (verdict, missing-fact and branch counts, and the branch text absent from the screen); R2; R3's "On screen" column; **R5's "Branch reasons on screen" column** | the component path: `PlanView` rendered with `@testing-library/react` and a stubbed `fetch` in the page's three-call shape, over a plan body from `validateIntake` -> `evaluate`, per round 2's method header. `apps/api/src/plan.ts` is NOT in the loop; the stub stands in for it, and the stub envelope is the one audited below. |
 | R3's runtime member measurement | `evaluate`, then a JSON round trip, then the web's own parser (`readChecked`, `arrayOf`, `shapedLike`) called directly. No component is rendered. |
 | S2, S3 | `parseEngineRuleset` -> `parseIntakeContract` -> `validateIntake` -> `evaluate` |
 | S4's per-rule tables | `evaluateTrigger` and `evaluateCondition` called directly, because per-rule `unknownFields` and `triggeredBy` are not observable from the plan |
@@ -57,6 +64,47 @@ Three consequences that were previously implied or wrong, stated instead:
   single-row-per-section versions in rounds 9 and 10.
 - **A validator-only result is a real result** and not the same claim as an evaluated one. The
   recounts establish that those fields cannot reach `evaluate` at all.
+
+**Audit of the one stubbed envelope in this document, because a setup that asserts something untrue
+is the same failure as the fabricated probe.** The component-path measurements are the only ones fed
+by a hand-built stored-plan envelope; every other measurement uses `evaluate` output directly, and
+R3's parser measurement JSON round-trips real `missingFacts` with nothing added. Two defects were
+found in that envelope and both are fixed:
+
+1. **An ordering the product cannot produce.** Round 2's envelope carried
+   `generatedAt: 2026-07-25` beside `snapshotDate: 2026-07-26`, so the rendered header read
+   "published July 26, 2026" above "generated 2026-07-25". `insertPlan` writes the LOADED ruleset's
+   `snapshotDate` (`apps/api/src/plan.ts:242`) and takes `generated_at` from the database at insert
+   (`RETURNING generated_at`, `:147`), so a plan generated from the published v2.8 artifact cannot
+   predate it. No clock condition rescues the ordering either: `rules/nyc-rules.v2.8.json` was added
+   to the repository on 2026-07-26, its own snapshot date, so on 2026-07-25 there was no v2.8 to
+   load.
+2. **A member the API always supplies and the stub omitted.** `apps/api/src/plan.ts:254-256` maps
+   every finding through `lastVerifiedDate: finding.lastVerifiedDate ?? null`, and the engine leaves
+   the member absent on rules that publish no verification date. A stub built straight from
+   `evaluate` output is REJECTED by `plan-api.ts`'s `nullOr(isString)` check and the page renders
+   "The API returned a plan this page cannot read." So the envelope has to normalise it the way the
+   API does.
+
+**Re-measured with a reachable envelope.** Same submission shape, `lastVerifiedDate` normalised, and
+`generatedAt` set to 2026-07-25 (the impossible one), 2026-07-26 (the earliest reachable) and
+2026-07-28. The rendered result is identical in all three except the date string itself:
+
+```
+Your permit plan
+Rules snapshot nyc.v2.8 · published July 26, 2026
+Depends on: sapo event type · generated 2026-07-26 · revision 1
+```
+
+`Depends on: sapo event type` with no branch reasons, collapsed or expanded, at every date. So the
+rendering conclusion did not depend on the impossible input, which is worth saying explicitly rather
+than leaving the reader to assume it.
+
+**One precision the re-measurement adds.** R2 says the `plaza_level` line reaches the screen
+verbatim. It does, but only inside the per-finding "Details for ..." disclosure: with the panel
+collapsed there are zero `.line__timeline` nodes in the document, and expanding the five disclosures
+produces exactly one, reading "the plan was never asked plaza_level, which this deadline keys on".
+The branch reasons stay absent in both states.
 
 **The S2/S3 probe passes four guards and cannot pass persistence.** It passes `parseEngineRuleset`,
 `parseIntakeContract`, `validateIntake` and `evaluate`, which rounds 3 and 4 could not because their
@@ -378,13 +426,16 @@ those two is the lower one.
 ## R2. What the organizer actually sees
 
 Literal visible text for the `sapo_event_type: "unknown"` submission, in order, at the top of the
-page:
+page. The envelope is the corrected one described above: `generatedAt` on or after the ruleset's
+own snapshot date, since a plan generated from v2.8 cannot predate v2.8.
 
 ```
 Your permit plan
 Rules snapshot nyc.v2.8 · published July 26, 2026
-Depends on: sapo event type · generated 2026-07-25 · revision 1
+Depends on: sapo event type · generated 2026-07-26 · revision 1
 ```
+
+Re-measured at 2026-07-25, 2026-07-26 and 2026-07-28: only the date string moves.
 
 Then five findings, each `may be required`: `SAPO-BLOCK-PARTY-001` ("apply by 2026-07-18 ·
 published deadline missed"), `SAPO-BLOCK-PARTY-SPONSOR-001`, `SAPO-PLAZA-001`,
@@ -398,7 +449,10 @@ registry field name and no branch.
 
 One raw field name does reach the screen verbatim, inside the `SAPO-PLAZA-001` line: **"the plan
 was never asked plaza_level, which this deadline keys on"**. That is `unresolvedTimelines` rendered
-as written, underscore included.
+as written, underscore included, and it sits behind the finding's "Details for ..." disclosure
+rather than in the default view: collapsed, the document contains zero `.line__timeline` nodes;
+expanding all five disclosures produces exactly one, carrying that sentence. The branch reasons are
+absent in both states.
 
 ## R3. What is in `verdictDetail` and not on screen
 
