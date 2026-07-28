@@ -129,8 +129,11 @@ run-of-show into F-405, consent separation into F-403. Option A splits capabilit
 calls the Phase 2 DEPTH of F-203, already assigned to F-203 by the Roadmap, the PRD and the spec.
 That is the case the rule names.
 
-So option A additionally requires either amending `docs/DESIGN.md:27` or recording an approved
-exception to it, with the status header and BASELINE consequences that carries. Option B remains
+So option A additionally requires amendments or recorded approved exceptions to **two** DESIGN rules,
+`:27`'s absorption policy and `:25`'s "an assigned ID's meaning never changes", with the status header
+and BASELINE consequences those carry. `:25` applies because retargeting approved capabilities away
+from F-203 narrows what that id means, and the rule bars changing a meaning rather than only
+enlarging one. Option B remains
 compliant without an exception: expanding F-203 explicitly is permitted because the prohibition is on
 silent expansion and on contributor-initiated meaning changes, and it is what the absorption rule
 points at.
@@ -146,10 +149,23 @@ rules, and one branch of each item runs into one of them:
 | | the branch | the rule it runs into |
 |---|---|---|
 | item 1, option A | mints F-215 for the Phase 2 depth of F-203 | `:26` capabilities are absorbed rather than **split** |
+| item 1, option A | AND removes approved capabilities from F-203 | `:25` an assigned ID's **meaning never changes** |
 | item 2, widening | grows F-408 from inventory alerts into POS integrations | `:25` an assigned ID's **meaning never changes** |
 
-One splits where the policy says absorb; the other changes a meaning where the policy says meanings
-are fixed. The two branches that DO NOT collide are item 1 option B (expand F-203 explicitly, which
+**Option A runs into BOTH rules, which an earlier revision missed by reading `:25` as being about
+growth only.** It is not: it says an assigned id's meaning never CHANGES, and narrowing is a change.
+Option A takes approved Phase 2 capabilities away from F-203, so F-203 afterwards means less than the
+Roadmap, the PRD and its own spec currently say it means. That is the same rule the widening branch
+runs into, reached from the other side.
+
+So the comparison this brief drew earlier needs restating, and it is not symmetrical after all:
+
+- **item 1 option A collides with two rules**, `:26` by splitting and `:25` by narrowing
+- **item 2's widening branch collides with one**, `:25` by growing
+- **item 1 option B and item 2's narrowing branch collide with none**
+
+One splits and narrows; the other grows. Both directions are meaning changes, and only the
+absorption rule distinguishes them, which is why option A carries the extra collision. The two branches that DO NOT collide are item 1 option B (expand F-203 explicitly, which
 is absorption) and item 2's narrowing branch (keep F-408 as it is and record the broader scope as
 dropped). So on the policy as written, one option per item is clean and the other needs an amendment
 or a recorded exception, with the status and BASELINE consequences either carries.
@@ -221,7 +237,13 @@ the first three, so the change sets below are DERIVED rather than assembled, by 
 3. For every artifact that MOVES, include its status header and its BASELINE row. That pairing has
    been the missing half three times, so it is now part of the derivation and not a step to remember.
 4. Record the searches themselves, below, so the next round re-runs them instead of re-deriving them.
-5. **Check that every flag reaches a change set.** A derivation that finds a flag and a change set
+5. **Check that every branch leaves the artifacts agreeing.** A capability that moves in one artifact
+   and not its pair recreates the disagreement the change set exists to close. Three branches had
+   this and each looked complete on its own: option A's leave-with-F-203 branch assigned a capability
+   by spec alone, option B's retain branch amended the PRD and not the Roadmap, and option B's drop
+   branch left the spec broader than both. The check is one matrix per option, artifacts across,
+   branches down, and it is in the option A section as the worked example.
+6. **Check that every flag reaches a change set.** A derivation that finds a flag and a change set
    that silently drops it is worse than not deriving, because it looks complete. This step exists
    because it happened: three flags were derived and only two were carried, and
    `docs/ARCHITECTURE-FUTURE.md:396` reached no option. The audit is one comparison, table against
@@ -299,11 +321,24 @@ and the product owner answers it once for whichever option is taken.
 
 - **RETAIN under the new id:** steps 1, 3 and 13 all name four capabilities, and the new Roadmap entry
   and PRD line read "escalations, digests, team reminders, per-user preferences".
-- **LEAVE IT WITH F-203:** steps 1 and 3 name three, and step 13 rewrites the spec sentence to split
-  them, assigning three to the new id and keeping per-user preferences with F-203. The spec then
-  describes two destinations rather than one, which is more spec text than the retain branch.
+- **LEAVE IT WITH F-203:** steps 1 and 3 name three for the new id AND **keep an F-203 Phase 2 entry
+  naming per-user preferences**, so the Roadmap and the PRD each carry two entries afterwards. Step 13
+  rewrites the spec sentence to split the four between the two destinations. An earlier revision of
+  this branch replaced the Roadmap and PRD entries with the new id alone, which left per-user
+  preferences assigned by the spec and by nothing else, recreating the exact spec-versus-Roadmap gap
+  this brief exists to close. This is the most artifact-heavy branch of the option for that reason.
 - **DROP IT:** steps 1 and 3 name three, and step 13 removes per-user preferences from the spec
   sentence and records it as dropped rather than moved.
+
+**Every branch is checked for a capability that moves in one artifact and not its pair**, because
+that is what the LEAVE branch had. The rule is that after any branch, `ROADMAP.md`, `PRD.md` and the
+F-203 spec must agree on which id carries each of the four capabilities:
+
+| branch | Roadmap | PRD | spec | agree? |
+|---|---|---|---|---|
+| retain under new id | 4 on F-215 | 4 on F-215 | 4 on F-215 | yes |
+| leave with F-203 | 3 on F-215 + 1 on F-203 | same | same split | yes, once the F-203 entries are kept |
+| drop | 3 on F-215 | 3 on F-215 | 3, fourth recorded dropped | yes |
 
 The steps below are written for the retain branch, which is the one that keeps all four capabilities
 together; the other two branches change steps 1, 3 and 13 as described.
@@ -323,8 +358,11 @@ together; the other two branches change steps 1, 3 and 13 as described.
 7. `specs/F-203-deadline-alerts.md` status header: **required, and missing from an earlier revision.**
    Step 13 edits the spec's content, so leaving its approval metadata alone would publish a spec whose
    text points at the new id while its own header still describes the previously approved version.
-8. `docs/DESIGN.md:27`, the absorption policy: an amendment or a recorded approved exception, per the
-   compliance finding above, with its own status-header entry.
+8. `docs/DESIGN.md`, **BOTH ID rules, not one**: `:27`'s absorption policy, because option A splits
+   rather than absorbs, and `:25`'s "an assigned ID's meaning never changes", because option A also
+   NARROWS F-203 by taking approved capabilities away from it. Each needs an amendment or a recorded
+   approved exception, with its own status-header entry. An earlier revision requested only the
+   absorption amendment, having read `:25` as being about growth alone.
 9. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md`, `docs/DESIGN.md`, `docs/PRD.md` AND the
    `Phase 1–1.5 specs` row covering `specs/F-*.md`. The spec's row was missing for the same reason its
    header was: the change set listed the artifacts whose text changes and not the records that carry
@@ -372,17 +410,26 @@ together; the other two branches change steps 1, 3 and 13 as described.
    product owner is not being asked for, and made option B look more expensive than it is.
 3. `specs/F-203-deadline-alerts.md` status header, plus its BASELINE row.
 4. `docs/ROADMAP.md` status header and BASELINE row.
-5. `docs/PRD.md:206`, **on the RETAIN branch only.** Option B inherits the per-user preferences
-   question set out above, and it has the same two-branch shape as item 2's: the spec assigns four
-   Phase 2 capabilities and `ROADMAP.md:57` and `PRD.md:206` assign three. If the product owner
-   RETAINS per-user preferences under F-203, the PRD omits a capability F-203 would then carry and
-   must be amended, with its status header and BASELINE row. If they drop it, the PRD already matches
-   and none of that applies.
+5. **The per-user preferences branch, and BOTH branches move an artifact an earlier revision left
+   alone.** The spec assigns four Phase 2 capabilities; `ROADMAP.md:57` and `PRD.md:206` assign three.
+
+   - **RETAIN:** `docs/PRD.md:206` AND `docs/ROADMAP.md:57` are both amended to name per-user
+     preferences, each with its status header and BASELINE row. An earlier revision amended the PRD
+     alone while step 1 kept the Roadmap entry as-is, which left the approved spec broader than the
+     Roadmap, which is the gap this brief exists to close.
+   - **DROP:** `specs/F-203-deadline-alerts.md:53` is amended to remove per-user preferences and
+     record it as dropped. An earlier revision said "the PRD already matches and none of that
+     applies", which was true of the PRD and false of the spec: leaving the spec at four while the
+     Roadmap and PRD carry three preserves the original gap rather than closing it.
+
+   So neither branch is free, and the artifact counts below account for both.
 6. No DESIGN.md change on either branch: expanding F-203 explicitly is absorption, which is what
    `:26` points at, so neither branch engages the ID policy. No new tracker issue.
 
-**Per BRANCH: two artifacts if per-user preferences is dropped, three if it is retained.** An earlier
-revision priced this option at two unconditionally, which was right for one branch only.
+**Per BRANCH: THREE artifacts on the retain branch** (Roadmap, PRD, spec) **and TWO on the drop
+branch** (Roadmap, spec). An earlier revision priced the option at two unconditionally and then at
+two-or-three with the PRD alone on retain; both undercounted, because each branch has to reconcile
+all three artifacts rather than the one that happens to be wrong in the obvious direction.
 
 **Option B has no mirror of option A's step 7, and that was checked rather than assumed.** B keeps
 the `F-203 (full)` Roadmap entry, so the spec's "per ROADMAP" pointer still resolves and needs no
@@ -632,7 +679,24 @@ digest, lineage record, boot constants, pinned tests, changelog and replay verif
 section claimed. If the search for the three alcohol categories comes back empty, that settles the
 question and does not close it: `ADV-ALCOHOL-PUBLIC-001` still asserts three prohibitions while its
 `COVERAGE_GAP` status promises an advisory that asserts nothing, and the only ways to resolve that
-are to narrow or remove `advisory_text`, or to change the verification status. Every one of those is
+are to narrow or remove `advisory_text`. **A status change is not among them, and an earlier revision
+of this section offered it as an alternative. It is not one.**
+
+`RESEARCH_REQUIRED` accurately reports that no source was located. It does not license the assertion
+sitting beside it: the advisory would then say no source was found AND state the prohibition anyway.
+`COVERAGE_GAP` is worse, because it promises an advisory that asserts nothing, which is the
+contradiction being fixed. Neither status makes unsupported regulatory content publishable, because
+no status does. The claim is the problem, not the label on it.
+
+So on the no-source branch the text MUST be narrowed to what the record supports, which for
+`ADV-ALCOHOL-PUBLIC-001` is the block-party prohibition alone, or removed. A status change is
+accompanying metadata that may travel with that edit and never a remedy that replaces it. Written the
+other way, the publication workflow could carry three invented prohibitions through a version bump,
+a baseline row, a changelog and a replay verification, and finish believing it had complied. That is
+CONTRIBUTING's first golden rule reached by paperwork rather than by intent, which is the more
+dangerous route because every gate reports green.
+
+Every one of those is
 an edit to the published ruleset, which is immutable, so every one is a new version carrying the same
 baseline row, digest, lineage record, boot constants, pinned tests, changelog and replay verification
 enumerated in PR #171 and cited above rather than restated here.
@@ -770,17 +834,17 @@ Stated as observations, not recommendations.
 **#127 item 1** is narrower than filed, and narrower again than an earlier draft of this brief made
 it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
 scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
-choice that becomes live when that work is scheduled. Option B touches TWO approved artifacts if per-user
-preferences is dropped and THREE if it is retained, the Roadmap and the F-203 spec plus
-`docs/PRD.md:206` on the retain branch, each with its status header and BASELINE row; its PR #131
-sequencing block has merged away. Option A touches FOUR approved artifacts at five locations once the
-derivation above is run rather than a list assembled: the Roadmap entry, `docs/PRD.md:206`, the F-203
-spec pointer its own step 1 invalidates, and `docs/DESIGN.md` twice, for its saturated STAGE 2 range
-and for the absorption rule option A needs amended or excepted because it is the split that rule
-names. Two further locations are flagged rather than priced, both declared id ranges in
-`docs/ARCHITECTURE-FUTURE.md`. **Option A is therefore not compliant as written**, which an earlier
-revision of this brief denied; it becomes compliant with a decision the product owner is entitled to
-make and has not yet been asked for.
+choice that becomes live when that work is scheduled. Option B touches TWO approved artifacts on the drop
+branch, the Roadmap and the F-203 spec, and THREE on retain, adding `docs/PRD.md:206`, each with its
+status header and BASELINE row; its PR #131 sequencing block has merged away. Option A touches FOUR
+approved artifacts at SIX locations once the derivation above is run rather than a list assembled:
+the Roadmap entry, `docs/PRD.md:206`, the F-203 spec pointer its own step 1 invalidates, and
+`docs/DESIGN.md` three times, for its saturated STAGE 2 range and for BOTH ID rules, `:27`'s
+absorption policy because option A splits and `:25`'s meaning-never-changes because option A also
+narrows F-203. Two further locations are flagged rather than priced, both declared id ranges in
+`docs/ARCHITECTURE-FUTURE.md`. **Option A is therefore not compliant as written, against two rules
+rather than one**, which earlier revisions denied and then understated; it becomes compliant with
+decisions the product owner is entitled to make and has not yet been asked for.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
 cheapest of the four change sets. Its two branches are priced separately, because no option-level
