@@ -13,15 +13,26 @@ enumerable recount there; round 5's rebuilt S2/S3 probe, the numeric recount in 
 propagation table in S4; round 6's two-rule split in S2/S3, the `plaza_level` recount in R5, and the
 persistence measurement below; round 7's surfacing-versus-silence separation in S4 and the four
 answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` correction in R5, and
-the live restatement of both conditions in S4.
+the live restatement of both conditions in S4; round 9's level-field finding-set diff in S4 and the
+answer-key confirmation in R1.
 
-**Which guards each measurement went through, because they are not the same.** Every measurement
-against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
-through `parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan path
-(`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`), with no engine internal called
-directly. **No measurement in this document is stored and reloaded**, so none of them exercises
-persistence; the difference is that the published-ruleset submissions above are storable and the
-S2/S3 probe's is not.
+**Which guards each measurement went through, per section rather than once.** A single global claim
+has now been wrong three times in three different ways, so it is stated per section instead:
+
+| Section | Guards reached |
+| --- | --- |
+| 1, and R5's recounts | `parseIntakeContract` -> `validateIntake` ONLY. Most of these probes are REJECTED by the validator, which IS the result; they never reach `evaluate` or any plan path. |
+| 2, 3, 4, 5, 6, 7 | `parseIntakeContract` -> `validateIntake` -> `evaluate` |
+| R1 through R6 | the same, plus the plan path (`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`) |
+| S2, S3, S4's plan-level results | `parseEngineRuleset` -> `parseIntakeContract` -> `validateIntake` -> `evaluate`. NOT persistence, which the probe cannot pass. |
+| S4's per-rule tables | `evaluateTrigger` and `evaluateCondition` called directly, because per-rule `unknownFields` and `triggeredBy` are not observable from the plan |
+
+Two consequences worth stating rather than leaving implied. **No measurement in this document is
+stored and reloaded**, so none exercises persistence; the difference is that the published-ruleset
+submissions are storable and the S2/S3 probe's is not. And **R5's recounts are validator-only
+results**: the eight non-nullable enumerable fields and the two non-nullable numerics were rejected
+by `validateIntake`, so the finding is that they cannot reach `evaluate` at all, which is a real
+result and not the same claim as an evaluated one.
 
 **The S2/S3 probe passes four guards and cannot pass persistence.** It passes `parseEngineRuleset`,
 `parseIntakeContract`, `validateIntake` and `evaluate`, which rounds 3 and 4 could not because their
@@ -29,12 +40,8 @@ probe invented its rules and `parseIntakeContract` rejected it. It cannot pass P
 `events.generator_present` is `boolean, notNull` and Postgres rejects `"unknown"` outright (S2), so
 no stored event can carry this state and `apps/api/src/plan.ts` can never reload one. S3 is a
 contract-and-engine result, not an end-to-end product one. Round 5 called those four checks the full
-guard chain, which is the same kind of over-broad methodology claim round 4 made one layer in; this
-is the second correction of it.
-
-The one place an engine internal is called directly is S4's per-rule propagation table, which uses
-`evaluateTrigger` because per-rule `unknownFields` is not observable from the plan; the plan-level
-result in the same section is from the guards above.
+guard chain, which is the same kind of over-broad methodology claim round 4 made one layer in, and
+round 8 found a third variant of it in the word "every"; hence the table above.
 
 PR #167 measured a gate that was legitimately NOT ASKED because its parent held a different value.
 This measures a gate that was ASKED and ANSWERED `"unknown"`, which is the case issue #108's title
@@ -281,11 +288,38 @@ feature."
 - the `venue_license_covers_event_area = "no"` branch carries verdict **INFEASIBLE**, and neither
   the branch nor its verdict is visible
 
-One observation offered without a conclusion, since it is a different question: AC 6 names three
-unknowns for Scenario F and the engine produces missing facts for two of them,
+**A second approved artifact requires the same thing, independently of F-102.**
+`docs/test-scenario-answer-key.md` is APPROVED in `docs/BASELINE.md` line 18 (v3 team-ratified
+2026-07-22 with the ruleset, v4 and v5 authorized by the product owner 2026-07-25) and is the
+green-gate acceptance suite. Its Scenario F expected verdict says so in its own words:
+
+> "EXPECTED VERDICT: CONDITIONAL - branch table rendered: [license covers rooftop + assembly
+> approval in place] -> feasible path; [no license coverage] -> infeasible path (SLA window missed
+> by one business day); [sound audible from street] -> add sound permit. Three follow-up questions,
+> not one (v1 corrected)."
+
+So the branch table is required by the authoritative fixture as well as by F-102's Outputs table and
+AC 6, and this document was wrong to treat the requirement as an open question. Two approved
+artifacts, one spec and one acceptance suite, and neither is implemented.
+
+**The interaction with the AC 6 split in R3, stated without deciding it.** The answer key expects a
+branch for assembly approval, and the engine emits no missing fact for
+`venue_has_assembly_approval`: it is answered `"unknown"` in the fixture and appears nowhere in the
+plan, because `DOB-ASSEMBLY-001`'s trigger reads `location_type` and `headcount` only (R3). The
+engine produces missing facts for the other two Scenario F unknowns,
 `sound_audible_from_public_way` and `venue_license_covers_event_area`.
-`venue_has_assembly_approval` is answered `"unknown"` in the fixture but does not appear as a
-missing fact. Whether that is correct is outside this measurement.
+
+Which of the two readings applies is a rules question this document does not settle:
+
+- the key and the published ruleset currently DISAGREE about whether assembly approval is a
+  branching fact, and one of them is wrong; or
+- the key describes an expectation the ruleset has not implemented yet, which is how
+  `packages/engine/src/ruleset.ts:622-628` reads it, recording the field as open on issue #89 and
+  blocking F-102 AC 6.
+
+What is measured rather than argued is that the two artifacts do not agree today, that the
+disagreement is on one of the three Scenario F unknowns, and that no engine or rules change is
+proposed here. Whichever way it resolves, it is a rules or engine question and not a rendering one.
 
 ## R2. What the organizer actually sees
 
@@ -298,11 +332,11 @@ Rules snapshot nyc.v2.8 · published July 26, 2026
 Depends on: sapo event type · generated 2026-07-25 · revision 1
 ```
 
-Then five findings, each `may be required`: the SAPO insurance certificate,
-`SAPO-BLOCK-PARTY-001` ("apply by 2026-07-18 · published deadline missed"),
-`SAPO-BLOCK-PARTY-SPONSOR-001`, `SAPO-PLAZA-001`, `SAPO-INSURANCE-001`, and the
-`ADV-SAPO-OTHER-CLASS-001` coverage-gap advisory ending "Not covered by this ruleset version. This
-plan may be incomplete for your event."
+Then five findings, each `may be required`: `SAPO-BLOCK-PARTY-001` ("apply by 2026-07-18 ·
+published deadline missed"), `SAPO-BLOCK-PARTY-SPONSOR-001`, `SAPO-PLAZA-001`,
+`SAPO-INSURANCE-001` (the liability insurance certificate), and the `ADV-SAPO-OTHER-CLASS-001`
+coverage-gap advisory ending "Not covered by this ruleset version. This plan may be incomplete for
+your event."
 
 **"Depends on: sapo event type"** is the entire branch table as rendered. `verdictCopy` maps
 `missingFacts` to `fact.field.replace(/_/g, " ")`, so the organizer is shown a de-underscored
@@ -440,8 +474,8 @@ F: [{"field":"sound_audible_from_public_way","branches":2,"thresholds":null},
     {"field":"venue_license_covers_event_area","branches":2,"thresholds":null}]
 ```
 
-So **three of the six approved scenarios' missing facts reach an unrendered branch table** (one in
-E, two in F), and **one reaches unrendered threshold guidance instead** (`tent_area_sqft` in E).
+So **three missing facts across the six approved scenarios reach an unrendered branch table**, one
+in scenario E and two in scenario F, and **one reaches unrendered threshold guidance instead** (`tent_area_sqft` in E).
 Having a missing fact and having a branch table are different conditions, and a fix for one does not
 cover the other. Rounds 1 to 3 collapsed them.
 
@@ -530,7 +564,9 @@ S4 records that consumption route, not field type, is what decides whether an un
 
 Establishes:
 
-- rendering the branch table is an acceptance criterion of an approved spec, unimplemented;
+- rendering the branch table is required by TWO approved artifacts and implemented by neither: an
+  acceptance criterion and Outputs rule of `specs/F-102-feasibility-verdict.md`, and the Scenario F
+  expected verdict of `docs/test-scenario-answer-key.md`, the green-gate acceptance suite;
 - the organizer sees a de-underscored field name and nothing else of the table;
 - the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
   than a plumbing one for the two Scenario F unknowns the engine surfaces, and blocked on a rules or
@@ -876,8 +912,56 @@ propagates it and no deadline reads it, and the plan still changes: an advisory 
 not otherwise get is added, and `trace` records the rule as `true`. It is invisible in
 `unknownFields` and in `missingFacts` while altering findings and trace. Stated separately:
 
-> **SILENCE.** The requirement is lost silently when the unknown does not surface AND no rule's
-> trigger evaluation RETURNS a non-false result carrying the field in `triggeredBy`.
+> **SILENCE, stated per lost dependent rather than per gate.** A question the gate scopes out is
+> lost silently when the gate's unknown does not surface, no rule's trigger evaluation RETURNS a
+> non-false result carrying the gate in `triggeredBy`, AND no firing rule's deadline RETURNS a
+> `timelineUnresolvedReason` naming that dependent.
+
+The third clause is new in round 9 and it is the reason the predicates alone were never enough.
+`computeDeadline` has a branch for a level or multi-block field that is OUT OF SCOPE
+(`deadlines.ts:140-143`) that is separate from the unanswered branch at `:147`: it returns a
+`timelineUnresolvedReason` naming the DEPENDENT rather than an unknown for the GATE. Nothing about
+the gate changes, so all three of the earlier predicates keep holding, and the plan still reports
+the loss.
+
+**Proved by comparing plans, not by predicate.** The predicates are what kept being insufficient, so
+this is a finding-set diff. Same technique as S2, `rules`, `advisories` and `config` byte-identical,
+and only `intake_fields` changed: `generator_present` re-typed to a three-state enum as before, and
+`plaza_level`'s `asked_when` pointed at it, which makes the gated question a firing rule's deadline
+`level_field`. Base intake is approved scenario E, where `SAPO-PLAZA-001` fires.
+
+```
+A. gate = "yes", plaza_level answered "a"
+   verdict=CONDITIONAL findings=8
+   [DEP-GENERATOR-REG-001, DOB-TENT-001+DOB-TALL-STRUCTURE-001, DOHMH-ORGANIZER-NOTIFY-001,
+    DOHMH-VENDOR-PERMIT-001, FDNY-GENERATOR-001, NYPD-SOUND-001, SAPO-INSURANCE-001, SAPO-PLAZA-001]
+   unresolvedTimelines=[]
+
+B. gate = "unknown", plaza_level and the generator amounts all scoped out
+   verdict=CONDITIONAL findings=6
+   [DOB-TENT-001+DOB-TALL-STRUCTURE-001, DOHMH-ORGANIZER-NOTIFY-001, DOHMH-VENDOR-PERMIT-001,
+    NYPD-SOUND-001, SAPO-INSURANCE-001, SAPO-PLAZA-001]
+   unresolvedTimelines=[{"ruleIds":["SAPO-PLAZA-001"],
+     "reason":"the plan was never asked plaza_level, which this deadline keys on"}]
+
+FINDING SET DIFF (A -> B)
+   dropped: ["FDNY-GENERATOR-001","DEP-GENERATOR-REG-001"]
+   added:   []
+   SAPO-PLAZA-001 present in B: true
+   gate named anywhere in either plan: false
+```
+
+One gate, one answer, and the two kinds of dependent behave differently. The generator amounts are
+dropped silently, which is the S3 result. `plaza_level` is not: `SAPO-PLAZA-001` survives as a
+finding and `verdictDetail` names the missing question in words, underscore included. So the
+earlier condition, applied to the gate, would have predicted a silent loss for both, and the plan
+comparison shows it is wrong for one of them.
+
+**Fourth statement of this condition, and the same failure mode a fourth time.** Round 4 qualified
+on what a trigger MENTIONS, rounds 5 and 6 on live trigger propagation, round 7 on what a trigger
+ACCEPTS, round 8 on returned trigger output. Every one was stated on a PROXY for the plan, and each
+time a plan comparison contradicted it. The condition above is the current best statement and it is
+not offered as final; what should be trusted is the finding-set diff beside it.
 
 **Third statement of this condition, and the same failure mode each time.** Rounds 4 to 6 qualified
 on what a trigger MENTIONS; round 7 qualified on what a trigger ACCEPTS. Both are properties of the
@@ -940,10 +1024,10 @@ route, no guard is involved at all: the five rows above are published v2.8 rules
 written.
 
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question, where the SILENCE condition above holds (no trigger evaluation returns the
-gate in `unknownFields`, no firing rule's deadline returns an unknown for it, and no trigger
-evaluation returns a non-false result carrying it in `triggeredBy`),
-reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
+that gates a question, where the SILENCE condition above holds for that question (the gate's unknown
+does not surface, no trigger evaluation returns a non-false result carrying the gate in
+`triggeredBy`, and no firing rule's deadline returns a `timelineUnresolvedReason` naming the
+question), reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
 touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
 acting on before such a rule exists is the product owner's call, and this document does not make it.
 
@@ -953,7 +1037,8 @@ acting on before such a rule exists is the product owner's call, and this docume
   loader accepts it, that v2.8 already carries scope-only gates, and that the engine goes quiet on
   the shape.
 - The re-typing of `generator_present` from boolean to a three-state enum is synthetic. What it
-  shows is that IF the gate can carry `"unknown"`, the requirement below it is lost silently; it does
+  shows is that IF the gate can carry `"unknown"`, the requirements below it that nothing else
+  reports are lost silently, which S4's finding-set diff shows is not every requirement below it; it does
   not show that anyone will re-type it. As published, `generator_present` is a boolean and
   `validateIntake` rejects `"unknown"` for it, and `events.generator_present` is `boolean, notNull`,
   so the contract and the schema each close this route on v2.8 today.
