@@ -31,6 +31,7 @@ import {
   type AlertSenders,
 } from "./alert-delivery";
 import { instantAtLocalHour, todayInJurisdiction } from "./calendar";
+import { canonicalOptionalPhone } from "./contact";
 import { calendarDateFrom, renderingKey, type FindingRendering } from "./plan";
 
 /** Mirrors the `alerts.alert_type` CHECK in migration 001. */
@@ -1374,7 +1375,23 @@ async function resolveContacts(
          SET email = CASE WHEN $4 THEN EXCLUDED.email ELSE event_alert_contacts.email END,
              phone = CASE WHEN $5 THEN EXCLUDED.phone ELSE event_alert_contacts.phone END,
              updated_at = current_timestamp`,
-      [eventId, canonicalEmail(supplied.email ?? null), supplied.phone ?? null, setsEmail, setsPhone],
+      // BOTH COLUMNS, NOT ONE. The email went through a canonical form and the phone did not, on
+      // this line, so `+1 (212) 555-0100` and `+12125550100` hashed as different destinations: a
+      // retyped number minted a replacement set of alerts and, under AC 7's destination rule, left
+      // every already-sent row intact while re-sending each already-due SMS. Whatever reasoning
+      // canonicalized the email applies unchanged to the number beside it.
+      //
+      // `normalizeOptionalPhone` already existed and `rsvps.ts` already used it, so this reuses it
+      // rather than inventing a second answer. Moved into `contact.ts` instead of imported across,
+      // because alerts reaching into the RSVP module for a helper would couple two features that
+      // share nothing else.
+      [
+        eventId,
+        canonicalEmail(supplied.email ?? null),
+        canonicalOptionalPhone(supplied.phone ?? null),
+        setsEmail,
+        setsPhone,
+      ],
     );
   }
   const { rows } = await client.query<{ email: string | null; phone: string | null }>(
@@ -1458,7 +1475,26 @@ export function createAlertScheduler(settings: AlertSchedulerSettings): AlertSch
              -- module keeps in the payload and nowhere else. The right-hand side wins on every
              -- key it carries, so the copy is still recomputed; keys only the delivery path
              -- writes survive because nothing on the right names them.
-             SET payload = alerts.payload || EXCLUDED.payload, send_at = EXCLUDED.send_at,
+             -- send_at KEYS ON THE SAME FACT THE BACKOFF DOES, which is the rule one field over.
+             -- Rewriting it on every review made an old or late alert look newly scheduled, and
+             -- AC 2 measures delivery latency FROM this column, so a failed row could keep a
+             -- fifteen-minute next_attempt_at that now sat far outside its apparent window. An
+             -- unchanged intended slot keeps its stored send_at for exactly the reason it keeps its
+             -- backoff: nothing about the schedule changed, so neither derived value should move.
+             --
+             -- I CHECKED THE REST OF THIS CLAUSE for the same shape, because rounds 16, 24 and 28
+             -- were each one check present at one layer and absent at the next. payload must always
+             -- update, since it carries the recomputed copy and the intended_at this comparison
+             -- reads; status keys on the prior status rather than on the schedule; failure_count
+             -- and next_attempt_at already key on it; and recipient is not set here at all, because
+             -- round 11 made a changed destination a different row. send_at was the only field left
+             -- that moved when nothing had.
+             SET payload = alerts.payload || EXCLUDED.payload,
+                 send_at = CASE
+                   WHEN alerts.payload->>'intended_at'
+                        IS DISTINCT FROM EXCLUDED.payload->>'intended_at' THEN EXCLUDED.send_at
+                   ELSE alerts.send_at
+                 END,
                  status = CASE WHEN alerts.status = 'failed' THEN 'failed' ELSE 'pending' END,
                  -- A REVIVED ALERT STARTS CLEAN, which is the third transition this clause has had
                  -- to answer and the one that was never given a rule. Round 9 decided an unchanged

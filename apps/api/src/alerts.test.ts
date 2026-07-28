@@ -1806,6 +1806,32 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       expect(after.length).toBeGreaterThan(before.length);
     });
 
+    it("treats a reformatted phone number as the same destination", async () => {
+      // The asymmetry was on one line: the email went through a canonical form and the number
+      // beside it did not, so two spellings of one number hashed as two destinations. Under AC 7's
+      // destination rule that minted a replacement set and left the sent rows intact, so every
+      // already-due SMS rendered again and would deliver again once live SMS is on.
+      const eventId = await createEvent(scenario("C"));
+      await materialize(eventId, { contactPhone: "+12125550100" });
+      const before = await alertsOf(eventId);
+      expect(before.some((row) => row.channel === "sms")).toBe(true);
+      await pool.query("UPDATE alerts SET status = 'sent', sent_at = clock_timestamp() WHERE event_id = $1", [
+        eventId,
+      ]);
+
+      // The same number, retyped the way a person writes one.
+      await materialize(eventId, { contactPhone: "+1 (212) 555-0100" });
+
+      const after = await alertsOf(eventId);
+      // No replacement set: same rows, still sent, nothing re-rendered.
+      expect(after).toHaveLength(before.length);
+      expect(after.every((row) => row.status === "sent")).toBe(true);
+      // Stored canonically, so every later comparison agrees with this one.
+      expect(after.filter((row) => row.channel === "sms").every((row) => row.recipient === "12125550100")).toBe(
+        true,
+      );
+    });
+
     it("keeps the evidence when a review changes nothing about the destination", async () => {
       // The mirror of the same rule, and the reason the reset is conditional rather than blanket.
       // This upsert runs on EVERY checklist review, so clearing unconditionally would let an
@@ -3886,6 +3912,8 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
       try {
         await schedulerWith()(client, eventId, planId, contacts);
         const [before] = await alertsOf(eventId);
+        // Still an already-past slot, which is what makes the clamp reachable at all: a future slot
+        // is never clamped, so this case cannot be reproduced with one.
         expect(before?.send_at.getTime()).toBeLessThanOrEqual(Date.now());
         await pool.query(
           `UPDATE alerts SET status = 'failed', failure_count = 3,
@@ -3900,8 +3928,19 @@ describe.skipIf(databaseUrl === "")("F-203 deadline alerts", () => {
         await schedulerWith()(client, eventId, planId, contacts);
 
         const after = (await alertsOf(eventId)).find((row) => row.id === before?.id);
-        // The recomputed instant really did move, which is what made the old trigger fire.
-        expect(after?.send_at.getTime()).not.toBe(before?.send_at.getTime());
+        // THE RULE, not the mechanism. An unchanged intended slot keeps its stored send_at for the
+        // same reason it keeps its backoff: nothing about the schedule changed, so neither derived
+        // value moves.
+        //
+        // This assertion used to read `not.toBe(before.send_at)`, and it is worth saying why so
+        // that a future round does not restore it. It was written to prove the recomputed instant
+        // really did move, which is what made the OLD trigger fire and therefore what made that
+        // round's test discriminate. It pinned the mechanism the fix was reaching through rather
+        // than the behaviour the fix was for, and once send_at stopped moving it was pinning the
+        // defect: AC 2 measures delivery latency from this column, so a rewritten send_at makes an
+        // old or late alert look newly scheduled and can leave a fifteen-minute next_attempt_at
+        // sitting far outside its apparent window.
+        expect(after?.send_at.getTime()).toBe(before?.send_at.getTime());
         expect(after?.next_attempt_at).not.toBeNull();
         expect(after?.failure_count).toBe(3);
       } finally {
