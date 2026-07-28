@@ -159,7 +159,7 @@ So the feature emits an ordinary finding, and the answer decides whether it is e
 | `venue_has_assembly_approval` | Finding | `disposition` | Note text must |
 | --- | --- | --- | --- |
 | not in scope (gate false) | none FROM THIS FEATURE | n/a | the plan still carries `ADV-VENUE-OCCUPANCY-001`; see Edge Cases |
-| **`yes`** | emitted | **`may_be_required`** | direct the operator to confirm with DOB; assert no reduction |
+| **`yes`** | emitted | **`may_be_required`** | state that this answer does not settle the filing; assert no effect; **carry no confirmation instruction**, see below |
 | **`no`** | emitted | **`may_be_required`** | state that the operator's own filing is unresolved |
 | **`unknown`** (explicit) | emitted, **both rules** | **`may_be_required`** | both texts; measured, see below |
 | **in scope, NO answer** | emitted, **both rules**, on the rescope path | **`may_be_required`** | a submission cannot be in this state; a rescope variant can and Scenario A's is |
@@ -225,7 +225,7 @@ rule fires on more answers than one?** Applied to all of them, not only the ids:
 | --- | --- | --- |
 | both rule ids | 001 on `yes`, explicit `unknown`, absent; 002 on `no`, explicit `unknown`, absent | FIXED above |
 | `output.requirement_name`, the `<h3>` and the disclosure label derived from it | both rules publish the SAME heading | PASSES, and the constraint is now explicit: it names the question and no answer, e.g. the venue's place-of-assembly approval and this event's own filing |
-| 001's `note_text` | `yes`, explicit `unknown`, absent | CONSTRAINED: it may not say the venue reports an approval, because on two of its three answers that is unknown. It says the answer does not settle this event's filing and to confirm with DOB, which is true on all three |
+| 001's `note_text` | `yes`, explicit `unknown`, absent | CONSTRAINED: it may not say the venue reports an approval, because on two of its three answers that is unknown, and it carries no confirmation instruction. It says the answer does not settle this event's filing, which is true on all three |
 | 002's `note_text` | `no`, explicit `unknown`, absent | CONSTRAINED the same way: it may not say the venue has no approval. It says this event's own filing is unresolved |
 | `output.agency`, `permit_name`, `deadline`, `fee`, `portal` | n/a | PASS by absence, pinned below |
 | the `aria-labelledby` DOM id | every render | PASSES as an attribute, but it points at the `<h3>`, so assistive technology reads whatever `name` resolves to, which is why the heading carries the same constraint |
@@ -246,13 +246,23 @@ is the property this section bought.
    That is an id and a disposition asserting a settled state on an unsettled answer. It is a published
    rule, so it is out of this footprint and out of this spec's scope; recorded here because the next
    round of this review will otherwise find it and think it is new. An issue is the right home.
-2. **A `RESEARCH_REQUIRED` rule renders "confirm with agency" twice.** `findings.ts:62` appends
-   `CONFIRM_WITH_AGENCY` to `notes` whenever the status is `RESEARCH_REQUIRED` or the deadline is
-   `not_calculable`, and `plan-line.tsx:194` renders it again as the line-level research paragraph.
-   No published rule carries `RESEARCH_REQUIRED`, so this has never been exercised, and both surviving
-   options in the verification-status conflict below land that status. It is a rendering defect in a
-   lane this feature does not touch, so it is reported rather than fixed, and it belongs to whoever
-   resolves that conflict.
+2. **A `RESEARCH_REQUIRED` rule renders "confirm with agency" twice, and this feature would have made
+   it THREE.** `findings.ts:62` appends `CONFIRM_WITH_AGENCY` to `notes` whenever the status is
+   `RESEARCH_REQUIRED` or the deadline is `not_calculable`, and `plan-line.tsx:194` renders the same
+   constant again as the line-level research paragraph. Both surviving options in the verification-status
+   conflict land `RESEARCH_REQUIRED`, so both renders fire, and the `note_text` pinned in earlier rounds
+   said to confirm with DOB as well: three versions of one instruction on this feature's primary `yes`
+   output, on the line an organizer reads first.
+
+   **The third one is inside this footprint, so it is removed rather than reported.** Both note texts now
+   carry no confirmation instruction: they say the answer does not settle the filing, and the plan already
+   tells the organizer to confirm, twice. That loses nothing, because `CONFIRM_WITH_AGENCY` is the
+   published rendering of the very status these rules carry.
+
+   **The underlying double-render REMAINS and is not fixed here.** It is `packages/engine/src/findings.ts`
+   and `apps/web/app/plan/plan-line.tsx`, a lane this feature does not otherwise touch beyond one comment,
+   and no published rule carries `RESEARCH_REQUIRED` today, so it has never been exercised. It belongs to
+   whoever resolves the status conflict in Approval Blocker 5, and it is reported rather than absorbed.
 
 **Two rules, not one**, because a rule carries at most one `note_text` and the mapping above needs
 two texts. Their ids are pinned here because the answer key and the test files pin rule ids
@@ -266,7 +276,7 @@ both artifacts move in the same commit.
 | `trigger.all` | the published gate verbatim (`location_type eq private_venue`, `headcount gte 75`) plus `venue_has_assembly_approval eq yes` | the same gate plus `venue_has_assembly_approval in ["no", "unknown"]` | PINNED |
 | `output.disposition` | `MAY_BE_REQUIRED` | `MAY_BE_REQUIRED` | PINNED, and it must be written explicitly; see the default trap |
 | `output.requirement_name` | a short non-regulatory heading naming the question | the same heading | PINNED as PRESENT; see the double-render below |
-| `output.note_text` | confirms with DOB and asserts no reduction (F-1NN-AC-01) | states the operator's own filing is unresolved (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
+| `output.note_text` | states that the answer does not settle the filing, asserts no effect, and carries NO confirmation instruction (F-1NN-AC-01) | states the filing is unresolved, same prohibition (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
 | `output.permit_name`, `agency`, `deadline`, `fee` | ABSENT | ABSENT | PINNED as absent |
 | `output.portal` | ABSENT | ABSENT | PINNED as absent; it renders "apply at" and a note is not an application |
 | `output.notes` | ABSENT | ABSENT | PINNED as absent; every entry renders as regulatory prose needing its own source |
@@ -610,7 +620,9 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 
 1. **F-1NN-AC-01 · A `yes` asserts no effect of any kind.** For `venue_has_assembly_approval: yes` the
    finding is emitted with `disposition: may_be_required` and note text directing the operator to
-   confirm with DOB. No output string may assert that the operator is covered, exempt, has a
+   stating that the answer does not settle the filing, and carrying no confirmation instruction of its
+   own, per the triple-confirmation finding below. No output string may assert that the operator is
+   covered, exempt, has a
    reduced obligation, or has no obligation. Reduces, removes and does nothing are three claims and
    the sources license none of them. **The strings this criterion governs are the ones this feature
    publishes**, which is a scope the criterion needed: `ADV-VENUE-OCCUPANCY-001` also renders at this
@@ -677,7 +689,7 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    the Scenario-fixtures row's version marker if the new fixture lands), the deletion of
    `rules/nyc-rules.v2.8.json`, the current-version references in the approved documents listed under
    System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, **the
-   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the six authority
+   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the seven authority
    comments in category 4a of the sweep**, **the rule and advisory
    counts in the five documents that state them**, and, if Scenario G lands, **the scenario counts in
    the eleven places that state them, two of which are other features' approved acceptance criteria,
@@ -784,7 +796,7 @@ Files this feature may touch, and who must be in the room:
 | **`packages/engine/src/intake/scenario-intake-fixtures.ts`** | **the new explicit-`no` scenario's intake** | verification owner + rules reviewer + engine owner |
 | the test files below | version, count and expectation pins | engine owner |
 | the documents below, **including `AGENTS.md` and `CONTRIBUTING.md`** | current-version references | product owner + each artifact's owner |
-| `apps/api/src/ruleset.ts` | the version literal in the offset diagnostic at `:324` | engine owner |
+| `apps/api/src/ruleset.ts` | the version literal in the offset diagnostic at `:324`, and the `EXPECTED_RULESET_VERSION` explanation at `:55-60` | engine owner |
 | `packages/engine/src/intake/registry.ts`, `packages/engine/src/proposals.ts` | the two engine authority comments, text only | engine owner |
 | `apps/web/app/verification-copy.ts`, `plan/plan-line.tsx`, `verification-copy.test.ts`, `verification-copy-prose.test.ts` | the four web authority comments, text only | web lane owner |
 
@@ -981,17 +993,34 @@ is covered as a unit case, none of these moves and that is most of the cost diff
 | `docs/DESIGN.md:57` | "all 6 scenarios pass end-to-end" | the same gate, end to end |
 | `docs/PRD.md:114` | the plan-generation metric, "6 scenarios + boundary fixtures" | the success metric |
 
-**Rule and advisory counts, which move whenever a rule is published, so they move under either route:**
+**Rule counts, advisory counts and DERIVED TOTALS, which move whenever a rule is published, so they
+move regardless of the fixture decision.** Round 8 swept scenario counts and stopped there; re-run for
+rules, advisories, fields and any total derived from them, four more turned up, and they are the
+dangerous ones because the footprint restricts those files to enumerated constants and comments, so an
+implementer can follow it exactly and leave a live contract stale:
 
-| File | What it states |
-| --- | --- |
-| `docs/ARCHITECTURE.md:312` | boot validation, "33 rules + 4 advisories present" |
-| `docs/PRD.md:143` | "`rules/nyc-rules.v2.8.json`: 33 rules + 4 advisories" |
-| `docs/ROADMAP.md:12` | the ratification line, "33 rules + 4 advisories" |
-| `docs/DESIGN.md:7` | "(33 rules + 4 advisories, evidence-linked)" |
-| `specs/F-201-permit-plan-generator.md:31` | Acceptance Criterion 6, boot validation, "33 rules + 4 advisories" |
+| File | What it states | New value |
+| --- | --- | --- |
+| `docs/ARCHITECTURE.md:312` | boot validation, "33 rules + 4 advisories present" | 35 + 4 |
+| `docs/PRD.md:143` | "`rules/nyc-rules.v2.8.json`: 33 rules + 4 advisories" | 35 + 4 |
+| **`docs/PRD.md:244`** | **a SECOND occurrence, in the Rules Engine bullet: "(33 rules + 4 advisories)"** | 35 + 4 |
+| `docs/ROADMAP.md:12` | the ratification line, "33 rules + 4 advisories" | 35 + 4 |
+| `docs/DESIGN.md:7` | "(33 rules + 4 advisories, evidence-linked)" | 35 + 4 |
+| `specs/F-201-permit-plan-generator.md:31` | Acceptance Criterion 6, boot validation, "33 rules + 4 advisories" | 35 + 4 |
+| **`apps/api/src/ruleset.ts:617`** | **"37 boot-time rows", the sizing statement behind the per-row insert decision** | 39 |
+| **`apps/api/src/ruleset.test.ts:973`** | **the test NAME, "syncs all 37 rules". Its assertions at 980, 1022 and 1038 were already pinned; its title was not** | 39 |
+| **`packages/engine/src/proposals.ts:34`** | **a DERIVED total: "24 of the 37 published rules omit `output.disposition`", which is the justification for the default-disposition table** | 24 of 39 |
 
-Two new rules make those 35 and 4. The advisory count does not move, which the audited conditional row
+Two new rules make 33 into 35 and the rules-plus-advisories total 37 into 39. **The derived total is the
+one worth reading twice:** the numerator stays 24, because both new rules publish `MAY_BE_REQUIRED`
+explicitly rather than omitting it, so only the denominator moves. A sweep that pattern-matched "37" and
+replaced it would have been right here by luck rather than by derivation.
+
+**Counts that do NOT move, checked rather than assumed:** the advisory count stays 4, because both new
+rules are `kind: note` and live in `rules`; `apps/api/src/ruleset.test.ts:77`'s `intakeFields` at 33 stays,
+settled by the route 1 decision; and `apps/api/src/ruleset.test.ts:370`'s `/expected 33 rules/`
+expectation and `packages/engine/src/engine.test.ts:974`'s length of 37 were already in the pinned-tests
+tables. The advisory count does not move, which the audited conditional row
 above already settled, and `apps/api/src/ruleset.test.ts`'s `/expected 33 rules/` expectation is
 already in the pinned tests.
 
@@ -1020,8 +1049,10 @@ after the deletion it names a missing, superseded file. The test that separates 
 present the named file as the CURRENT authority for something the code does, or is it scoped to the
 version it names as a past fact?** The first becomes false on publication; the second stays true.
 
-**Category 4a, AUTHORITY AND LIVE CITATIONS. Six occurrences in six files, and they move with the
-version retarget:**
+**Category 4a, AUTHORITY AND LIVE CITATIONS. Seven occurrences in seven files, and they move with the
+version retarget.** The seventh was found by re-running the test over comments naming a CONSTANT that
+Acceptance Criterion 8 moves rather than only those naming the file path, which is the same widening the
+count sweep needed:
 
 | File | What it states | Why it moves |
 | --- | --- | --- |
@@ -1031,11 +1062,20 @@ version retarget:**
 | `apps/web/app/plan/plan-line.tsx:201` | the rendering rule, cited to "(published legend, `rules/nyc-rules.v2.8.json`)" | the live authority for a rendering decision |
 | `apps/web/app/verification-copy-prose.test.ts:95` | "the formulation the published legend uses, in" that file | the citation behind the pattern the guard enforces |
 | `apps/web/app/verification-copy.test.ts:12` | that file "calls it" the quoted legend text | the citation behind a live assertion about the current legend |
+| **`apps/api/src/ruleset.ts:55-60`** | **`EXPECTED_RULESET_VERSION` "deliberately still names nyc.v2.8", and illustrates the guard with "a bump that publishes v2.9 without updating that constant"** | **Acceptance Criterion 8 moves that constant, so the sentence is false the moment the commit lands, and its illustration becomes the current version** |
 
-**The footprint consequence, named rather than absorbed:** four of the six are in `apps/web`, a lane
-this feature otherwise does not touch, and two are in `packages/engine`. They are comment-only edits with
-no behaviour attached, which makes them cheap, not free: the web lane's owner and the engine owner
-approve their own files, and the footprint gains those six paths for comment text only.
+**The footprint consequence, named rather than absorbed:** four of the seven are in `apps/web`, a lane
+this feature otherwise does not touch, two are in `packages/engine`, and the seventh is in
+`apps/api/src/ruleset.ts`, which the footprint already permits for the constants themselves. They are
+comment-only edits with no behaviour attached, which makes them cheap, not free: the web lane's owner and
+the engine owner approve their own files, and the footprint gains those paths for comment text only.
+
+**The re-run also found what does NOT move, and it is worth one line so nobody re-derives it.**
+`apps/api/src/ruleset.ts:72` and `apps/web/app/rules-file.ts:128` name `EXPECTED_RULESET_VERSION` without
+naming its value, so they stay true. `scripts/check-baseline-drift.mjs` uses `nyc.v2.8` and `nyc.v2.9` as
+HYPOTHETICALS in comments about its own matching (`:1350`, `:1353`, `:1367`), which stay correct as
+illustrations; the only cosmetic cost is that its "publishing v2.9" example will name the version that
+actually shipped.
 
 **Category 4b, PASSING MENTIONS AND HISTORICAL RECORDS. Thirty-two occurrences across eight files, and
 they do not move:** `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
@@ -1177,10 +1217,12 @@ Rollout is one change or none. In it:
 8. **The version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message** moved, or derived
    from `EXPECTED_RULESET_VERSION` in the same file. It is executable text rather than an assertion,
    which is the category round 3's sweep did not model.
-9. **The six authority comments** in the sweep's category 4a retargeted:
+9. **The seven authority comments** in the sweep's category 4a retargeted:
    `packages/engine/src/intake/registry.ts`, `packages/engine/src/proposals.ts`,
    `apps/web/app/verification-copy.ts`, `apps/web/app/plan/plan-line.tsx`,
-   `apps/web/app/verification-copy-prose.test.ts` and `apps/web/app/verification-copy.test.ts`. Comment
+   `apps/web/app/verification-copy-prose.test.ts`, `apps/web/app/verification-copy.test.ts` and
+   `apps/api/src/ruleset.ts:55-60`, whose explanation that the constant "deliberately still names
+   nyc.v2.8" is falsified by item 2 of this same rollout. Comment
    text only, no behaviour, and no guard reads any of them, so like items 7 and 8 this ships green if
    it is forgotten. `registry.ts` is the one that matters most: it is the engine's own statement of
    which artifact owns the field list, the enums and the `asked_when` conditions.
@@ -1201,13 +1243,29 @@ visible rather than silent.
 
 ## Approval Blockers
 
-**Blocker 13 is resolved by the product owner and struck through below; every other entry is open**,
-and this spec cannot be approved until each is resolved by its owner. None of the open ones is resolved
-here. **Blocker 5 is now the one that decides whether the feature can be published at all**, because
-it is the conflict between the only honest verification status and the loader's source requirement, and
-route 1 does not touch it.
+**Only the entries tagged PREREQUISITE gate approval, and each names an owner who can act on it.** The
+earlier rule, that every entry must resolve before this spec can be approved, made approval depend on
+two things it should not: corrections this document has already made, which have no remaining action,
+and work this feature explicitly excludes, which has no applicable owner here. Both are still recorded,
+because the rest of the document cites them, and both are tagged for what they are:
 
-1. **F-ID ASSIGNMENT, and the range is saturated.** Stage 1 (IDEATE) is stated in `docs/DESIGN.md`
+- **PREREQUISITE.** An owner must decide something before this spec can be approved. Entries 1, 3, 5, 7,
+  17 and 18.
+- **DEPENDENCY, not a blocker.** True, relevant, and outside this feature or already tracked elsewhere.
+  Entries 2, 4 and 6. Nothing in them is owed by anyone for this spec's approval.
+- **RESOLVED, a record.** Corrected in the body above; kept so the reasoning that cites it still reads.
+  Entries 8 to 16, with their content moved to the review-history section below.
+
+**Numbered positions are stable and are not reused**, because the body and PR #171's review threads cite
+them by number. An entry that leaves this list leaves a one-line pointer at its position, which is what
+was done for 13.
+
+**Blocker 5 is the one that decides whether the feature can be published at all**, because it is the
+conflict between the only honest verification status and the loader's source requirement, and route 1
+does not touch it. **Blocker 18 is new in round 11 and is the one that decides WHEN**: three other pieces
+of work are already promised the next ruleset version, and a fourth wants a publication too.
+
+1. **PREREQUISITE. F-ID ASSIGNMENT, and the range is saturated.** Stage 1 (IDEATE) is stated in `docs/DESIGN.md`
    as F-101 to F-109, and all nine are assigned. `docs/ROADMAP.md` is the authoritative registry per
    the Feature ID Policy, and that policy also says "Closely related capabilities are absorbed into
    existing IDs rather than split". **The proposal, with reasoning and not a decision:** absorb this
@@ -1217,8 +1275,11 @@ route 1 does not touch it.
    F-109 and needs the policy amended rather than stretched. This is the same class of problem as
    SPEC-CONFLICT #127, which is open on exactly this question of colliding and unassigned feature
    ids. **The product owner assigns; this spec does not.**
-2. **Issue #89** is open on this field, which is where the collected-but-unread state is tracked.
-3. **The named-confirmation rule from issue #107 currently excludes this field.** The decision
+2. **DEPENDENCY. Issue #89** is open on this field, which is where the collected-but-unread state is
+   tracked. Recorded so the two are read together; nobody owes this spec anything for it, and publishing
+   the rules is what would close it.
+3. **PREREQUISITE, rules owner. The named-confirmation rule from issue #107 currently excludes this
+   field.** The decision
    recorded there on 2026-07-28 is:
 
    > "A named confirmation may be published only for a field that cannot evaluate UNKNOWN."
@@ -1227,9 +1288,12 @@ route 1 does not touch it.
    written. This spec's finding is close in kind to a named confirmation. **The tension is
    recorded, not resolved:** whether it is a named confirmation for that rule's purposes, and
    therefore currently forbidden for exactly this field, is a rules-owner call.
-4. **DOB-ASSEMBLY-001's coverage confirmation is unimplemented**, and its note records that it
-   blocks F-102 Acceptance Criterion 6.
-5. **Verification research** on whether an existing venue approval removes the temporary filing, per
+4. **DEPENDENCY. DOB-ASSEMBLY-001's coverage confirmation is unimplemented**, and its note records that
+   it blocks F-102 Acceptance Criterion 6. That criterion is another feature's and this footprint
+   excludes it, per the UI section: this feature produces the data it would render and does not render
+   it. No action is owed here.
+5. **PREREQUISITE, verification owner. Verification research** on whether an existing venue approval
+   removes the temporary filing, per
    Fixtures and Verification above. Not established; the rule asserts no exemption in either
    direction.
    **And the artifact format has no slot for that state**, which is a second, separable blocker on the
@@ -1241,14 +1305,72 @@ route 1 does not touch it.
    refusal of each other legend value are under Outputs. Nothing in the current ruleset publishes
    `RESEARCH_REQUIRED`, so this feature would be its first use and the conflict is unexercised. Same
    shape as PR #170's finding that the schema cannot express a non-regulatory rule.
-6. **F-207 · Multi-Jurisdiction** is the home for a genuinely travelling operator, and its own
-   approval blocker is SPEC-CONFLICT #130, which is unresolved.
-7. **The manifest glob blocks the filename.** `docs/BASELINE.md` marks `specs/F-*.md` APPROVED, so
+6. **DEPENDENCY. F-207 · Multi-Jurisdiction** is the home for an operator that travels between
+   jurisdictions, and its own approval blocker is SPEC-CONFLICT #130, which is unresolved. Out of scope
+   per non-goal 4, so nothing here gates this spec.
+7. **PREREQUISITE, product owner and documentation owner. The manifest glob blocks the filename.** `docs/BASELINE.md` marks `specs/F-*.md` APPROVED, so
    this file cannot carry an `F-` prefix while it is PROPOSED without failing `check:baseline`, and
    a PROPOSED spec is not eligible for a manifest row. Either the glob narrows to the approved
    twelve, or PROPOSED specs live outside `specs/F-*`, or the id and the approval land together.
    Naming this file without the prefix is the only one of those three a worker can do alone, so it
    is what this branch does. Product owner and documentation owner to decide the general rule.
+8. ~~Round 2's two unbacked claims.~~ **RESOLVED, record.** Review history below.
+9. ~~Round 3's defect created by round 2's narrowing.~~ **RESOLVED, record.** Review history below.
+10. ~~Round 4's shape change.~~ **RESOLVED, record.** Review history below.
+11. ~~Round 5's publication detail.~~ **RESOLVED, record.** Review history below.
+12. ~~Round 6's four machinery findings.~~ **RESOLVED, record.** Review history below.
+13. ~~**THE PREMISE IS NOT REPRESENTABLE IN INTAKE.**~~ **RESOLVED 2026-07-28 by the product owner:
+    route 1, venue-neutral output**, recorded on PR #171
+    (`https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`) and stated in full under
+    Purpose. It resolved this blocker and nothing else: blocker 5 stands, the F-id is still unassigned,
+    and the publication cost is unchanged.
+14. ~~Round 7's relationship framing and five sweep-unit defects.~~ **RESOLVED, record.** Review history
+    below.
+15. ~~Round 8's rule-id defect.~~ **RESOLVED, record.** Review history below.
+16. ~~Round 10's two measured-against-scope claims.~~ **RESOLVED, record.** Review history below.
+19. ~~Round 11's four applied findings.~~ **RESOLVED, record.** Review history below. The fifth,
+    the collision on the next ruleset version, is blocker 18 above and is open.
+
+17. **PREREQUISITE, documentation owner. Section structure diverges from the house shape,
+    deliberately.** No PROPOSED spec exists in
+   this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
+   structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
+   This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
+   a format no existing spec uses; existing specs number criteria plainly and cross-reference them
+   as "Acceptance Criterion N". Whether new specs adopt this structure, or this one is reshaped to
+   match the twelve, is a documentation-owner call.
+
+18. **PREREQUISITE, and it is a SCHEDULING DECISION ACROSS LANES rather than this spec's to take. THE
+    NEXT RULESET VERSION IS ALREADY PROMISED TO OTHER WORK.** This rollout publishes `v<next>`, which by
+    convention is nyc.v2.9, and includes none of the following:
+
+    | Claim on v2.9 | Where it is recorded | What it changes |
+    | --- | --- | --- |
+    | the engine-conventions move for `proposals.ts` §7 | `packages/engine/src/proposals.ts:16-18`: the move "lands in a v2.9 publication, because `rules/nyc-rules.v2.8.json` is published and immutable" | moves engine-side contracts into the ruleset's `engine_conventions` |
+    | `DOB-ASSEMBLY-001`'s source re-attribution | `docs/VERIFICATION-SOURCES.md:339`, the "v2.9 follow-up flag", and F-202's APPROVED status, which records that the planned publication "edits `deadline.qualification`" | corrects an attribution the repository already records as sitting on the wrong Table 28-112.8 row |
+    | this feature's two rules | the rollout above | consumes the version, and would retain that attribution |
+
+    **A fourth wants a publication too, and I have not seen it stated beside the other three.** PR #177's
+    advisory reconciliation says in as many words that "Both outcomes require a publication. These are
+    edits to an immutable artifact." So four pieces of work want the next version.
+
+    **Two shapes, and this document takes neither.** One publication carries all of it, in which case the
+    atomic set above merges with theirs and the approvals union across lanes. Or this feature takes a
+    later version, in which case its rollout renames `v<next>` and its lineage record gains whatever ships
+    first. **Blocked on the owners of the other three**: the engine owner for the `proposals.ts` move, the
+    verification owner for the re-attribution flag that F-202's approved status depends on, and PR #177's
+    owner for the reconciliation. Nothing here reschedules anyone else's work.
+
+    **Why it is correctness and not tidiness:** publishing this feature as v2.9 without the
+    re-attribution ships a NEW artifact still carrying a source attribution the repository has already
+    flagged as misleading, and F-202's approved status would then cite a publication that did not happen.
+
+## Review history, resolved and requiring no action
+
+Every entry below is a correction this document has already made, kept because the body cites them and
+because a spec corrected in traceable steps is easier to review than one that hides it. **None gates
+approval.**
+
 8. **Round 2 removed a field and a state, and both were unbacked claims by this document.** The
    draft placed `food_affinity_private_exception_claimed` under host/guest semantics when its gate
    carries no venue term, and defined a NARROWED state asserting a reduction that DOB-ASSEMBLY-001's
@@ -1346,10 +1468,14 @@ route 1 does not touch it.
     mentioning a version in passing, six occurrences are the former and move with the retarget, and
     thirty-two are the latter and stay. `registry.ts` was filed as history while actively stating that
     the deleted file owns the field list, the enums and the `asked_when` conditions.
-17. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
-   this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
-   structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
-   This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
-   a format no existing spec uses; existing specs number criteria plainly and cross-reference them
-   as "Acceptance Criterion N". Whether new specs adopt this structure, or this one is reshaped to
-   match the twelve, is a documentation-owner call.
+
+**Round 11.** **Applied four findings and opened one blocker.** The blocker is the collision on the next
+    ruleset version, which is entry 18 and is not this spec's to resolve. The four: the count sweep was
+    re-run for rules, advisories, fields and derived totals rather than scenarios alone, which found four
+    more live contracts including `proposals.ts`'s "24 of the 37", where only the denominator moves; the
+    category 4a test was re-run over comments naming a CONSTANT that Acceptance Criterion 8 moves rather
+    than only the file path, which found a seventh; the blocker list was gating approval on this
+    document's own corrections and on work it excludes, so entries are tagged PREREQUISITE, DEPENDENCY or
+    RESOLVED and the numbering is frozen because the body and the review threads cite it; and the primary
+    `yes` output would have shipped three copies of one confirmation instruction, of which the one inside
+    this footprint is removed and the underlying double-render is reported and left.
