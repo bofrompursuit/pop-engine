@@ -15,32 +15,46 @@ persistence measurement below; round 7's surfacing-versus-silence separation in 
 answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` correction in R5, and
 the live restatement of both conditions in S4; round 9's level-field finding-set diff in S4 and the
 answer-key confirmation in R1; round 10's provenance diff in S4, the authority order in R1, and the
-per-measurement method table below.
+per-measurement method table below; round 11's row-by-row walk of that table.
 
-**Which guards each measurement went through, per measurement rather than per section.** A global
-claim has been wrong four times, and round 9's per-section table was wrong a fifth time because one
-section contains measurements of two different kinds. This table is keyed to measurements, and every
-row was checked against the measurement it names rather than against a representative one:
+**What layer each result requires, and what the harness was where this document records it.** Five
+statements of this have now been wrong, each in a different way, and the reason the last one failed
+is worth stating before the table: it promised exact guard PROVENANCE for every measurement, and for
+rounds 1 to 4 this document does not record the harness that produced each number. Provenance at
+that granularity is not recoverable for those rounds without re-running them.
 
-| Measurement | Method, exactly |
+So the table below promises something weaker and exactly checkable instead: **the lowest layer each
+stated result requires**, which can be verified from the result itself, plus the harness in the
+cases where the document does record it (round 2's method header, section 4's own sentence, and
+every measurement from round 5 on, which were run for these rounds).
+
+Every row was walked against the text it covers before this was written. **Nine rows checked, four
+moved**: section 1's scoping columns and section 3's scope claim need a scope resolver rather than a
+parse; section 4 is fixture reading rather than validation and evaluation; R3 contains three kinds
+of measurement rather than one; and R1 contains a rendered Scenario F run, not only artifact
+reading, which is what round 10's version got wrong.
+
+| Result | Lowest layer it requires |
 | --- | --- |
-| Section 1's gate/dependent table; section 3's blast radius | read from the PARSED ruleset (`parseEngineRuleset`, `parseIntakeContract`). No submission is evaluated. |
+| Section 1's gate, dependent and clause columns; section 3's rule counts | the PARSED ruleset (`parseEngineRuleset`, `parseIntakeContract`). No submission. |
+| Section 1's `"unknown"` holds and dependents-scoped-out columns; section 3's "leaves scope" claim | scope resolution over an intake (`createScopeResolver`, `termHolds`). No `evaluate`. |
 | Section 1's `"unknown"` acceptance results; **R5's two recounts** (the 8 non-nullable enumerable fields, and `headcount` and `food_vendor_count`) | `parseIntakeContract` -> `validateIntake` ONLY. Most of these probes are REJECTED by the validator, which IS the result; they never reach `evaluate`. |
-| Sections 2 and 4; **R5's per-scenario missing-fact measurements**; S4's plan-level results and diffs | `parseIntakeContract` -> `validateIntake` -> `evaluate` |
-| R2 | the component path: `PlanView` rendered with `@testing-library/react` and a stubbed `fetch` in the page's three-call shape, over a plan body from `validateIntake` -> `evaluate`. `apps/api/src/plan.ts` is NOT in the loop; the stub stands in for it. |
+| Section 4's per-scenario answer table | reading `SCENARIO_INTAKE_FIXTURES` through `fixtureSubmission`, as section 4 states. No validator, no engine. |
+| Section 2; **R5's per-scenario missing-fact measurements** and its `plaza_level` and `DOB-TENT-001` results; R3's AC 6 split; S4's plan-level results and diffs | `parseIntakeContract` -> `validateIntake` -> `evaluate`. R5's `DOB-TENT-001` result pairs an evaluated finding with a read of `plan-line.tsx`. |
+| **R1's Scenario F block** (verdict, missing-fact and branch counts, and the branch text absent from the screen); R2; R3's "On screen" column | the component path: `PlanView` rendered with `@testing-library/react` and a stubbed `fetch` in the page's three-call shape, over a plan body from `validateIntake` -> `evaluate`, per round 2's method header. `apps/api/src/plan.ts` is NOT in the loop; the stub stands in for it. |
 | R3's runtime member measurement | `evaluate`, then a JSON round trip, then the web's own parser (`readChecked`, `arrayOf`, `shapedLike`) called directly. No component is rendered. |
 | S2, S3 | `parseEngineRuleset` -> `parseIntakeContract` -> `validateIntake` -> `evaluate` |
 | S4's per-rule tables | `evaluateTrigger` and `evaluateCondition` called directly, because per-rule `unknownFields` and `triggeredBy` are not observable from the plan |
 | S2's persistence result | a direct `INSERT` against the migrated `events` table |
-| R1, R4, sections 5, 6 and 7 | no submission measured. R1 reads two approved artifacts, R4 is a repo-wide search for a renderer, and section 5's layer table is read from the code. |
+| **R1's artifact reading** (F-102, the answer key, the authority hierarchy, governance section 2); R4; sections 5, 6 and 7 | no submission. R4 is a repo-wide search for a renderer, and section 5's layer table is read from the code. |
 
 Three consequences that were previously implied or wrong, stated instead:
 
 - **`apps/api/src/plan.ts` is not exercised at runtime by anything here.** Rounds 4 to 9 listed it in
   the chain; R2 stubs `fetch` and section 5 reads it. Nothing is stored and reloaded, so nothing
   exercises persistence either.
-- **R5 contains measurements of two kinds** and round 9's table lumped them: its per-scenario
-  missing-fact results go through `evaluate`, its two recounts stop at the validator.
+- **R1, R3 and R5 each contain measurements of more than one kind**, which is what defeated the
+  single-row-per-section versions in rounds 9 and 10.
 - **A validator-only result is a real result** and not the same claim as an evaluated one. The
   recounts establish that those fields cannot reach `evaluate` at all.
 
