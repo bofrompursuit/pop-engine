@@ -1,6 +1,6 @@
-# Host/Guest Authorisation Coverage
+# Venue Assembly-Approval Coverage
 
-**Status:** PROPOSED (2026-07-28) · **Reviewer/approver:** unassigned; see Approval Blockers · **Owner:** unassigned · not in `docs/BASELINE.md` and must not be added there while this is PROPOSED.
+**Status:** PROPOSED (2026-07-28; Approval Blocker 13 resolved 2026-07-28 by the product owner as route 1, venue-neutral output, recorded on PR #171. Still PROPOSED: that decision settles what the feature says, not whether it can be published, and Approval Blocker 5 is the one that governs publication.) · **Reviewer/approver:** unassigned; see Approval Blockers · **Owner:** unassigned · not in `docs/BASELINE.md` and must not be added there while this is PROPOSED.
 **Phase:** post-MVP · **Lane:** Dev 1 (engine) + Dev 4 (verification), pending assignment · **Depends on:** F-101 (intake registry), F-201 (plan generation), F-102 (verdict and branch tables) · **Feeds:** nothing yet.
 **NO F-ID IS ASSIGNED, and the filename says so deliberately.** `F-1NN` below is a placeholder, not
 an assignment: the Stage 1 range is saturated and the id is an approval blocker. Every acceptance
@@ -14,74 +14,42 @@ rather than worked around silently.
 
 ## Purpose and User Outcome
 
-A travelling pop-up operator rents space inside another business's premises: a stall in a shop, a
-counter in a food hall, a weekend residency in a bar. The venue already holds authorisations for its
-own operation. The operator needs to know **what the venue's existing approval does and does not
-settle about the operator's own filing**, which on the published sources is: it does not settle it.
+An event held in a private venue at 75 or more people meets the published gate for a temporary
+place-of-assembly filing, and the intake asks whether the venue already holds a place-of-assembly
+approval. The organizer needs to know **what that answer settles about this event's own filing**,
+which on the published sources is: it does not settle it.
 
-As an operator running inside someone else's venue, I answer what the venue holds, and the plan
-declines to treat that answer as mine, without ever telling me I am covered because the venue is.
+As an organizer of an event in a private venue, I answer whether the venue holds an assembly approval,
+and the plan declines to treat that answer as settling my filing, without ever telling me I am covered
+because the venue is.
 
-**READ THE SECTION BELOW BEFORE ANYTHING ELSE.** The intake cannot express the relationship this
-paragraph describes, which is a question about whether the feature is publishable in this form rather
-than a question about its wording.
+## The output is venue-neutral, and that is a decision rather than a framing choice
 
-## THE PREMISE IS NOT REPRESENTABLE IN INTAKE
+**Approval Blocker 13 is RESOLVED: route 1, venue-neutral output.** Product owner, 2026-07-28,
+recorded on PR #171 (`https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`), which
+is where the decision and its grounds live rather than here.
 
-**No published intake field names a host, a renter, a tenant, an operator distinct from the venue, or
-any third party.** Checked mechanically against all 33 fields in `rules/nyc-rules.v2.8.json`, and
-against the three descriptive fields in `packages/engine/src/intake/validate.ts` (`name`,
-`location_name`, `capacity`), which a trigger cannot read in any case: `validateRuleset` fails a
-trigger naming a field the registry does not declare. The registry says only that a VENUE has an
-approval, in the field's own name: `venue_has_assembly_approval`.
+Earlier revisions of this document were written around a host and a guest: a travelling operator
+renting space inside another business's premises. **The intake cannot express that relationship.** None
+of the 33 published intake fields names a host, a renter, a tenant or an operator distinct from the
+venue, and a trigger cannot read a descriptive field, because `validateRuleset` rejects a trigger
+naming a field the registry does not declare. So the proposed triggers fire on `location_type`,
+`headcount` and the venue's answer alone, and an event run by the venue's own operator matches all
+three. The relationship vocabulary was this document's addition; the registry's vocabulary is
+venue-shaped throughout, in the field's own name.
 
-So the proposed triggers fire on `location_type`, `headcount` and that answer alone. **A private-venue
-event at 75 or more people run by the venue's own operator matches all three**, and under the framing
-above would be told about a third party's authorisation and about a guest's own filing. For that
-organizer there is no host and no guest, and the product would be describing a relationship that does
-not exist. The host and guest vocabulary is this document's addition; the registry's vocabulary is
-venue-shaped throughout, and `venue_license_covers_event_area` is named the same way.
+Route 2, adding a relationship discriminator, is **rejected rather than deferred**, and the
+load-bearing ground is on the PR comment: `DOB-ASSEMBLY-001` records the effect of an existing approval
+as not published in either direction, so knowing there is a host would not change what the product may
+say.
 
-**BLOCKED on the product owner. Two routes, not chosen here.**
-
-**Route 1: make the output venue-neutral.** Say what is true of any private-venue event at that
-headcount and refer to no host, no guest and no ownership of the approval: an existing venue approval
-does not settle whether this event needs its own filing. Costs nothing outside this document. It
-requires no new field, no migration, no lane coordination, and no change to the two rules' triggers,
-which already read only venue-shaped facts. What moves is the framing: this document's title and
-filename, its user story, and the note texts, which stop saying whose approval it is.
-
-**Route 1 leaves a feature worth having, and it is worth saying plainly.** The output does not shrink,
-because nothing the sources license was ever about the relationship. The answer still changes what the
-operator is told: a venue reporting an approval gets the confirm-with-DOB text, a venue reporting none
-or an unknown gets the unresolved-filing text, and neither asserts a reduction. What is lost is a
-framing the sources never supported and the intake cannot represent, and what is gained is that the
-output is true for the venue-operated case as well, which route 2 has to detect before it can be
-correct. It also fits Approval Blocker 1's proposal better: absorbing this into
-**F-108 · Location & Authority Resolution** is a cleaner fit for "what does this venue's approval
-settle" than for a relationship model.
-
-**Route 2: add an approved relationship discriminator.** A new intake field, and the price is not one
-approval:
-
-| What it touches | Why | Governance §6 row |
-| --- | --- | --- |
-| `rules/nyc-rules.v<next>.json` `intake_fields` | the registry owns the field list, its enum and its `asked_when` | Event Input, rules schema, OpenAPI, shared enum: **all affected lane owners and the architecture owner** |
-| a new `events` column | every intake field is a column with a CHECK constraint (`001_initial_schema.ts`), and `plan.ts` rebuilds the intake from the row, so a field with no column is never read | Database migration touching shared/core tables: **database owner plus all affected lane owners** |
-| `apps/web` intake form | F-101 collects it, and this feature otherwise touches no web file at all | the web lane, which this footprint excludes |
-| `apps/api/src/ruleset.test.ts:77` | pins `intakeFields` at 33 | engine owner |
-| `specs/F-101-event-intake.md`, `docs/ARCHITECTURE.md` | the registry-authority statements | product owner plus each artifact's owner |
-
-Plus everything this document already enumerates for a publication: the version and rule-count
-constants, the `UNCONSUMED_INTAKE_FIELDS` entry, the answer key and its fixtures, the manifest, and
-the current-version documents. Route 2 is a registry change wearing a feature's clothes, and it needs
-the regulatory question answered as well, since a discriminator only helps if the sources say the
-answer differs by relationship, and DOB-ASSEMBLY-001 records that they do not say so in either
-direction.
-
-**What is NOT a route:** publishing the rules with the host framing and no discriminator. That states
-a relationship to organizers who do not have one, which is a permit-adjacent fact the product cannot
-back, and it is the same class of error as every finding this document has already recorded.
+**What this decision does NOT resolve, stated here because a resolved blocker invites the assumption
+that the rest went with it.** Approval Blocker 5 stands: the `RESEARCH_REQUIRED` status and the
+loader's source requirement are still in conflict, still blocked on the verification owner, and neither
+route unblocks publication. The F-id is still unassigned and the absorption into F-108 is still a
+proposal. And **route 1 narrows what the feature SAYS, not what publishing it costs**: every coupling,
+count, sweep category and approval route derived in rounds 3 to 8 stands unchanged, with one exception
+recorded under the derived-test rows, where a conditional that depended on this decision now resolves.
 
 ## Scope
 
@@ -92,7 +60,7 @@ registry, per the section above. The first draft claimed two fields; see non-goa
 
 ### Non-goals
 
-1. **NEVER TELLING A GUEST THEY ARE COVERED BECAUSE THE HOST IS.** This is the spec's central
+1. **NEVER TELLING AN ORGANIZER THEY ARE COVERED BY THE VENUE'S APPROVAL.** This is the spec's central
    constraint, not a caveat. `packages/engine/src/ruleset.ts`, in the `UNCONSUMED_INTAKE_FIELDS`
    note for `venue_has_assembly_approval`, records the reason:
 
@@ -114,19 +82,19 @@ registry, per the section above. The first draft claimed two fields; see non-goa
    this feature deletes.
 2. **Not alcohol.** Already solved and out of scope. `SLA-VENUE-LICENSE-001`, `SLA-ONEDAY-001` and
    `SLA-CATERING-001` each read `venue_license_covers_event_area` in their published triggers, so
-   the host/guest question for alcohol is answered by the shipped ruleset. This spec must not
+   the venue-approval question for alcohol is answered by the shipped ruleset. This spec must not
    restate, duplicate or re-derive it.
-3. **NOT `food_affinity_private_exception_claimed`. It is not a host authorisation at all**, and
-   the first draft of this spec wrongly placed it under host/guest semantics. Its published
+3. **NOT `food_affinity_private_exception_claimed`. It is not an authorisation the venue reports at
+   all**, and the first draft of this spec wrongly placed it under the same semantics. Its published
    `asked_when` is `food_present AND event_open_to_public != yes`, **with no venue term**, so it is
    in scope for a street or park event as readily as a private venue. `UNCONSUMED_INTAKE_FIELDS`
    defines it as the organizer's own claim: "Collected for the Health Code Art. 88 private-function
    exemption, which DOHMH-EXEMPTION-001 renders as an advisory on event_open_to_public alone."
 
-   An exception CLAIMED BY THE ORGANIZER is not an authorisation HELD BY A HOST. Applying the
-   host-held `yes` semantics below to it would have told a park organizer that a host authorisation
-   reduced their obligation, which is precisely the false statement the non-goal above exists to
-   make impossible, produced by this spec. Specifying its distinct exception semantics would need
+   An exception the ORGANIZER claims about their own event is not an authorisation the VENUE reports
+   holding. Applying the semantics below to it would have told a park organizer that a venue
+   authorisation reduced their obligation, which is precisely the false statement the non-goal above
+   exists to make impossible, produced by this spec. Specifying its distinct exception semantics would need
    regulatory research this repository has not done, so it is removed from the feature rather than
    carried with the wrong semantics.
 4. **Not multi-city.** An operator that travels between jurisdictions is F-207 · Multi-Jurisdiction
@@ -158,7 +126,8 @@ Published fields this uses, quoted from `rules/nyc-rules.v2.8.json` as declared:
 | `food_affinity_private_exception_claimed` | enum `yes`/`no`/`unknown` | `food_present AND event_open_to_public != yes` | **no** |
 
 **`venue_has_assembly_approval` alone is the subject of this spec.** The row above it is already
-consumed; the row below it is not a host authorisation and is out of the feature per non-goal 3.
+consumed; the row below it is not an authorisation the venue reports and is out of the feature per
+non-goal 3.
 `venue_has_assembly_approval` is recorded in `UNCONSUMED_INTAKE_FIELDS` in
 `packages/engine/src/ruleset.ts`, which is the mechanism that keeps a collected-but-unread field
 visible rather than silent. That entry, and only that entry, is removed by this feature.
@@ -260,14 +229,14 @@ rule fires on more answers than one?** Applied to all of them, not only the ids:
 | 002's `note_text` | `no`, explicit `unknown`, absent | CONSTRAINED the same way: it may not say the venue has no approval. It says this event's own filing is unresolved |
 | `output.agency`, `permit_name`, `deadline`, `fee`, `portal` | n/a | PASS by absence, pinned below |
 | the `aria-labelledby` DOM id | every render | PASSES as an attribute, but it points at the `<h3>`, so assistive technology reads whatever `name` resolves to, which is why the heading carries the same constraint |
-| this document's title and filename | n/a | FAILS on the relationship axis rather than the answer axis, and that is Approval Blocker 13's to resolve |
+| this document's title | n/a | FAILED on the relationship axis rather than the answer axis; renamed to "Venue Assembly-Approval Coverage" with the route 1 decision |
+| this document's FILENAME | n/a | still says `host-guest`. Not renamed here: the path carries this PR's review history, and the file's name is already an open question under Approval Blocker 7, which the naming decision resolves in one move |
 | Scenario G's answer-key section title, if that fixture lands | one fixture, one answer | PASSES, and the distinction is worth stating: a fixture's answer IS known, so its title may name it. A rule fires on more answers than one, so its id may not |
 
-**An observation, not a decision: the rename makes route 1 read better.** With the ids on a
-subject-and-check axis, nothing in the rules names a relationship, and route 1 becomes a change to
-this document's framing alone rather than to the artifact. Route 2 could legitimately reintroduce a
-relationship word, since a published discriminator would make the relationship a known answer. The
-choice stays with the product owner.
+**Round 8 observed that this rename made route 1 read better, and route 1 is now the decision.** With
+the ids on a subject-and-check axis, nothing in the rules names a relationship, so applying the decision
+was a change to this document's framing rather than to the artifact: the ids did not move again, which
+is the property this section bought.
 
 **Two things this audit found in code that the spec does not fix.**
 
@@ -644,8 +613,8 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    confirm with DOB. No output string may assert that the operator is covered, exempt, has a
    reduced obligation, or has no obligation. Reduces, removes and does nothing are three claims and
    the sources license none of them. **And no output string may state or imply that the approval
-   belongs to a party other than the organizer**, since no intake field distinguishes them, unless
-   Approval Blocker 13 resolves as route 2 and a discriminator is published. The test asserts the
+   belongs to a party other than the organizer**, since no intake field distinguishes them and the
+   output is venue-neutral by the route 1 decision. The test asserts the
    ABSENCE of each of those claims, not merely the presence of the correct one, because the failure
    mode is an extra sentence rather than a missing one.
 2. **F-1NN-AC-02 · An explicit `unknown` emits BOTH notes, each with `may_be_required`**, and never
@@ -722,8 +691,8 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 - `headcount` below 75 leaves `venue_has_assembly_approval` unasked even in a private venue, so a
   smaller event produces no assembly output at all. That is the gate as published and this spec does
   not change it.
-- A guest operating in a venue whose own authorisation has lapsed is not modelled and cannot be:
-  the intake collects the reported answer, not the authorisation's current status.
+- An event in a venue whose own authorisation has lapsed is not modelled and cannot be: the intake
+  collects the reported answer, not the authorisation's current status.
 
 ## Fixtures and Verification
 
@@ -739,8 +708,11 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
   source/status/content" row requires the verification owner plus the rules reviewer, and whose
   "Rule trigger, dedupe, branch, deadline, or formula semantics" row requires the verification owner
   plus the engine owner. This feature crosses both.
-- **Verification research is REQUIRED and is not done.** Whether a host's place-of-assembly approval
-  removes a guest operator's temporary filing at all is **not established in this repository**. The
+- **Verification research is REQUIRED and is not done.** Whether an existing place-of-assembly
+  approval removes the temporary filing for an event held at that venue is **not established in this
+  repository**, and the published record is venue-shaped rather than relationship-shaped: the
+  verification block asks it of "a venue that already holds a place-of-assembly certificate of
+  operation". The
   answer key records for DOB-ASSEMBLY-001 that "whether it removes the temporary filing at all is
   not published, so the rule asserts no exemption". This spec inherits that and asserts none either.
   No acceptance criterion above depends on the answer. They depend only on the plan declining to
@@ -833,9 +805,18 @@ with a hand-built private-venue intake, which is what the measurement above alre
 reach". That costs one test file already in the footprint, and it moves no metadata, no manifest row,
 no scenario count, and no other spec's acceptance criteria. What it does not do is put the `no` path in
 the approved regulatory record, which is the answer key's job and the verification owner's call.
-Stated as a comparison, not a decision: **Scenario G costs three artifacts, two existing rules'
-metadata, the manifest's fixtures row, and the seven count statements enumerated in the sweep below,
-two of which are other features' approved acceptance criteria. The unit case costs one file.**
+Stated as a comparison: **Scenario G costs three artifacts, two existing rules' metadata, the
+manifest's fixtures row, and the eleven scenario counts enumerated in the sweep below, two of which are
+other features' approved acceptance criteria. The unit case costs one file.**
+
+**PREFERENCE RECORDED, NOT DECIDED, and the condition is the whole of it.** The product owner prefers
+the engine unit test, **if the verification owner agrees it satisfies Acceptance Criterion 3**
+(PR #171, `https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`). The verification
+owner has not been asked, so **the Scenario G option is not withdrawn** and everything it requires
+stays specified above: the three artifacts, the two metadata edits, the manifest row, the eleven counts,
+and the two other features' acceptance criteria. Whether a unit case satisfies a criterion about the
+approved regulatory record is a verification-owner call, not a cost comparison, which is why a
+preference is all that is recorded here.
 
 ### Every row audited against the change class it actually describes
 
@@ -1043,9 +1024,9 @@ unconditional table above. The rest:
 | Row | Condition it carried | Resolved |
 | --- | --- | --- |
 | `ruleset.test.ts:76` `snapshotDate` | "only if the publication re-fetches a source" | **WRONG, removed.** Rollout item 1 advances `snapshot_date`, so it always moves |
-| `ruleset.test.ts:77` `intakeFields` at 33 | "this feature adds no field" | **LIVE, and it now depends on a decision.** True under route 1 of the premise section, false under route 2, which adds a field and moves this pin, an `events` column and the registry |
+| `ruleset.test.ts:77` `intakeFields` at 33 | "this feature adds no field" | **SETTLED by the route 1 decision: it does not move.** It was live for one round, because route 2 would have added a field and moved this pin, an `events` column and the registry. Route 1 adds none, so the count stays 33. **This is the ONLY number in this document that the decision changes** |
 | `EXPECTED_ADVISORY_COUNT` | "only for a new advisory" | **settled false.** Both rules are `kind: note` and live in `rules`, not in `advisories` |
-| `EXPECTED_SCHEMA` | "only for a schema change" | settled false under route 1; a new field does not change the schema family either |
+| `EXPECTED_SCHEMA` | "only for a schema change" | settled false; the feature publishes rules, not a schema change |
 | `apps/api/src/checklist.test.ts` | "depends on which scenarios the new rule reaches" | **settled: it does not move.** Only Scenarios A and C are materialized into checklists in that suite, 40 cases on A and one on C, and neither reaches the gate. It stays in the footprint so a new fixture's checklist case is not blocked |
 
 The `checklist.test.ts` resolution needed one more fact than round 3 had, and it is worth stating
@@ -1130,9 +1111,11 @@ visible rather than silent.
 
 ## Approval Blockers
 
-Every one of these is open, and this spec cannot be approved until each is resolved by its owner.
-None is resolved here. **Blocker 13 comes first in practice**, because it decides whether the feature
-has a describable subject at all; the ones above it are about publishing a feature that 13 may reshape.
+**Blocker 13 is resolved by the product owner and struck through below; every other entry is open**,
+and this spec cannot be approved until each is resolved by its owner. None of the open ones is resolved
+here. **Blocker 5 is now the one that decides whether the feature can be published at all**, because
+it is the conflict between the only honest verification status and the loader's source requirement, and
+route 1 does not touch it.
 
 1. **F-ID ASSIGNMENT, and the range is saturated.** Stage 1 (IDEATE) is stated in `docs/DESIGN.md`
    as F-101 to F-109, and all nine are assigned. `docs/ROADMAP.md` is the authoritative registry per
@@ -1156,7 +1139,7 @@ has a describable subject at all; the ones above it are about publishing a featu
    therefore currently forbidden for exactly this field, is a rules-owner call.
 4. **DOB-ASSEMBLY-001's coverage confirmation is unimplemented**, and its note records that it
    blocks F-102 Acceptance Criterion 6.
-5. **Verification research** on whether a host's approval removes a guest's temporary filing, per
+5. **Verification research** on whether an existing venue approval removes the temporary filing, per
    Fixtures and Verification above. Not established; the rule asserts no exemption in either
    direction.
    **And the artifact format has no slot for that state**, which is a second, separable blocker on the
@@ -1222,15 +1205,16 @@ has a describable subject at all; the ones above it are about publishing a featu
     `noteText` again below it, so every note would have shown its sentence twice. Each output now
     states which of the five paths it was checked against, because three rounds running a conclusion
     true on one path was carried onto another where it is false.
-13. **THE PREMISE IS NOT REPRESENTABLE IN INTAKE, and the product owner chooses the route.** No
-    published intake field names a host, a renter, a tenant or a third party, checked against all 33,
-    so the triggers cannot tell a guest operator from the venue's own operator and would describe a
-    relationship the second one does not have. Route 1 makes the output venue-neutral and costs nothing
-    outside this document. Route 2 adds an intake field and costs an Event Input change (all affected
-    lane owners plus the architecture owner), a migration on `events` (database owner plus all affected
-    lane owners), the web intake form, and the regulatory question answered, which DOB-ASSEMBLY-001
-    records as unpublished in either direction. The section under Purpose states both in full. Route 1
-    leaves a feature worth having, which is recorded as a finding rather than as a choice.
+13. ~~**THE PREMISE IS NOT REPRESENTABLE IN INTAKE.**~~ **RESOLVED 2026-07-28 by the product owner:
+    route 1, venue-neutral output.** Recorded on PR #171
+    (`https://github.com/jzeng151/pop-engine/pull/171#issuecomment-5107886102`); the section under
+    Purpose states what a reader needs and cites that comment rather than restating it. Route 2, a
+    relationship discriminator, is rejected rather than deferred, on the ground that
+    `DOB-ASSEMBLY-001` records the effect as not published in either direction, so knowing there is a
+    host would not change what the product may say. **This resolves this blocker and nothing else:**
+    blocker 5 stands, the F-id is still unassigned, and the publication cost is unchanged. Left in the
+    list rather than deleted, struck through, because the reasoning behind the other entries refers to
+    it and a resolved blocker is a record.
 14. **Round 7 found the framing asserting a relationship the intake cannot express, and five
     consequences of sweeping by the wrong unit.** The premise finding is blocker 13. The other five were
     all the same mistake: a sweep whose unit was too narrow. A reduction claim survived two rounds of
@@ -1243,7 +1227,7 @@ has a describable subject at all; the ones above it are about publishing a featu
     literal inside a diagnostic message. The footprint permitted the answer key without the fixture
     file its own required test reads. And a derived-test row still carried a condition Acceptance
     Criterion 8 had made unconditional, so every conditional row is now audited, which settled two of
-    them and showed a third depends on blocker 13's route.
+    them and showed a third depends on blocker 13's route, which the product owner has since decided.
 15. **Round 8 found the rule's own ID publishing the fact the spec forbids inferring, which no copy
     discipline elsewhere could have repaired.** `DOB-ASSEMBLY-HOST-HELD-001` named an approval as held,
     and its `eq yes` trigger is deliberately emitted on an explicit `unknown` and on an absent in-scope
