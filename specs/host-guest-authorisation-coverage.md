@@ -98,11 +98,24 @@ No new inputs. The three fields above, as `validateIntake` already accepts them.
 Per affected authorisation, one of three plan states. The distinction between the second and third
 is the whole feature:
 
-| State | Meaning | Permitted copy |
+The mapping is **by the field's answer**, and nothing else. Stated once here, and the acceptance
+criteria below use these words rather than paraphrases of them:
+
+| `venue_has_assembly_approval` | State | Permitted copy |
 | --- | --- | --- |
-| NOT APPLICABLE | the gate did not put the question in scope | nothing rendered |
-| **UNRESOLVED** | the question is in scope and the published sources do not settle it, whatever the host holds | must direct the operator to confirm with DOB; must not assert any reduction |
-| **OPEN** | host does not hold it, or the operator does not know | must state that the operator's own filing is unresolved |
+| not in scope (gate false) | NOT APPLICABLE | nothing rendered |
+| **`yes`** | **UNRESOLVED** | must direct the operator to confirm with DOB; must not assert any reduction |
+| **`no`** | **OPEN** | must state that the operator's own filing is unresolved |
+| **`unknown`** | **OPEN** | must state that the operator's own filing is unresolved |
+
+The first draft of this table keyed UNRESOLVED on "the question is in scope and the published
+sources do not settle it, whatever the host holds", which is equally true of `no` and `unknown` and
+so classified the same input two ways. A rules author following the table could have produced
+fixtures contradicting the criteria. The predicate is the answer value, and only the answer value.
+
+**UNRESOLVED and OPEN are both silent about any reduction**, and neither is weaker than the other in
+that respect. They differ only in what they tell the operator to do next, which is why `no` and
+`unknown` share a row's copy but stay separate criteria.
 
 **There is no NARROWED state, and the first draft was wrong to define one.** It assigned `yes` to a
 state asserting the operator's obligation is REDUCED. Nothing in this repository establishes a
@@ -118,8 +131,7 @@ is built on, that a host authorisation "narrows the question rather than settlin
 about **what must be established**, not about the filing. Reading it as a reduction is the same
 category error as reading a host's licence as the guest's, one level subtler.
 
-So `yes` produces UNRESOLVED, not a reduction, until verification research resolves it. `unknown`
-and `no` both produce OPEN.
+So `yes` produces UNRESOLVED, not a reduction, until verification research resolves it.
 
 ## State, Validation and Errors
 
@@ -208,10 +220,14 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    **with no answer**. A trigger consuming that field therefore changes that rescope's findings, its
    missing facts and its `A-rescope` exercise metadata. Expectations and tests for the rescope land
    with the change; moving Scenario F's answer-key output alone is insufficient.
-7. **F-1NN-AC-07 · The coupled constants land together.** A published trigger reading
-   `venue_has_assembly_approval` lands in one commit with the removal of its
-   `UNCONSUMED_INTAKE_FIELDS` entry, the `EXPECTED_RULESET_VERSION` move and the
-   `EXPECTED_RULE_COUNT` move, and that commit boots. See the enumeration under System Impact.
+7. **F-1NN-AC-07 · The coupled constants and the manifest land together.** A published trigger
+   reading `venue_has_assembly_approval` lands in ONE commit with: the removal of its
+   `UNCONSUMED_INTAKE_FIELDS` entry, the `EXPECTED_RULESET_VERSION` move, the `EXPECTED_RULE_COUNT`
+   move, **and the `docs/BASELINE.md` update** (current row repointed at the new artifact, its new
+   sha256 recomputed, and a superseded-lineage row recorded for v2.8). That commit boots AND passes
+   `pnpm check:baseline`. Publishing the new artifact while the manifest still names
+   `rules/nyc-rules.v2.8.json` fails the digest check, which recomputes the sha256 of the file each
+   row publishes and reports a row whose file is not there. See the enumeration under System Impact.
 8. **F-1NN-AC-08 · No fact beyond the ruleset.** Every regulatory statement rendered traces to a
    published rule's `output`, `notes`, `source` or `verification`. Nothing is asserted that the
    published artifact does not carry, and DOB-ASSEMBLY-001's position that the question is "NOT
@@ -259,19 +275,60 @@ Files this feature may touch, and who must be in the room:
 | Path | Change | Owner |
 | --- | --- | --- |
 | `rules/nyc-rules.v<next>.json` | new rules, new version | verification owner + rules reviewer |
-| `packages/engine/src/ruleset.ts` | remove two `UNCONSUMED_INTAKE_FIELDS` entries | engine owner |
+| `packages/engine/src/ruleset.ts` | remove **only** the `venue_has_assembly_approval` entry from `UNCONSUMED_INTAKE_FIELDS` | engine owner |
 | `apps/api/src/ruleset.ts` | move `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` | engine owner |
-| `packages/engine/src/acceptance.test.ts` | the hard-coded finding sets for every scenario a new rule reaches | engine owner |
-| `packages/engine/src/fixture-ruleset-agreement.test.ts` | published-rule-versus-answer-key expectations | engine owner + verification owner |
-| `apps/api/src/plan.test.ts`, `apps/api/src/rules-snapshot.test.ts` | fixture expectations that pin plan output | engine owner |
 | `docs/test-scenario-answer-key.md` | expectations | verification owner + rules reviewer |
-| `docs/BASELINE.md` | lineage row for the new ruleset | product owner |
+| `docs/BASELINE.md` | current row, new digest, superseded-lineage record | product owner |
+| the test files below | version, count and expectation pins | engine owner |
+
+### The pinned tests, DERIVED rather than listed
+
+The footprint has been extended three rounds running by whatever a reviewer happened to find, so
+this set is derived by search rather than by recall. **Method, so it can be re-run when the next
+version publishes:** grep the non-`node_modules` TypeScript for the literal `nyc.v2.8`, for rule and
+advisory count assertions, and for assertions over a complete set of published ids.
+
+**Moves whenever the ruleset VERSION changes:**
+
+| File | Line | Pin |
+| --- | --- | --- |
+| `apps/api/src/ruleset.ts` | 32 | `EXPECTED_RULESET_VERSION` |
+| `apps/api/src/ruleset.test.ts` | 75, 112 | asserted version, and a fixture carrying it |
+| `apps/api/src/plan.test.ts` | 127 | `rulesetVersion` on the plan response |
+| `packages/engine/src/engine.test.ts` | 972 | asserted version |
+
+**Moves whenever a RULE is added:**
+
+| File | Line | Pin |
+| --- | --- | --- |
+| `apps/api/src/ruleset.ts` | 33 | `EXPECTED_RULE_COUNT` (33) |
+| `apps/api/src/ruleset.test.ts` | 78 | `rules` length (33) |
+| `apps/api/src/ruleset.test.ts` | 368 to 370 | the `/expected 33 rules/` error expectation |
+| `apps/api/src/ruleset.test.ts` | 980, 1022, 1038 | `permit_rules` row count (37, rules plus advisories) |
+| `packages/engine/src/engine.test.ts` | 974 | merged `rules` length (37) |
+
+**Moves whenever a scenario's FINDINGS change:**
+
+| File | Pin |
+| --- | --- |
+| `packages/engine/src/acceptance.test.ts` | hard-coded finding sets per scenario |
+| `packages/engine/src/fixture-ruleset-agreement.test.ts` | published rules against the answer key |
+| `apps/api/src/plan.test.ts`, `apps/api/src/rules-snapshot.test.ts` | fixture expectations pinning plan output |
+| `apps/api/src/checklist.test.ts` | complete per-scenario `ruleIds` lists, e.g. Scenario A at line 392 |
+
+**Does NOT move, recorded so the next reader does not re-derive it:** `apps/api/src/ruleset.test.ts:77`
+pins `intakeFields` at 33 and this feature adds no field; `:76` pins `snapshotDate` and moves only if
+the publication re-fetches a source; `EXPECTED_SCHEMA` and `EXPECTED_ADVISORY_COUNT` move only for a
+schema change or a new advisory. Occurrences of `nyc.v2.8` in `packages/engine/src/types.ts` and
+`scripts/check-baseline-drift.mjs` are prose and comments, not assertions.
+
+`apps/api/src/checklist.test.ts` is marked **conditional**: whether it moves depends on which
+scenarios the new rule reaches, and checklist items derive from the base plan rather than from a
+rescope. It is in the footprint so an implementer is not blocked, not because it is certain to
+change.
 
 The first draft permitted only `packages/engine/src/ruleset.ts` under the engine, which made the
-feature **unimplementable**: any new rule reached by a scenario changes the hard-coded finding sets
-in `acceptance.test.ts`, and `fixture-ruleset-agreement.test.ts` verifies published rules against
-the answer key, so an implementer obeying the footprint could not make the required full fixture run
-pass even after the answer key moved.
+feature **unimplementable**.
 
 Must not touch: `specs/F-102`, the plan view, the checklist, or any file owned by an in-flight core
 feature. Coordination point: F-102's Acceptance Criterion 6 is already unimplemented, and
@@ -280,10 +337,24 @@ implements this must not implement that; they are separate approvals.
 
 ## Rollout and Fallback
 
-Rollout is one change or none: the ruleset publication, `EXPECTED_RULESET_VERSION`,
-`EXPECTED_RULE_COUNT`, the `UNCONSUMED_INTAKE_FIELDS` removal, and the engine test and answer-key
-updates. Steps 2 to 4 of the enumeration under System Impact each fail boot independently, so no
-subset starts. There is no partial state worth shipping.
+Rollout is one change or none. In it:
+
+1. `rules/nyc-rules.v<next>.json` published, and `rules/nyc-rules.v2.8.json` deleted, since exactly
+   one published ruleset is the invariant.
+2. `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` moved.
+3. The `venue_has_assembly_approval` entry removed from `UNCONSUMED_INTAKE_FIELDS`, and **only**
+   that entry: `food_affinity_private_exception_claimed` stays, because no rule in this feature
+   consumes it and removing its exemption would fail `rejectUnconsumedFields` and stop the API
+   booting.
+4. **`docs/BASELINE.md` updated**: the current row repointed at the new path and version, its
+   sha256 recomputed over the new bytes, and a superseded-lineage row recorded for v2.8 with its
+   commit. Without this `pnpm check:baseline` fails, and the new artifact carries none of the
+   approval metadata this spec requires of it.
+5. The derived test pins updated, per the footprint.
+6. The answer key updated for Scenario F and Scenario A's rescope.
+
+Items 2, 3 and 4 each fail independently, the first two at boot and the third in CI, so no subset
+starts. There is no partial state worth shipping.
 
 Fallback is to publish nothing and leave the field in `UNCONSUMED_INTAKE_FIELDS`. That is the
 current state, it is stable, and its cost is recorded honestly there: the field is collected and
@@ -335,7 +406,13 @@ None is resolved here.
    They are recorded here because a spec whose central non-goal is "do not assert unbacked
    coverage" made two unbacked coverage assertions in its first draft, and the reviewer caught them
    rather than the author.
-9. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+9. **Round 3 fixed a defect round 2 created.** Removing the food field from the feature was right,
+   and its consequence was not carried through: the footprint still told the implementer to remove
+   two `UNCONSUMED_INTAKE_FIELDS` entries, and removing the food entry with no rule consuming it
+   would fail `rejectUnconsumedFields` and stop the API booting. Recorded because it is the
+   characteristic cost of a correct narrowing, and the way to catch it is to sweep for the plural
+   rather than to edit the sentence that was flagged.
+10. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
