@@ -6,20 +6,22 @@ This document is a MEASUREMENT. It proposes no change, recommends no option and 
 issue #108. The branch carrying it contains no rule, ruleset, spec, answer-key, manifest or engine
 change.
 
-Measured at `bd8d05e`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, suite size 1196. Round 4's
-corrections (the rebuilt S2 probe, the `readChecked` runtime measurement in R3, the branch-versus
-threshold split and the reachable-unknown recount in R5, and the `unknownFields` sources in S4) were
-re-measured on the rebased branch at `776dda2`, suite size 1356, against the same ruleset.
+Measured at `bd8d05e`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, suite size 1196. Later rounds'
+corrections were re-measured on the rebased branch at suite size 1356 against the same ruleset:
+round 4's `readChecked` runtime measurement in R3, the branch-versus-threshold split in R5 and the
+enumerable recount there; round 5's rebuilt S2/S3 probe, the numeric recount in R5, and the trigger
+propagation table in S4.
 
 **Which guards each measurement went through, because they are not the same.** Every measurement
 against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
 through the full chain in order: `parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan
 path (`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`), with no engine internal called
-directly. The SYNTHETIC probe in S2/S3 did NOT go through that chain: `parseEngineRuleset` accepted
-it, `parseIntakeContract` REJECTED it for a reason unrelated to the shape under test (S2), so
-`validateIntake` was never run on it, and `evaluate` was given a hand-built intake record assembled
-the way `validateIntake` persists one. S3's numbers are therefore an `evaluate`-and-below result,
-not an end-to-end one.
+directly. **The S2/S3 probe now goes through that same chain**, because its `rules` and `advisories`
+are published content and `parseIntakeContract` accepts it. Rounds 3 and 4 could not: their probe
+invented its rules, `parseIntakeContract` rejected it, `validateIntake` was never run on it, and
+`evaluate` was given a hand-built record. The one place an engine internal is called directly is
+S4's per-rule propagation table, which uses `evaluateTrigger` because per-rule `unknownFields` is
+not observable from the plan; the plan-level result in the same section is from the full chain.
 
 PR #167 measured a gate that was legitimately NOT ASKED because its parent held a different value.
 This measures a gate that was ASKED and ANSWERED `"unknown"`, which is the case issue #108's title
@@ -120,6 +122,10 @@ so a rule condition on it resolves to an explicit unknown, the field enters `unk
 `evaluateConditional` branches over its declared values. The branch table exists because the gate is
 visible to the trigger layer, not because the scoping layer reported anything. The scoping layer
 reports nothing; `askedFields` returns a set with no record of what it excluded or why.
+
+Being read by a trigger is necessary but not sufficient, which S4 measures per rule: five of the
+eleven rules that read `sapo_event_type` here contribute nothing to `unknownFields`, and the four
+SAPO-STREET rules that are actually lost are among them.
 
 ## 3. Blast radius
 
@@ -413,9 +419,25 @@ against the published contract:
   scenarios each is rejected `not_applicable` rather than accepted, so scope narrows the reachable
   surface further per submission.
 
-The remaining 10 trigger-referenced fields are numeric or date, and take the `branches: []` path
-above: threshold guidance where the ruleset publishes one, nothing where it does not. Also
-unrendered.
+The remaining 10 trigger-referenced fields are numeric, and take the `branches: []` path above:
+threshold guidance where the ruleset publishes one, nothing where it does not, also unrendered. But
+**only 8 of those 10 can reach it**, which round 4 did not check. Measured through `validateIntake`
+across all six approved scenarios:
+
+- `headcount` is non-nullable and required in every scenario: `null` and omission both fail
+  `required`, and `"unknown"` fails `invalid_value` because the integer validator does not take a
+  string. There is no submission in which it resolves unknown.
+- `food_vendor_count` is non-nullable and fails the same way wherever it is in scope. It accepts
+  `null` in scenarios C and D only, and only because `food_present` is false there, which makes it
+  not-asked rather than unknown. A not-asked field resolves `false` with an empty `unknownFields`
+  and never enters `verdict.ts`'s `unknownFields` filter, so it produces no missing fact either way,
+  which the measured `missingFacts` for C and D (both empty) confirms.
+- The other eight (`tent_area_sqft`, `tent_days_in_place`, `stage_height_ft`, `stage_area_sqft`,
+  `generator_gasoline_gallons`, `generator_diesel_gallons`, `generator_kw`, `battery_system_kwh`)
+  are `nullable: true` and accept `null` in all six scenarios, which is how `tent_area_sqft` reaches
+  the threshold path in scenario E above.
+
+So the reachable surface is 7 enumerable fields plus 8 numeric ones, not 15 plus 10.
 
 ## R6. What this round establishes and does not
 
@@ -426,8 +448,9 @@ Establishes:
 - the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
   than a plumbing one;
 - no renderer exists anywhere in the web app;
-- two of six approved scenarios reach it today, and 7 trigger-referenced fields can resolve
-  unknown; a further gap, unrendered threshold guidance, is separate from the branch table.
+- two of six approved scenarios reach it today, and 7 enumerable trigger-referenced fields can
+  resolve unknown; a further gap, unrendered threshold guidance, is separate from the branch table
+  and is reachable through 8 of the 10 numeric fields, not all 10.
 
 Does not establish, and is outside this measurement:
 
@@ -467,112 +490,121 @@ const consumed = new Set<string>([
 
 So gating something is sufficient to be consumed. A gate read by nothing else loads cleanly.
 
-## S2. The synthetic ruleset
+## S2. The probe, built from published content
 
-**Correction to round 3.** The probe published in round 3 carried invented regulatory content: a
-rule id of `PROBE-REQUIREMENT-001`, `output: { permit_name: "Probe requirement", agency: "PROBE" }`,
-a `source` block with a citation and a `https://example.test/probe` url, and
-`verification: { status: "SOURCE_CONFIRMED" }` on a rule whose own citation read "synthetic probe,
-no source". That is a fabricated permit fact and a fabricated verification state, and being
-synthetic does not license it: AGENTS.md's rule is that a permit fact is never invented, and a
-reader scanning this file for permit-shaped content should not find any. All of it has been removed
-and the probe below re-measured from scratch. Nothing that content asserted was load-bearing for the
-result; the numbers in S3 are unchanged.
+**Correction to round 4, which was the second attempt at this and also wrong.** Round 3 published a
+probe carrying a fabricated rule: `PROBE-REQUIREMENT-001`, `output: { permit_name: "Probe
+requirement", agency: "PROBE" }`, a citation with a url, and `verification: { status:
+"SOURCE_CONFIRMED" }` beside its own statement that no source exists. Round 4 renamed the id to
+`PROBE-SYNTHETIC-NOT-A-RULE`, emptied `output`, dropped `source` and moved the status to
+`RESEARCH_REQUIRED`, and called that a fix. It was not. It still declared a rule of `kind: "permit"`,
+still invented a trigger for it, and still assigned it a verification status. The regulatory
+semantics were relabelled, not removed. Both attempts are recorded here because two corrections on
+the same point should be visible as two.
 
-What the parser actually requires of a rule, measured against `parseEngineRuleset` directly:
+**Why the minimal-rule approach could not have worked, which is a finding about the artifact format
+rather than about the probe.** Round 4 measured the parser's requirements exactly:
 
-| Member | Required? | Measured |
+| Member | Required? | Measured against `parseEngineRuleset` |
 | --- | --- | --- |
-| `verification` | **yes** | omitting it fails with `ruleset.rules[0].verification must be an object` |
-| `verification.status` | **yes** | `""` fails "must be a non-empty string"; `NOT_A_STATUS` fails "has unsupported value"; the four published statuses all parse |
+| `verification` | **yes** | omitting it fails `ruleset.rules[0].verification must be an object` |
+| `verification.status` | **yes**, from a closed set | `""` fails "must be a non-empty string"; `NOT_A_STATUS` fails "has unsupported value" |
 | `source` | no | omitted entirely, parses |
-| `output` | present but may be empty | `{}` parses; no `permit_name` or `agency` is demanded |
+| `output` | present, may be empty | `{}` parses |
 | `id`, `kind`, `trigger` | yes | `kind` accepts permit, note, advisory, prohibition, registration |
 
-So the minimum that parses is an id, a `kind`, a trigger, `output: {}`, and a `verification.status`
-from the published set. `RESEARCH_REQUIRED` is the choice because the parser leaves no way to omit
-a status and that status is the one whose meaning ("nothing is confirmed about this") is true of a
-probe. `SOURCE_CONFIRMED` would have parsed equally well and asserted something false. The id says
-what the thing is rather than naming a requirement.
+`verification.status` cannot be omitted and cannot be a value outside the published set. There is
+therefore **no way to express a non-regulatory rule in this schema**: every rule the parser accepts
+carries a `kind`, a trigger, and a claim about how well sourced it is. The format has no "this is
+not a real requirement" state. Any minimal invented rule is a regulatory assertion by construction,
+which is why the round-4 rename changed nothing, and why no third attempt at one was made.
 
-Test scope only. It asserts no permit fact, names no agency, permit or citation, and `rules/` is
-untouched. Carried here in full so the result is reproducible:
+**What replaced it: `rules` and `advisories` are published content, byte for byte.** The probe loads
+`rules/nyc-rules.v2.8.json` and touches nothing except `intake_fields` gating, which is the thing
+under test:
 
 ```ts
-const SYNTHETIC = {
-  ruleset_version: "probe.v1",
-  jurisdiction: "US-NY-NYC",
-  snapshot_date: "2026-07-22",
-  config: {
-    slack_warning_days: { value: 14 },
-    business_day_math: { calendar: "test-calendar@2026" },
-  },
-  intake_fields: [
-    { field: "event_date", type: "date", collected: true },
-    // The gate. Declares "unknown". Read by NO trigger; consumed only by scoping the dependent.
-    { field: "gate_field", type: "enum", values: ["yes", "no", "unknown"], collected: true },
-    // Scoped out when the gate is answered "unknown", because "unknown" !== "yes".
-    { field: "dependent_field", type: "boolean", collected: true, asked_when: "gate_field = yes" },
-  ],
-  rules: [
-    {
-      id: "PROBE-SYNTHETIC-NOT-A-RULE",
-      kind: "permit",
-      trigger: { all: [{ field: "dependent_field", op: "eq", value: true }] },
-      // Empty. The probe measures whether the gate is reported, not what the rule would say.
-      output: {},
-      verification: { status: "RESEARCH_REQUIRED" },
-    },
-  ],
-  advisories: [],
-};
+raw.intake_fields = raw.intake_fields.map((f) =>
+  // The gate. Published as a boolean, which cannot be answered "unknown"; re-typed here so the
+  // three-state answer is expressible. Values only, no rule, no output, no verification.
+  f.field === "generator_present"
+    ? { field: f.field, type: "enum", values: ["yes", "no", "unknown"], collected: true }
+    // The published clause is the bare truthiness `generator_present`; made explicit against the
+    // enum so "unknown" scopes the dependents out.
+    : f.asked_when === "generator_present"
+      ? { ...f, asked_when: "generator_present = yes" }
+      : f,
+);
 ```
 
-Driven through the guards in order:
+Measured, not asserted:
 
-- **`parseEngineRuleset`: ACCEPTED.** The shape loads.
-- **`parseIntakeContract`: REJECTED**, with "ruleset does not publish SAPO-BLOCK-PARTY-ELIG-001".
-  That guard requires two specific published notice rules by id, so it cannot be driven on a
-  synthetic ruleset at all. It is a constraint on this probe, not a protection against the shape:
-  any real published ruleset carries those two rules and would pass. `validateIntake` therefore
-  could not be driven here either, and the intake record below is built the way `validateIntake`
-  persists one, every declared field present with un-asked fields NULL.
-- **`evaluate`: ran on all three answers.**
+```
+RULES_ADVISORIES_CONFIG_UNCHANGED true
+```
+
+`generator_present` is a real published field, and the published ruleset already makes it a
+scope-only gate: no trigger and no deadline reads it, and its whole job is to gate
+`generator_gasoline_gallons`, `generator_diesel_gallons` and `generator_kw`. Those three are read by
+the trigger of `FDNY-GENERATOR-001`, a published `kind: "permit"` rule whose permit name, agency and
+verification status are published content and are quoted here rather than invented:
+
+```json
+{ "id": "FDNY-GENERATOR-001", "kind": "permit",
+  "trigger": { "any": [ { "field": "generator_gasoline_gallons", "op": "gt", "value": 2.5 },
+                        { "field": "generator_diesel_gallons",  "op": "gt", "value": 10 },
+                        { "field": "battery_system_kwh",        "op": "gt", "value": 20 } ] },
+  "output": { "permit_name": "FDNY Generator/Battery Permit", "agency": "FDNY" },
+  "verification": { "status": "SOURCE_CONFIRMED" } }
+```
+
+Nothing regulatory is invented anywhere in this probe. The only synthetic element is the gate's
+type and its `asked_when` wiring.
+
+**This probe goes through the full guard chain, which rounds 3 and 4 could not.** Because the
+published rules are intact, `parseIntakeContract` no longer rejects it:
+
+```
+parseEngineRuleset:   ACCEPTED
+parseIntakeContract:  ACCEPTED
+validateIntake:       ACCEPTED for all three answers
+evaluate:             ran on all three
+```
 
 ## S3. The result
 
-| Answer to `gate_field` | Verdict | Findings | `missingFacts` | `unresolvedTimelines` | Gate named anywhere in the plan |
-| --- | --- | --- | --- | --- | --- |
-| `"yes"` + `dependent_field: true` | FEASIBLE | `PROBE-SYNTHETIC-NOT-A-RULE` | none | none | no |
-| `"no"` | FEASIBLE | none | none | none | no |
-| **`"unknown"`** | **FEASIBLE** | **none** | **none** | **none** | **no** |
+Base intake is approved scenario C, unchanged apart from the generator answers.
 
-**The requirement leaves with no missing fact, no branch, no finding and no unresolved timeline.**
-The verdict stays FEASIBLE, which is the engine saying the plan is complete.
+| Answer to `generator_present` | Verdict | Findings | `FDNY-GENERATOR-001` | `missingFacts` | `unresolvedTimelines` | Gate named anywhere in the plan |
+| --- | --- | --- | --- | --- | --- | --- |
+| `"yes"`, 5 gasoline gallons | FEASIBLE | 5 | **present** | none | none | no |
+| `"no"` | FEASIBLE | 4 | absent | none | none | no |
+| **`"unknown"`** | **FEASIBLE** | **4** | **absent** | **none** | **none** | **no** |
+
+**A published FDNY permit leaves the plan with no missing fact, no branch, no finding and no
+unresolved timeline.** The verdict stays FEASIBLE, which is the engine saying the plan is complete.
 
 The sharpest form of the result:
 
 ```
-plan(gate_field = "no") === plan(gate_field = "unknown")   ->   true
+plan(generator_present = "no") === plan(generator_present = "unknown")   ->   true
 ```
 
 The two plans are byte-identical JSON. There is no channel, rendered or unrendered, that
-distinguishes "I do not know whether this applies" from "this does not apply". The `trace` is
-identical too: `[{"ruleId":"PROBE-SYNTHETIC-NOT-A-RULE","result":"false"}]` in both cases, so even the
-unrendered diagnostic channel records the unknown answer as a settled false.
+distinguishes "I do not know whether there is a generator" from "there is no generator". The
+`trace` is identical too, and records the unknown answer as a settled false:
 
-**For contrast, the engine handles an unanswered DEPENDENT correctly.** With
-`gate_field: "yes"` and `dependent_field` unanswered, the same ruleset gives CONDITIONAL with a full
-branch table:
-
-```json
-{ "field": "dependent_field", "branches": [
-  { "value": "true",  "verdict": "FEASIBLE", "reason": "same findings, re-dated" },
-  { "value": "false", "verdict": "FEASIBLE", "reason": "drops PROBE-SYNTHETIC-NOT-A-RULE" } ] }
+```
+TRACE_yes      [{"ruleId":"FDNY-GENERATOR-001","result":"true"}]
+TRACE_no       [{"ruleId":"FDNY-GENERATOR-001","result":"false"}]
+TRACE_unknown  [{"ruleId":"FDNY-GENERATOR-001","result":"false"}]
 ```
 
-So the gap is specific to the GATE. An unknown one level down is branched; an unknown at the gate is
-consumed by the scoping layer and never reaches the trigger layer that does the branching.
+**For contrast, the engine handles an unanswered DEPENDENT correctly.** With `generator_present`
+answered `"yes"` and the amounts left null, the same probe reports `generator_kw` as a missing fact
+with a branch table. So the gap is specific to the GATE. An unknown one level down is branched; an
+unknown at the gate is consumed by the scoping layer and never reaches the trigger layer that does
+the branching.
 
 ## S4. Which world we are in
 
@@ -584,40 +616,81 @@ makes it a missing fact in its own right, which is what fires the branch machine
 in round 1 was produced by the trigger layer noticing the gate, not by the scoping layer reporting
 what it excluded.
 
-Remove that overlap, as the synthetic ruleset does, and the whole surfacing apparatus is silent.
-Round 1 said the scoping layer "returns a set with no record of what it excluded or why"; this
-measures what that costs when nothing else happens to compensate.
+Remove that overlap, as the probe does, and the whole surfacing apparatus is silent. Round 1 said
+the scoping layer "returns a set with no record of what it excluded or why"; this measures what that
+costs when nothing else happens to compensate.
 
-**The exact condition, narrower than round 3 stated it.** Round 3 said the silence follows whenever
-no trigger reads the gate. That is too broad. `resolveFindings` builds `unknownFields` from two
-sources, not one (`packages/engine/src/findings.ts:260` and `:263`): trigger evaluation, and
-`finding.deadlineUnknownFields` on each rule whose trigger did not evaluate false. A gate read by no
-trigger but read by a published deadline on a rule that does fire is still unioned in and still
-surfaces as a missing fact. The condition that produces silence is therefore:
+**The unsafe surface is LARGER than round 4 stated, not smaller.** Round 4 gave the condition as
+"the gate is consumed exclusively by `asked_when` scoping". That still qualifies on whether a
+trigger MENTIONS the gate, and mentioning is not propagating. `evaluateTrigger`
+(`packages/engine/src/conditions.ts:352`) short-circuits: when any child of an `all` is false, or
+any child of an `any` is true, it returns that decisive result with `unknownFields: []`. An unknown
+sibling in the same node contributes nothing. `resolveFindings` therefore never sees it, and the
+gate is silent even though a trigger reads it.
 
-> the gate is consumed EXCLUSIVELY by `asked_when` scoping, that is, by no trigger and by no
-> deadline of any rule that fires.
+This is not hypothetical, and v2.8 demonstrates it. Answering `sapo_event_type: "unknown"` on
+approved scenario A, eleven published rules read the gate, and measured per rule:
 
-**Is that condition reachable by a valid published ruleset? Yes, and the parser is where it is
-licensed.** `rejectUnconsumedFields` (`packages/engine/src/ruleset.ts:654`) builds its `consumed`
-set from exactly three sources, trigger fields, deadline-consumed fields, and `askedWhenClauses`
-fields, and accepts a field that appears in only the third. That is the same code quoted in S1: a
-field consumed by scoping alone passes the guard whose whole purpose is to catch fields that change
-nothing. Nothing downstream of it objects either. The condition is not a theoretical corner of the
-type system; it is a shape the loader is written to accept.
+| Rule reading the gate | Trigger result | `unknownFields` propagated |
+| --- | --- | --- |
+| `SAPO-STREET-SMALL-001` | false | **none** |
+| `SAPO-STREET-MEDIUM-001` | false | **none** |
+| `SAPO-STREET-LARGE-001` | false | **none** |
+| `SAPO-STREET-XL-001` | false | **none** |
+| `SAPO-INSURANCE-BLOCK-PARTY-RIDE-001` | false | **none** |
+| `SAPO-BLOCK-PARTY-001` | unknown | `["sapo_event_type"]` |
+| `SAPO-BLOCK-PARTY-ELIG-001` | unknown | `["sapo_event_type"]` |
+| `SAPO-BLOCK-PARTY-SPONSOR-001` | unknown | `["sapo_event_type"]` |
+| `SAPO-PLAZA-001` | unknown | `["sapo_event_type"]` |
+| `SAPO-INSURANCE-001` | unknown | `["sapo_event_type"]` |
+| `ADV-SAPO-OTHER-CLASS-001` | unknown | `["sapo_event_type"]` |
+
+The five that propagate nothing are `all` nodes whose OTHER condition reads a dependent the gate
+itself has just scoped out, so the sibling resolves `not_asked` -> false and settles the node before
+the unknown is reached. **The four SAPO-STREET rules are precisely the requirements that are lost,
+and they are exactly the rules that report nothing about losing them.** What saves v2.8 is the other
+six: five whose trigger is a lone condition on the gate and so have no sibling to short-circuit on,
+plus `SAPO-BLOCK-PARTY-ELIG-001`, whose sibling `any` is not decisively false on this submission.
+The branch table round 1 measured is entirely their doing, and none of them is a rule the answer
+would have added.
+
+So the condition to qualify on is a live evaluation, not a static mention:
+
+> the gate is silent when NO trigger evaluation in the run actually propagates it, that is, when
+> every node reading the gate is settled by a decisive sibling before the unknown is reached, and no
+> deadline of a firing rule reads it either.
+
+Scope-only consumption, round 4's condition, is one way to satisfy this. The short-circuit is
+another, and it is reachable in a ruleset where every trigger reads the gate. A ruleset author
+cannot tell from the rule text whether a gate is covered; it depends on what the other conditions in
+the same node evaluate to for that submission.
+
+**Is the condition reachable by a valid published ruleset? Yes on both routes.** For scope-only
+consumption, `rejectUnconsumedFields` (`packages/engine/src/ruleset.ts:654`) builds its `consumed`
+set from trigger fields, deadline-consumed fields and `askedWhenClauses` fields, and accepts a field
+appearing only in the third. That is the same code quoted in S1: the guard whose stated purpose is
+to catch fields that change nothing treats scoping-only consumption as sufficient, and
+`generator_present` is a published field in exactly that position today. For the short-circuit
+route, no guard is involved at all: the five rows above are published v2.8 rules behaving as
+written.
 
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question where the gate is read by no trigger and no firing rule's deadline
-reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
-touch it, because there is nothing in `verdictDetail` to render. Whether that is worth acting on
-before such a rule exists is the product owner's call, and this document does not make it.
+that gates a question, where no trigger evaluation propagates the gate and no firing rule's deadline
+reads it, reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix
+would not touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
+acting on before such a rule exists is the product owner's call, and this document does not make it.
 
 ## S5. What this does not establish
 
 - It does not show that any such gate is likely, or that anyone intends to write one. It shows the
-  loader accepts it and the engine goes quiet on it.
-- It does not measure `validateIntake` on the synthetic ruleset, which `parseIntakeContract` made
-  impossible. On the published ruleset, round 1 established that `"unknown"` is accepted for all
-  three gates that declare it.
+  loader accepts it, that v2.8 already carries scope-only gates, and that the engine goes quiet on
+  the shape.
+- The re-typing of `generator_present` from boolean to a three-state enum is synthetic. What it
+  shows is that IF the gate can carry `"unknown"`, the requirement below it is lost silently; it does
+  not show that anyone will re-type it. As published, `generator_present` is a boolean and
+  `validateIntake` rejects `"unknown"` for it, which is what closes this route on v2.8 today.
 - The probe uses `=` for the gate clause. Round 1 established that `!=` clauses keep dependents in
   scope, so a gate written with `!=` does not exhibit this.
+- S4's short-circuit result is measured on one submission (approved scenario A). Which rules
+  short-circuit depends on what their sibling conditions evaluate to, so the split is per-submission
+  rather than a property of the ruleset.
