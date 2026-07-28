@@ -221,6 +221,11 @@ the first three, so the change sets below are DERIVED rather than assembled, by 
 3. For every artifact that MOVES, include its status header and its BASELINE row. That pairing has
    been the missing half three times, so it is now part of the derivation and not a step to remember.
 4. Record the searches themselves, below, so the next round re-runs them instead of re-deriving them.
+5. **Check that every flag reaches a change set.** A derivation that finds a flag and a change set
+   that silently drops it is worse than not deriving, because it looks complete. This step exists
+   because it happened: three flags were derived and only two were carried, and
+   `docs/ARCHITECTURE-FUTURE.md:396` reached no option. The audit is one comparison, table against
+   change sets, and it is part of the procedure rather than a thing to remember.
 
 **The searches, runnable as written.** The artifact set is the APPROVED rows of `docs/BASELINE.md`,
 which is 25 files: `AGENTS.md`, `CONTRIBUTING.md`, `DEPLOY.md`, the nine approved `docs/*.md`, the
@@ -258,8 +263,8 @@ grep -nE "F-[0-9]{3}[–-]F-[0-9]{3}" <approved artifacts>
 | location | classification | why |
 |---|---|---|
 | `docs/ROADMAP.md:103` | **moves** under A and B | the standalone entry itself |
-| `docs/ROADMAP.md:90` | **moves** under A and B | F-408's entry, bounded under A, absorbing under B |
-| `docs/PRD.md:226` | **moves** under A and B | assigns the Square webhook to F-408; found round 2 for A, round 3 for B |
+| `docs/ROADMAP.md:90` | **moves** under A and under B's WIDENING branch | F-408's entry, bounded under A, absorbing under B's widening. B's narrowing branch records the broader capability as dropped and leaves F-408's entry as it is |
+| `docs/PRD.md:226` | **moves** under A and under B's WIDENING branch only | assigns the Square webhook to F-408. It does NOT move on B's narrowing branch, which keeps exactly that scope, so there is nothing to widen. An earlier revision marked it as moving under all of B, which contradicted the change set derived from this table |
 | `docs/ARCHITECTURE-FUTURE.md:336` | **moves** under A | maps webhooks to F-408 and no other id; found round 2 |
 | `docs/DESIGN.md:36` STAGE 4 `F-401–F-413` | **moves** under A | saturated |
 | `docs/ARCHITECTURE-FUTURE.md:331` `F-401–F-413` | **flagged, architecture ADR approval** | a second declared range covering the same band. A new F-414 sits outside it, and whether it belongs here or in the External integrations row at `:336` is a module-boundary question, routed to architecture. **Found by the range search, not by the id search** |
@@ -286,9 +291,26 @@ Line numbers are given only to locate the current text; the edits are described 
 
 ### Item 1, option A: assign a new F-id to the Phase 2 expansion
 
+**Option A has the per-user-preferences branch too, and an earlier revision gave it only to option
+B.** The Roadmap and the PRD assign three capabilities; the F-203 spec assigns four. Step 13 retargets
+the spec sentence that names all four, so a replacement naming only three either moves the fourth
+without assigning it anywhere or needs different edits. The branch is the same one option B carries,
+and the product owner answers it once for whichever option is taken.
+
+- **RETAIN under the new id:** steps 1, 3 and 13 all name four capabilities, and the new Roadmap entry
+  and PRD line read "escalations, digests, team reminders, per-user preferences".
+- **LEAVE IT WITH F-203:** steps 1 and 3 name three, and step 13 rewrites the spec sentence to split
+  them, assigning three to the new id and keeping per-user preferences with F-203. The spec then
+  describes two destinations rather than one, which is more spec text than the retain branch.
+- **DROP IT:** steps 1 and 3 name three, and step 13 removes per-user preferences from the spec
+  sentence and records it as dropped rather than moved.
+
+The steps below are written for the retain branch, which is the one that keeps all four capabilities
+together; the other two branches change steps 1, 3 and 13 as described.
+
 1. `docs/ROADMAP.md:57`: replace `- **F-203 (full)** — alert escalations, digests, team reminders.`
    with an entry naming the new id, for example `- **F-215 · Alert Escalations & Digests** — alert
-   escalations, digests, team reminders (the Phase 2 depth of F-203).`
+   escalations, digests, team reminders, per-user preferences (the Phase 2 depth of F-203).`
 2. `docs/DESIGN.md`, lifecycle model: extend STAGE 2's declared range from `F-201–F-214` to
    `F-201–F-215`. Required because the range is saturated.
 3. `docs/PRD.md:206`: **required, and missing from an earlier revision of this list.** It carries the
@@ -299,7 +321,7 @@ Line numbers are given only to locate the current text; the edits are described 
 5. `docs/DESIGN.md` status header: record the range extension.
 6. `docs/PRD.md` status header: record the retarget.
 7. `specs/F-203-deadline-alerts.md` status header: **required, and missing from an earlier revision.**
-   Step 11 edits the spec's content, so leaving its approval metadata alone would publish a spec whose
+   Step 13 edits the spec's content, so leaving its approval metadata alone would publish a spec whose
    text points at the new id while its own header still describes the previously approved version.
 8. `docs/DESIGN.md:27`, the absorption policy: an amendment or a recorded approved exception, per the
    compliance finding above, with its own status-header entry.
@@ -314,8 +336,13 @@ Line numbers are given only to locate the current text; the edits are described 
     therefore needs a second approval route, not just a further artifact**, and an earlier revision
     of this list routed it to the product owner by default. Surfaced by the range search recorded
     above, which neither the id search nor the capability search reaches.
-11. Tracker: open the F-215 issue; F-203's own issue needs no change.
-12. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
+11. `docs/ARCHITECTURE-FUTURE.md:396`: **flagged, architecture ADR approval, and missing from an
+    earlier revision of this list.** It names F-203 alone as the outbound worker's alert consumer. If
+    F-215 takes the alert depth, the architecture owner still has to decide whether that list keeps
+    F-203 alone, names F-215 beside it, or replaces it. The derivation flagged this and the change set
+    dropped it, which is the failure mode step 5 of the procedure now audits for.
+12. Tracker: open the F-215 issue; F-203's own issue needs no change.
+13. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
    "Phase 2 (F-203 full, per ROADMAP)". Step 1 removes the `F-203 (full)` entry that sentence points
    at, so without this edit an APPROVED spec cites a Roadmap entry that no longer exists. Governance
    §5 makes that a conflict requiring reconciliation, so option A either retargets the pointer to the
@@ -327,10 +354,22 @@ Line numbers are given only to locate the current text; the edits are described 
 
 1. `docs/ROADMAP.md:57`: keep the entry, and record that the Phase 2 depth is scheduled under
    F-203 by decision rather than by default.
-2. `specs/F-203-deadline-alerts.md`: the Phase 2 scope becomes in-scope for this spec, which means
-   §7's contents list applies to it: acceptance criteria, fixtures, footprint, rollout for
-   escalations, digests and team reminders. The existing "Phase 1 Scope Cut" section becomes a phase
-   boundary inside one spec rather than a deferral to a different id.
+2. `specs/F-203-deadline-alerts.md`: record that the Phase 2 depth stays under F-203 by decision.
+   The existing "Phase 1 Scope Cut" section becomes a phase boundary inside one spec rather than a
+   deferral to a different id.
+
+   **This does NOT pull §7's contents list forward, and an earlier revision of this step did.** That
+   step required acceptance criteria, fixtures, footprint and rollout for escalations, digests and
+   team reminders as part of choosing the id, which contradicts this brief's own finding above: the
+   Phase 2 depth is PLANNED scope, `PRD.md:187` and `DESIGN.md:105` say specs are written when
+   scheduled, and §7 does not bite until then. Writing that content now is the scheduling change, not
+   the id change.
+
+   **So the two are separated, and only the first is on the table.** Choosing option B assigns the id
+   and records the decision. When the work is later scheduled, §7's contents list applies to this spec
+   and that is a second change set with its own approval, exactly as it would be for a new id under
+   option A. Leaving them fused meant choosing option B silently took on a Phase 2 spec obligation the
+   product owner is not being asked for, and made option B look more expensive than it is.
 3. `specs/F-203-deadline-alerts.md` status header, plus its BASELINE row.
 4. `docs/ROADMAP.md` status header and BASELINE row.
 5. `docs/PRD.md:206`, **on the RETAIN branch only.** Option B inherits the per-user preferences
@@ -565,10 +604,29 @@ mismatch, and the version-pinned test expectations. Two documents deriving that 
 how they come to disagree about what publishing costs, so the enumeration lives there and is
 referenced here.
 
-So the honest statement of the cost is: the research pass is four URLs and a judgement, and the
-publication it feeds is a ruleset version bump with its baseline row, digest, lineage record, boot
-constants, pinned tests, changelog and replay verification. The first is small and the second is not,
-and an earlier revision of this brief showed only the first.
+**The research pass is two passes with different shapes, and an earlier revision priced only the
+first.** "Four URLs and a judgement" covers the SAPO deadline candidates and nothing else:
+
+- **The deadline re-fetch is BOUNDED.** Four known URLs, already located and read on 2026-07-22: the
+  CECM per-type deadlines page, `open-culture.page`, `single-block-festivals.page` and 50 RCNY §1-08.
+  Re-fetch behind a browser user-agent, record URL and date against each, form a judgement. The work
+  is knowable in advance because the starting points exist.
+- **The block-party alcohol candidate is bounded on the same terms**, one more URL, and an earlier
+  revision left it out of the count entirely.
+- **The street-event, festival and parade alcohol claims are OPEN-ENDED.** This brief has already
+  established that NO candidate lead exists for any of them, so there is no URL to re-fetch and no
+  starting point to bound the work. It is source discovery, not verification, and it may end with no
+  source found after any amount of effort. That is a real possible outcome rather than a failure of
+  the pass.
+
+**And the open-ended half does not change whether a publication happens**, which is what makes the
+distinction safe to state. Both outcomes of that investigation land in the same workflow: a source
+found promotes the claim, a source not found narrows or removes the assertion or changes the status,
+and each is an edit to an immutable published ruleset. So the honest statement is that one half is a
+bounded re-fetch, the other is unbounded research whose result changes the CONTENT of a publication
+and not its necessity, and the publication itself is a ruleset version bump with its baseline row,
+digest, lineage record, boot constants, pinned tests, changelog and replay verification, per PR
+#171's enumeration cited above.
 
 **And finding no source does NOT avoid the publication cost**, which an earlier revision of this
 section claimed. If the search for the three alcohol categories comes back empty, that settles the
@@ -663,6 +721,29 @@ without deciding:
 | Item 5, fixtures and a rules-artifact check | follows whichever invariant is approved | **no** |
 
 **None of #144's five decisions is satisfied.** #136 carried only the rename, and it says so.
+
+**THE ADVISORY CONTRADICTION IS LIVE NOW AND DOES NOT WAIT ON THE AXIS DECISION.** An earlier
+revision of this brief ordered it behind #144's item 1, which let a future scope-axis choice govern a
+current defect. T-4 says the opposite in terms:
+
+> **Blocks F-109 and F-601. Not the shipped engine:** `COVERAGE_GAP` works today and §7.1's values are
+> implemented nowhere, so no current work waits on this.
+
+The two advisories are PUBLISHED, in the shipped ruleset, and they contradict the shipped legend
+today: both assert regulatory content while `COVERAGE_GAP` promises an advisory that asserts nothing,
+and three of `ADV-ALCOHOL-PUBLIC-001`'s four categories have no located candidate lead at all.
+Sequencing that behind item 1 leaves unsupported regulatory assertions live until unrelated Phase 2
+work is scheduled, which may be never on any date this brief can see.
+
+**So it is an independent current reconciliation.** It needs the verification owner and the rules
+reviewer, it needs the publication workflow described above whichever way the sources come back, and
+it needs neither the axis decision nor either #127 item. If the axis is later retired or redefined in
+a way that changes what `COVERAGE_GAP` means, that is a separate change against whatever the ruleset
+says at that point, and it is handled then.
+
+This is a change to WHEN, not only to what, and it is the most consequential correction in this
+revision: the previous ordering made a live defect wait on a decision that T-4 says blocks nothing
+shipped.
 
 T-4 adds one routing point worth carrying into the decision: because one option on the table would
 retire or redefine the shipped `COVERAGE_GAP`, a closing change taking that path is *also* a
