@@ -16,6 +16,8 @@ fields cannot boot without an approved regulatory source, and none is recorded i
 which makes the next step verification research rather than engineering. All three are reasons to revisit the framing before deciding, and they are in
 sections 1, 3 and 5.
 
+**Sixth revision.** Two findings applied. The safe restriction covers TEN of seventeen rather than eight, which corrects a figure used in the decision recorded on issue #107. And consuming two of the seventeen fields fails API boot rather than a test, the second engine dependency found hiding inside a rules publication; a third is now named.
+
 **Fifth revision.** Four further findings applied. One is NOT adopted as stated, and the document says why: the two conditionally asked booleans are safe, because a not-asked field makes its condition false rather than unknown, so nothing is emitted. One of my own sentences is withdrawn as having priced a field the registry does not contain. The 17-field inventory is now propagated to every downstream total with each derivation stated. A universal negative about agency publication is restated as what was searched and what was found, and the approval list goes from two owner sets to four, cited by row content rather than by a section number.
 
 **Fourth revision.** Four further findings applied, all verified through the guards named in section 3.
@@ -104,8 +106,36 @@ already implements the issue's own second half, stay silent when the absence fol
 organizer never mentioned, at the engine level and without a rule change. Whatever line is chosen, that
 half is free for any gate whose `asked_when` is not satisfied.
 
-What remains partial is the coverage, not the safety: boolean-only still drops nine of seventeen fields,
-and the nine dropped are exactly where section 0's unknown route lives; or accepting that the proposal does not work for enum gates
+**Corrected in review, and this changes a figure the product owner has already used.** An earlier
+version said the safe restriction covers eight fields and drops nine. It covers **ten and drops seven**,
+because both multi_enum fields are safe by the same argument as the booleans and were wrongly grouped
+with the enums.
+
+`structure_types` and `open_flame_or_cooking` are always asked, non-nullable, and neither declares
+`"unknown"` among its values. Verified through the guards in order, guard 1 `parseIntakeContract`,
+guard 2 `validateIntake`, guard 3 `evaluate`, every route to an unknown state is closed on both:
+
+| Route | structure_types | open_flame_or_cooking |
+|---|---|---|
+| explicit `"unknown"` | `invalid_value` | `invalid_value` |
+| `["unknown"]` | `invalid_value` | `invalid_value` |
+| `null` | `required` | `required` |
+| omitted | `required` | `required` |
+| `[]` empty | `invalid_value` | `invalid_value` |
+| answered `["none"]` | confirmation emits correctly | confirmation emits correctly |
+
+**So the safe split is ten of seventeen covered and seven dropped, and the seven dropped are exactly the
+seven unknown-capable enums.** The seven are `obstructs_public_way`, `event_open_to_public`,
+`food_affinity_private_exception_claimed`, `sound_audible_from_public_way`, `structure_over_10ft_tall`,
+`venue_license_covers_event_area` and `venue_has_assembly_approval`. That is a cleaner boundary than the
+earlier figures suggested: the restriction drops precisely the fields section 0's defect can reach, and
+nothing else.
+
+**This figure is recorded elsewhere.** The decision recorded on issue #107 used the eight-and-nine split.
+On the corrected numbers the remedy costs two fewer fields than that record assumes, which is stated
+here so the record can be amended against it rather than left to be rediscovered.
+
+What remains partial is coverage, not safety; or accepting that the proposal does not work for enum gates
 as shaped.
 
 ## 1. The proposed line, applied
@@ -622,6 +652,15 @@ Two specifics worth having:
   is not a passenger on a publication, it is an engine change that a publication then depends on, so it
   cannot share a bump with the other two until the engine work lands and is approved under the same
   verification-owner plus engine-owner class its own file header names.
+
+- **Is there a third code change hiding inside a publication? Yes, and it is in `apps/api` rather than
+  the engine.** The first was the sequencing bindings; the second is the `UNCONSUMED_INTAKE_FIELDS`
+  removal in section 3. The third is `EXPECTED_RULE_COUNT` in `apps/api/src/ruleset.ts`, which boot
+  validation compares against the published rule count and rejects on mismatch, so adding N confirmation
+  rules fails API boot until that constant moves too. Three so far, on three different files, and each
+  was found by driving a proposed change through the guards rather than by reading the ruleset. A fourth
+  is conditional rather than certain: if section 0's chosen remedy is the one that emits only on a TRUE
+  trigger, that is `resolveFindings`, which is engine source again.
 - **The TPA re-attribution's ordering dependency is already satisfied.** It edits
   `deadline.qualification`, which was one of the two lines `specs/F-202` cited by number. PR #163 has
   MERGED, so F-202 now cites the field paths and this edit can no longer silently falsify the spec.
