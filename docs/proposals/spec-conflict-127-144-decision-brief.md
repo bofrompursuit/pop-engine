@@ -40,9 +40,15 @@ un-idented bullet in a list of F-7xx admin features.
 
 ## One correction to the framing this task was dispatched with
 
-F-203's spec has **not** been amended today. Its last three amendments were all on **2026-07-26**
-(`74551f3`, `e4f04b1`, `33eac8c`); there are zero commits touching it on 2026-07-27. Nothing about
-the decision changes, but the spec is not moving under the decision either.
+The framing said F-203's spec was being amended alongside the decision. It was, and an earlier
+revision of this section denied it: measured against `a7158c6`, `specs/F-203-deadline-alerts.md`
+carries three commits dated **2026-07-27** (`65730ec`, `951d2f4`, `54f659b`), on top of the
+2026-07-26 group (`74551f3`, `e4f04b1`, `33eac8c`). The spec IS moving alongside the decision.
+
+That does not change either option's change set, because none of those commits touches the Phase 1
+Scope Cut sentence the decision turns on. It does mean the spec is under active amendment, so
+whichever option is taken should be sequenced against whatever is in flight on it rather than
+assuming a static file.
 
 ## The finding that most narrows item 1
 
@@ -132,6 +138,25 @@ points at.
 Nothing here forbids option A. An approved policy can be amended by the body that approved it, and
 the product owner may decide that a phase of a feature is not a "closely related capability" in the
 rule's sense. What is corrected is the claim that option A needs no such decision.
+
+**BOTH ITEMS COLLIDE WITH THE SAME DESIGN SECTION, FROM OPPOSITE DIRECTIONS, and that is the shape
+of the decision rather than two separate hazards.** `docs/DESIGN.md` lines 24 to 26 carry three ID
+rules, and one branch of each item runs into one of them:
+
+| | the branch | the rule it runs into |
+|---|---|---|
+| item 1, option A | mints F-215 for the Phase 2 depth of F-203 | `:26` capabilities are absorbed rather than **split** |
+| item 2, widening | grows F-408 from inventory alerts into POS integrations | `:25` an assigned ID's **meaning never changes** |
+
+One splits where the policy says absorb; the other changes a meaning where the policy says meanings
+are fixed. The two branches that DO NOT collide are item 1 option B (expand F-203 explicitly, which
+is absorption) and item 2's narrowing branch (keep F-408 as it is and record the broader scope as
+dropped). So on the policy as written, one option per item is clean and the other needs an amendment
+or a recorded exception, with the status and BASELINE consequences either carries.
+
+That is a statement about what the approved text says, not a recommendation. The product owner may
+amend the policy, or decide these are not the cases it names. What this brief corrects is having
+previously priced both collisions at zero.
 
 **This should be read consistently with PR #171**, which proposes absorbing a host/guest
 authorisation spec into F-108 under this same rule. If the rule reaches that case it reaches this
@@ -348,21 +373,34 @@ one being written more carefully: A touches an approved spec that B was already 
    webhook that already exists and the broader POS capability is recorded as dropped. This brief does
    not choose, and does not assume the first, because the second is a real answer: `ROADMAP.md:103` is
    a one-line entry with no spec and no stated contents beyond its own title.
-4. `docs/PRD.md` status header, if it moves under the decision above.
-5. `docs/ROADMAP.md` status header, and the BASELINE rows for both documents that move.
-6. No DESIGN.md change, no new id, no new tracker issue.
+4. `docs/DESIGN.md:25`, **on the widening branch only**: "Once assigned, an ID's meaning never
+   changes, and IDs are never reused." Widening F-408 from `Inventory Low-Stock Alerts` into the
+   broader standalone `Square/POS integrations` capability changes what F-408 means, which is the
+   case that rule names. The widening branch therefore needs the same treatment as item 1 option A:
+   an amendment to that line or a recorded approved exception, with its status-header entry.
+   **The narrowing branch needs none of this**, which is the sharpest practical difference between
+   the two branches and was not visible before: keeping F-408 at the existing inventory webhook and
+   recording the broader POS capability as dropped changes no id's meaning.
+5. `docs/PRD.md` status header, if it moves under the decision above.
+6. `docs/ROADMAP.md` status header, and the BASELINE rows for every document that moves, which is
+   two on the narrowing branch and three on the widening branch once DESIGN.md is included.
+7. No new id and no new tracker issue on either branch.
 
 This is the option DESIGN.md's absorption rule and its two precedents point at, and still the
 cheapest of the four. It is no longer a single-artifact change: an earlier revision called it that,
 counted before the PRD assignment was found.
 
-## Sequencing note: PR #131
+## Sequencing note: PR #131, which has merged
 
-**PR #131 is OPEN** and its footprint **includes `specs/F-203-deadline-alerts.md`** (53-file
-footprint; confirmed by its file list). Item 1 option B edits that spec, and so does option A if the
-decision retargets the Scope Cut pointer. Either must land after #131 merges or be coordinated with
-its owner. Item 1 option A without a pointer retarget, and both item 2 options, do not touch that
-file and are not blocked.
+**This blocker no longer exists.** It is recorded rather than deleted because option B was priced as
+sequencing-blocked on the strength of it, and the product owner was being asked to carry that.
+
+`8d91e8c` merged PR #131 into `a7158c6`. Its footprint included `specs/F-203-deadline-alerts.md`, so
+while it was open, item 1 option B's edit to that spec, and option A's if the pointer is retargeted,
+had to land after it or be coordinated with its owner. Neither does now.
+
+Two consequences: option B is no longer the slower option on sequencing grounds, and the two options
+no longer differ on when they could start.
 
 ---
 
@@ -473,15 +511,34 @@ So what the dossier establishes is narrower than either side of the round-1 exch
 | alcohol prohibited at festivals | **no candidate lead located** |
 | alcohol prohibited at parades | **no candidate lead located.** "parade" appears nowhere in the dossier |
 
-**What promotion would cost.** The dossier records its own method: every URL was fetched on
-2026-07-22 and read before quoting, and most nyc.gov and codelibrary.amlegal.com pages return HTTP
-403 to generic fetchers and need a browser user-agent. A verification-owner pass over the four
-deadline claims is therefore a re-fetch and read of the CECM per-type deadlines page,
-`open-culture.page`, `single-block-festivals.page` and 50 RCNY §1-08, recording URL and date checked
-against each and updating the `verification` block under a named reviewer. Four URLs and one
-rules-file edit, by the one person governance allows to do it. For the three alcohol categories there
-is nothing to promote: that pass would be a search for a source not located in two research rounds,
-and its outcome may be that none exists.
+**What promotion would cost, and it is not four fetches.** An earlier revision priced it as a
+re-fetch of four URLs plus one `verification` edit. That is the research half only, and it omits the
+publication workflow that a change to a rule's `verification` block triggers, because the rules file
+is a published artifact:
+
+- `ARCHITECTURE-FUTURE.md:26` and `:101` make a published ruleset immutable and require the version
+  pointer to advance rather than the file to be edited in place, so a promotion is a NEW ruleset
+  version, not a field update.
+- `BASELINE.md:3` requires the baseline update in the same PR as the status change.
+- `DOCUMENTATION-GOVERNANCE.md:137` requires the regulatory suite, the changelog and replay
+  verification after publication.
+
+**PR #171 has already enumerated this same workflow, and this brief cites it rather than deriving a
+second account of it.** Its "Every constant coupled to the published artifact, enumerated once"
+section sweeps the couplings rather than listing the ones anyone remembered, including the boot
+comparisons in `apps/api/src/ruleset.ts` that fail the API at startup on a version or rule-count
+mismatch, and the version-pinned test expectations. Two documents deriving that list separately is
+how they come to disagree about what publishing costs, so the enumeration lives there and is
+referenced here.
+
+So the honest statement of the cost is: the research pass is four URLs and a judgement, and the
+publication it feeds is a ruleset version bump with its baseline row, digest, lineage record, boot
+constants, pinned tests, changelog and replay verification. The first is small and the second is not,
+and an earlier revision of this brief showed only the first.
+
+For the three alcohol categories there is nothing to promote and therefore none of this cost: that
+pass is a search for a source not located in two research rounds, and its outcome may be that none
+exists.
 
 **So the issue's original statement is closer to right than either round-1 revision allowed**, and
 precisely: `ADV-ALCOHOL-PUBLIC-001` asserts a prohibition for three categories with no located
@@ -567,13 +624,15 @@ regulatory status change, and the other two paths do not reach the verification 
 choice of option determines which owners must sign, and two of the three options can be fully
 approved without the only owner who changes verification statuses.
 
-## A defect in where those approval classes are recorded
+## A defect in where those approval classes were recorded, since fixed
 
-OPEN-QUESTIONS T-4 cites governance **"§98", "§95" and "§93"**. `DOCUMENTATION-GOVERNANCE.md` has
-sections **§1 through §10 only**; none of those three exists. The intended references are almost
-certainly rows of §6's change-class table, but this brief does not guess which and does not edit the
-register. Flagged because T-4 is the artifact a reader would consult for the approval routing, and
-three of its citations lead nowhere.
+An earlier revision flagged OPEN-QUESTIONS T-4 for citing governance "§98", "§95" and "§93" when
+`DOCUMENTATION-GOVERNANCE.md` has §1 through §10 only. **That is fixed on `a7158c6`:** `7626391`
+merged PR #161, "Cite governance change classes by their rows, not by line numbers read as sections",
+and T-4 no longer carries those citations. The approval routing a reader consults is sound.
+
+Retained rather than deleted because the flag was raised to the product owner and its disappearance
+is part of the record. Nothing in either decision depends on it.
 
 ---
 
@@ -584,20 +643,26 @@ Stated as observations, not recommendations.
 **#127 item 1** is narrower than filed, and narrower again than an earlier draft of this brief made
 it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
 scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
-choice that becomes live when that work is scheduled. Option B touches one spec and one Roadmap line,
-and its PR #131 sequencing block has merged away. Option A touches FIVE approved artifacts once the
+choice that becomes live when that work is scheduled. Option B touches TWO approved artifacts, the
+Roadmap and the F-203 spec, plus both of their status headers and BASELINE rows, and its PR #131
+sequencing block has merged away. Option A touches FOUR approved artifacts at five locations once the
 derivation above is run rather than a list assembled: the Roadmap entry, `docs/PRD.md:206`, the F-203
-spec pointer its own step 1 invalidates, DESIGN.md's saturated STAGE 2 range, and DESIGN.md's
-absorption rule, which option A needs amended or excepted because it is the split that rule names.
-Two further locations are flagged rather than priced, both declared id ranges in
+spec pointer its own step 1 invalidates, and `docs/DESIGN.md` twice, for its saturated STAGE 2 range
+and for the absorption rule option A needs amended or excepted because it is the split that rule
+names. Two further locations are flagged rather than priced, both declared id ranges in
 `docs/ARCHITECTURE-FUTURE.md`. **Option A is therefore not compliant as written**, which an earlier
 revision of this brief denied; it becomes compliant with a decision the product owner is entitled to
 make and has not yet been asked for.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
-only one of the four change sets that touches a single artifact.
+cheapest of the four change sets. It is **not** a single-artifact change, which an earlier revision
+of this summary said twice: on the narrowing branch it touches the Roadmap and `docs/PRD.md:226`, and
+on the widening branch it touches `docs/DESIGN.md:25` as well, because widening F-408 changes an
+assigned id's meaning. Which branch is taken is itself a product-owner decision this brief does not
+make, and the two branches differ in artifact count as well as in scope.
 
 **#144** has lost one of its three internal-inconsistency bullets to #146 and retains one live
 regulatory item, the two claim-bearing advisories, which is the only part with a named owner who has
-not signed anything. Items 1 and 2 remain untouched by anything that has merged, and the F-109 draft
-they depend on is stale against #136 in three ways.
+not signed anything. Items 1 and 2 remain untouched by anything that has merged as of `a7158c6`, and the F-109 draft they
+depend on is stale against #136 in three ways; that draft is on PR #134, which is still OPEN on the
+recorded tree and so is still a draft rather than an approved mapping.
