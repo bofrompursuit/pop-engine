@@ -6,10 +6,20 @@ This document is a MEASUREMENT. It proposes no change, recommends no option and 
 issue #108. The branch carrying it contains no rule, ruleset, spec, answer-key, manifest or engine
 change.
 
-Measured at `bd8d05e`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, suite size 1196. Every
-measurement below was driven through the guards the product uses, in order:
-`parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan path (`apps/api/src/plan.ts`,
-`apps/web/app/plan/verdict-copy.ts`). No engine internal was called directly.
+Measured at `bd8d05e`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, suite size 1196. Round 4's
+corrections (the rebuilt S2 probe, the `readChecked` runtime measurement in R3, the branch-versus
+threshold split and the reachable-unknown recount in R5, and the `unknownFields` sources in S4) were
+re-measured on the rebased branch at `776dda2`, suite size 1356, against the same ruleset.
+
+**Which guards each measurement went through, because they are not the same.** Every measurement
+against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
+through the full chain in order: `parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan
+path (`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`), with no engine internal called
+directly. The SYNTHETIC probe in S2/S3 did NOT go through that chain: `parseEngineRuleset` accepted
+it, `parseIntakeContract` REJECTED it for a reason unrelated to the shape under test (S2), so
+`validateIntake` was never run on it, and `evaluate` was given a hand-built intake record assembled
+the way `validateIntake` persists one. S3's numbers are therefore an `evaluate`-and-below result,
+not an end-to-end one.
 
 PR #167 measured a gate that was legitimately NOT ASKED because its parent held a different value.
 This measures a gate that was ASKED and ANSWERED `"unknown"`, which is the case issue #108's title
@@ -297,8 +307,9 @@ For the same submission, every member measured:
 | `minSlackDays` | null | n/a |
 | `rescopeSuggestions` | empty | n/a |
 
-**The branches are not dropped by the renderer. They are dropped at the type boundary.**
-`apps/web/app/plan/plan-api.ts:134` defines what the web consumes:
+**The branches are not dropped by the renderer, and rounds 1 to 3 were wrong to say they are
+dropped at the type boundary. Nothing drops them. They are present at runtime and no code looks
+at them.** `apps/web/app/plan/plan-api.ts:134` defines what the web consumes:
 
 ```ts
 export type ConsumedVerdictDetail = Omit<
@@ -306,11 +317,35 @@ export type ConsumedVerdictDetail = Omit<
 > & { readonly missingFacts: readonly Pick<MissingFact, "field">[] };
 ```
 
-with `MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString }`. So
-`branches` and `thresholds` are projected away before any component sees them, and
-`unresolvedTimelines`, `trace`, `blockingFinding`, `missedRuleIds` and `rescopeSuggestions` are not
-in `ConsumedVerdictDetail` at all. `unresolvedTimelines` reaches the screen by another path: it is
-carried on the finding, not on the verdict detail.
+with `MISSING_FACT_CHECKS: FieldChecks<Pick<MissingFact, "field">> = { field: isString }`.
+
+That is a NARROWING, not a PROJECTION, and the distinction is the whole point. `readChecked` in
+`apps/web/app/plan/validated.ts:53` validates the properties named in `checks` and then does
+`return record as T` (line 60) on the object it was handed. `shapedLike` (line 64) is a type
+predicate over `readChecked`, and `arrayOf` (line 84) is `Array.isArray(value) && value.every(check)`.
+No member is copied, deleted or rebuilt anywhere on that path. The declared type narrows to
+`Pick<MissingFact, "field">`; the runtime value is whatever the API sent.
+
+Measured, by taking the six approved scenarios through `evaluate`, JSON round-tripping the
+`missingFacts` array the way the wire does, and running it through the web's own parser:
+
+```
+Scenario E  AFTER_READCHECKED [["field","branches","thresholds"],["field","thresholds","branches"]]
+Scenario F  AFTER_READCHECKED [["field","thresholds","branches"],["field","thresholds","branches"]]
+```
+
+So `branches` and `thresholds` arrive in the browser and sit there unread. `unresolvedTimelines`,
+`trace`, `blockingFinding`, `missedRuleIds` and `rescopeSuggestions` are likewise not declared in
+`ConsumedVerdictDetail` but likewise not stripped by it. `unresolvedTimelines` reaches the screen by
+another path: it is carried on the finding, not on the verdict detail.
+
+**What this changes about the F-102 AC 6 work.** Since the values already arrive, AC 6 is not a
+plumbing task. No API change, no new response member, no serialization work: `apps/api/src/plan.ts`
+stores and returns `verdict_detail` whole. The work is to declare what is already there
+(`ConsumedVerdictDetail` and `MISSING_FACT_CHECKS` widened from `Pick<MissingFact, "field">` to the
+members the table needs, with the checks to match) and to write the component that renders it.
+Rounds 1 to 3 described this as data being dropped in transit and repeated that to the product
+owner twice; it sizes the work larger than it is.
 
 On whether the UI honours the engine's own completeness rule: `verdict.ts` treats leaving a branch
 out as a defect ("drop it from the branch table (P1-B)"). The UI does not render the table, so the
@@ -342,17 +377,45 @@ Measured across the six approved scenarios, through the same component path:
 | E | CONDITIONAL | `tent_area_sqft`, `structure_over_10ft_tall` | 1 | none |
 | F | CONDITIONAL | `sound_audible_from_public_way`, `venue_license_covers_event_area` | 2 | none |
 
-**Two of the six approved scenarios already reach the unrendered branch table today**, with no
-unknown gate involved. The `sapo_event_type` case measured in round 1 is a third situation, not the
-only one.
+**These are two distinct rendering gaps, not one.** A missing fact does not always carry branches.
+When `alternativeValues` returns no enumerable candidates, `evaluateConditional` pushes
+`{ field, branches: [], thresholds: publishedThresholds(field, ruleset) }` instead
+(`packages/engine/src/verdict.ts:199`), which is a threshold string with no branch table at all.
+Scenario E contains one of each, measured:
 
-Upper bound on the surface: **15 of the 25 fields referenced by rule triggers are enumerable**
-(enum, multi-enum or boolean) and can therefore produce a branch table when they resolve unknown:
-`location_type`, `obstructs_public_way`, `sapo_event_type`, `street_event_size`,
-`has_amusement_ride`, `event_open_to_public`, `food_present`, `selling_anything`,
-`amplified_sound`, `sound_audible_from_public_way`, `structure_types`, `structure_over_10ft_tall`,
-`open_flame_or_cooking`, `alcohol`, `venue_license_covers_event_area`. The remaining 10 are numeric
-or date fields, which produce a `thresholds` string instead, also unrendered.
+```
+E: [{"field":"tent_area_sqft","branches":0,"thresholds":"DOB-TENT-001 applies above 400"},
+    {"field":"structure_over_10ft_tall","branches":2,"thresholds":null}]
+F: [{"field":"sound_audible_from_public_way","branches":2,"thresholds":null},
+    {"field":"venue_license_covers_event_area","branches":2,"thresholds":null}]
+```
+
+So **three of the six approved scenarios' missing facts reach an unrendered branch table** (one in
+E, two in F), and **one reaches unrendered threshold guidance instead** (`tent_area_sqft` in E,
+whose organizer is never told the 400 sqft number that decides the requirement). Having a missing
+fact and having a branch table are different conditions, and a fix for one does not cover the
+other. Rounds 1 to 3 collapsed them.
+
+Upper bound on the surface, recounted. Round 3 said 15 fields, taking every enumerable
+trigger-referenced field. That overstates it: `validateIntake` closes the route for a field that
+declares no `unknown` value. Measured, by submitting `"unknown"` and `null` for each of the 15
+against the published contract:
+
+- **8 of the 15 cannot resolve unknown at all.** `location_type`, `has_amusement_ride`,
+  `food_present`, `selling_anything`, `amplified_sound`, `alcohol`, `structure_types` and
+  `open_flame_or_cooking` are non-nullable and declare no `unknown` member, so `"unknown"` is
+  rejected `invalid_value` and `null` is rejected `required` (except where scoping makes the field
+  not applicable, which is not an unknown either).
+- **7 of the 15 can**, and each was accepted as `"unknown"` in at least one approved scenario:
+  `obstructs_public_way` (A, D, E), `sapo_event_type` (A, D, E), `street_event_size` (A),
+  `structure_over_10ft_tall` (E), `event_open_to_public` (all six),
+  `sound_audible_from_public_way` (F), `venue_license_covers_event_area` (F). Outside those
+  scenarios each is rejected `not_applicable` rather than accepted, so scope narrows the reachable
+  surface further per submission.
+
+The remaining 10 trigger-referenced fields are numeric or date, and take the `branches: []` path
+above: threshold guidance where the ruleset publishes one, nothing where it does not. Also
+unrendered.
 
 ## R6. What this round establishes and does not
 
@@ -360,9 +423,11 @@ Establishes:
 
 - rendering the branch table is an acceptance criterion of an approved spec, unimplemented;
 - the organizer sees a de-underscored field name and nothing else of the table;
-- the branches are dropped at the API-consumption type boundary, not by a component;
+- the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
+  than a plumbing one;
 - no renderer exists anywhere in the web app;
-- two of six approved scenarios reach it today, and 15 trigger-referenced fields can.
+- two of six approved scenarios reach it today, and 7 trigger-referenced fields can resolve
+  unknown; a further gap, unrendered threshold guidance, is separate from the branch table.
 
 Does not establish, and is outside this measurement:
 
@@ -404,8 +469,34 @@ So gating something is sufficient to be consumed. A gate read by nothing else lo
 
 ## S2. The synthetic ruleset
 
-Test scope only. It asserts no permit fact, names no agency or citation beyond a placeholder, and
-`rules/` is untouched. Carried here in full so the result is reproducible:
+**Correction to round 3.** The probe published in round 3 carried invented regulatory content: a
+rule id of `PROBE-REQUIREMENT-001`, `output: { permit_name: "Probe requirement", agency: "PROBE" }`,
+a `source` block with a citation and a `https://example.test/probe` url, and
+`verification: { status: "SOURCE_CONFIRMED" }` on a rule whose own citation read "synthetic probe,
+no source". That is a fabricated permit fact and a fabricated verification state, and being
+synthetic does not license it: AGENTS.md's rule is that a permit fact is never invented, and a
+reader scanning this file for permit-shaped content should not find any. All of it has been removed
+and the probe below re-measured from scratch. Nothing that content asserted was load-bearing for the
+result; the numbers in S3 are unchanged.
+
+What the parser actually requires of a rule, measured against `parseEngineRuleset` directly:
+
+| Member | Required? | Measured |
+| --- | --- | --- |
+| `verification` | **yes** | omitting it fails with `ruleset.rules[0].verification must be an object` |
+| `verification.status` | **yes** | `""` fails "must be a non-empty string"; `NOT_A_STATUS` fails "has unsupported value"; the four published statuses all parse |
+| `source` | no | omitted entirely, parses |
+| `output` | present but may be empty | `{}` parses; no `permit_name` or `agency` is demanded |
+| `id`, `kind`, `trigger` | yes | `kind` accepts permit, note, advisory, prohibition, registration |
+
+So the minimum that parses is an id, a `kind`, a trigger, `output: {}`, and a `verification.status`
+from the published set. `RESEARCH_REQUIRED` is the choice because the parser leaves no way to omit
+a status and that status is the one whose meaning ("nothing is confirmed about this") is true of a
+probe. `SOURCE_CONFIRMED` would have parsed equally well and asserted something false. The id says
+what the thing is rather than naming a requirement.
+
+Test scope only. It asserts no permit fact, names no agency, permit or citation, and `rules/` is
+untouched. Carried here in full so the result is reproducible:
 
 ```ts
 const SYNTHETIC = {
@@ -425,12 +516,12 @@ const SYNTHETIC = {
   ],
   rules: [
     {
-      id: "PROBE-REQUIREMENT-001",
+      id: "PROBE-SYNTHETIC-NOT-A-RULE",
       kind: "permit",
       trigger: { all: [{ field: "dependent_field", op: "eq", value: true }] },
-      output: { permit_name: "Probe requirement", agency: "PROBE" },
-      verification: { status: "SOURCE_CONFIRMED" },
-      source: { citation: "synthetic probe, no source", urls: ["https://example.test/probe"] },
+      // Empty. The probe measures whether the gate is reported, not what the rule would say.
+      output: {},
+      verification: { status: "RESEARCH_REQUIRED" },
     },
   ],
   advisories: [],
@@ -452,7 +543,7 @@ Driven through the guards in order:
 
 | Answer to `gate_field` | Verdict | Findings | `missingFacts` | `unresolvedTimelines` | Gate named anywhere in the plan |
 | --- | --- | --- | --- | --- | --- |
-| `"yes"` + `dependent_field: true` | FEASIBLE | `PROBE-REQUIREMENT-001` | none | none | no |
+| `"yes"` + `dependent_field: true` | FEASIBLE | `PROBE-SYNTHETIC-NOT-A-RULE` | none | none | no |
 | `"no"` | FEASIBLE | none | none | none | no |
 | **`"unknown"`** | **FEASIBLE** | **none** | **none** | **none** | **no** |
 
@@ -467,7 +558,7 @@ plan(gate_field = "no") === plan(gate_field = "unknown")   ->   true
 
 The two plans are byte-identical JSON. There is no channel, rendered or unrendered, that
 distinguishes "I do not know whether this applies" from "this does not apply". The `trace` is
-identical too: `[{"ruleId":"PROBE-REQUIREMENT-001","result":"false"}]` in both cases, so even the
+identical too: `[{"ruleId":"PROBE-SYNTHETIC-NOT-A-RULE","result":"false"}]` in both cases, so even the
 unrendered diagnostic channel records the unknown answer as a settled false.
 
 **For contrast, the engine handles an unanswered DEPENDENT correctly.** With
@@ -477,7 +568,7 @@ branch table:
 ```json
 { "field": "dependent_field", "branches": [
   { "value": "true",  "verdict": "FEASIBLE", "reason": "same findings, re-dated" },
-  { "value": "false", "verdict": "FEASIBLE", "reason": "drops PROBE-REQUIREMENT-001" } ] }
+  { "value": "false", "verdict": "FEASIBLE", "reason": "drops PROBE-SYNTHETIC-NOT-A-RULE" } ] }
 ```
 
 So the gap is specific to the GATE. An unknown one level down is branched; an unknown at the gate is
@@ -497,11 +588,29 @@ Remove that overlap, as the synthetic ruleset does, and the whole surfacing appa
 Round 1 said the scoping layer "returns a set with no record of what it excluded or why"; this
 measures what that costs when nothing else happens to compensate.
 
+**The exact condition, narrower than round 3 stated it.** Round 3 said the silence follows whenever
+no trigger reads the gate. That is too broad. `resolveFindings` builds `unknownFields` from two
+sources, not one (`packages/engine/src/findings.ts:260` and `:263`): trigger evaluation, and
+`finding.deadlineUnknownFields` on each rule whose trigger did not evaluate false. A gate read by no
+trigger but read by a published deadline on a rule that does fire is still unioned in and still
+surfaces as a missing fact. The condition that produces silence is therefore:
+
+> the gate is consumed EXCLUSIVELY by `asked_when` scoping, that is, by no trigger and by no
+> deadline of any rule that fires.
+
+**Is that condition reachable by a valid published ruleset? Yes, and the parser is where it is
+licensed.** `rejectUnconsumedFields` (`packages/engine/src/ruleset.ts:654`) builds its `consumed`
+set from exactly three sources, trigger fields, deadline-consumed fields, and `askedWhenClauses`
+fields, and accepts a field that appears in only the third. That is the same code quoted in S1: a
+field consumed by scoping alone passes the guard whose whole purpose is to catch fields that change
+nothing. Nothing downstream of it objects either. The condition is not a theoretical corner of the
+type system; it is a shape the loader is written to accept.
+
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question without any trigger reading the gate reintroduces exactly the silent
-requirement-drop #108 alleges, and the F-102 rendering fix would not touch it, because there is
-nothing in `verdictDetail` to render. Whether that is worth acting on before such a rule exists is
-the product owner's call, and this document does not make it.
+that gates a question where the gate is read by no trigger and no firing rule's deadline
+reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
+touch it, because there is nothing in `verdictDetail` to render. Whether that is worth acting on
+before such a rule exists is the product owner's call, and this document does not make it.
 
 ## S5. What this does not establish
 
