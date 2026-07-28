@@ -217,11 +217,73 @@ have had to invent. **In this repository an unmentioned regulatory field is an i
 a permit fact**, which is the single thing this spec exists to prevent, so every field is either
 PINNED here or marked BLOCKED on a named owner. Nothing is left silent.
 
-**The ids below carry the word HOST and are therefore contingent on Approval Blocker 13.** Under route
-1 they name a relationship the output must not assert, and rule ids are visible: `PlanLine` renders
-`finding.ruleIds` on the line. Route 1 renames them on the same venue-neutral axis as the copy, for
-example `DOB-ASSEMBLY-VENUE-APPROVED-001` and `DOB-ASSEMBLY-VENUE-UNRESOLVED-001`. They are left as
-written here so the pinning stays readable against the earlier rounds, not because the choice is made.
+### THE IDS ARE RENAMED, because the earlier ones published the fact this feature must not infer
+
+Rounds 5 to 7 called these rules `DOB-ASSEMBLY-VENUE-APPROVAL-001` and, for the venue-neutral variant,
+`DOB-ASSEMBLY-VENUE-APPROVED-001`. **Both name an approval as held or in place, and the first rule
+fires on answers where nothing of the kind is known.** Its trigger term is `eq yes`, and an explicit
+`unknown` or an absent in-scope answer resolves that term tri-state `unknown`, on which the rule is
+DELIBERATELY EMITTED, per the emission table above. So on Scenario F and on Scenario A's rescope, the
+two cases this spec exists to handle carefully, the finding's own identifier would have told the
+operator that an approval is held. That defeats the premise, and no copy discipline anywhere else in
+the document can repair it, because the id is not copy: it is data that renders.
+
+**The ids are visible, and after PR #176 they are visible unconditionally.** `plan-line.tsx:133`
+joins them, `:135` falls `name` back to them, `:145` puts that in the `<h3>`, `:143` uses them for
+the `aria-labelledby` target, `:221` interpolates `name` into the disclosure label, and `:223`
+renders them inside a detail panel that PR #176 made unconditional precisely so nothing in it can
+disappear. There is no rendering path on which a rule id is private.
+
+**The axis is what the rule CHECKS, never what it found:**
+
+| Was | Is | Why |
+| --- | --- | --- |
+| `DOB-ASSEMBLY-HOST-HELD-001`, or `...-VENUE-APPROVED-001` | **`DOB-ASSEMBLY-VENUE-APPROVAL-001`** | names the question the rule reads, the venue's place-of-assembly approval answer, and no value of it |
+| `DOB-ASSEMBLY-HOST-UNRESOLVED-001`, or `...-VENUE-UNRESOLVED-001` | **`DOB-ASSEMBLY-VENUE-APPROVAL-002`** | same subject, and the branch is carried by the numeric suffix, which asserts nothing |
+
+The numeric suffix is the one new convention: no published id uses `-002` today, and every id ends
+`-001`. It is chosen for the property that makes it unattractive, that it is empty of meaning, since
+any word distinguishing the two branches is a word about the answer. `UNRESOLVED` was the near miss:
+it describes the operator's filing rather than the venue's answer, and it is true on every answer
+either rule fires on, but it reads as a finding about the venue when it sits beside `APPROVAL`.
+
+### Every string this feature introduces, tested for the same defect
+
+The test is the one the rename came from: **does this string state a fact about the answer, when the
+rule fires on more answers than one?** Applied to all of them, not only the ids:
+
+| String | Fires on | Verdict |
+| --- | --- | --- |
+| both rule ids | 001 on `yes`, explicit `unknown`, absent; 002 on `no`, explicit `unknown`, absent | FIXED above |
+| `output.requirement_name`, the `<h3>` and the disclosure label derived from it | both rules publish the SAME heading | PASSES, and the constraint is now explicit: it names the question and no answer, e.g. the venue's place-of-assembly approval and this event's own filing |
+| 001's `note_text` | `yes`, explicit `unknown`, absent | CONSTRAINED: it may not say the venue reports an approval, because on two of its three answers that is unknown. It says the answer does not settle this event's filing and to confirm with DOB, which is true on all three |
+| 002's `note_text` | `no`, explicit `unknown`, absent | CONSTRAINED the same way: it may not say the venue has no approval. It says this event's own filing is unresolved |
+| `output.agency`, `permit_name`, `deadline`, `fee`, `portal` | n/a | PASS by absence, pinned below |
+| the `aria-labelledby` DOM id | every render | PASSES as an attribute, but it points at the `<h3>`, so assistive technology reads whatever `name` resolves to, which is why the heading carries the same constraint |
+| this document's title and filename | n/a | FAILS on the relationship axis rather than the answer axis, and that is Approval Blocker 13's to resolve |
+| Scenario G's answer-key section title, if that fixture lands | one fixture, one answer | PASSES, and the distinction is worth stating: a fixture's answer IS known, so its title may name it. A rule fires on more answers than one, so its id may not |
+
+**An observation, not a decision: the rename makes route 1 read better.** With the ids on a
+subject-and-check axis, nothing in the rules names a relationship, and route 1 becomes a change to
+this document's framing alone rather than to the artifact. Route 2 could legitimately reintroduce a
+relationship word, since a published discriminator would make the relationship a known answer. The
+choice stays with the product owner.
+
+**Two things this audit found in code that the spec does not fix.**
+
+1. **The same defect is already shipped, for the analogous field.** `SLA-VENUE-LICENSE-001` fires on
+   `venue_license_covers_event_area eq yes` and, measured on the published ruleset, also emits on an
+   explicit `unknown`, carrying `NO_NEW_REQUIREMENT_IDENTIFIED` and an id naming the venue's licence.
+   That is an id and a disposition asserting a settled state on an unsettled answer. It is a published
+   rule, so it is out of this footprint and out of this spec's scope; recorded here because the next
+   round of this review will otherwise find it and think it is new. An issue is the right home.
+2. **A `RESEARCH_REQUIRED` rule renders "confirm with agency" twice.** `findings.ts:62` appends
+   `CONFIRM_WITH_AGENCY` to `notes` whenever the status is `RESEARCH_REQUIRED` or the deadline is
+   `not_calculable`, and `plan-line.tsx:194` renders it again as the line-level research paragraph.
+   No published rule carries `RESEARCH_REQUIRED`, so this has never been exercised, and both surviving
+   options in the verification-status conflict below land that status. It is a rendering defect in a
+   lane this feature does not touch, so it is reported rather than fixed, and it belongs to whoever
+   resolves that conflict.
 
 **Two rules, not one**, because a rule carries at most one `note_text` and the mapping above needs
 two texts. Their ids are pinned here because the answer key and the test files pin rule ids
@@ -229,7 +291,7 @@ literally, so an implementer choosing them alone would fork the artifact and its
 are engine identifiers and assert no regulatory fact; a rules reviewer may rename them provided
 both artifacts move in the same commit.
 
-| Field | `DOB-ASSEMBLY-HOST-HELD-001` | `DOB-ASSEMBLY-HOST-UNRESOLVED-001` | Status |
+| Field | `DOB-ASSEMBLY-VENUE-APPROVAL-001` | `DOB-ASSEMBLY-VENUE-APPROVAL-002` | Status |
 | --- | --- | --- | --- |
 | `kind` | `note` | `note` | PINNED, derived below |
 | `trigger.all` | the published gate verbatim (`location_type eq private_venue`, `headcount gte 75`) plus `venue_has_assembly_approval eq yes` | the same gate plus `venue_has_assembly_approval in ["no", "unknown"]` | PINNED |
@@ -237,11 +299,40 @@ both artifacts move in the same commit.
 | `output.requirement_name` | a short non-regulatory heading naming the question | the same heading | PINNED as PRESENT; see the double-render below |
 | `output.note_text` | confirms with DOB and asserts no reduction (F-1NN-AC-01) | states the operator's own filing is unresolved (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
 | `output.permit_name`, `agency`, `deadline`, `fee` | ABSENT | ABSENT | PINNED as absent |
+| `output.portal` | ABSENT | ABSENT | PINNED as absent; it renders "apply at" and a note is not an application |
+| `output.notes` | ABSENT | ABSENT | PINNED as absent; every entry renders as regulatory prose needing its own source |
 | `output.dedupe_key` | ABSENT | ABSENT | PINNED as absent, decided below |
 | `source.citation`, `source.urls` | cannot be settled inside this spec | same | **BLOCKED**: contract conflict, see below |
 | `verification.status` | cannot be settled inside this spec | same | **BLOCKED**: contract conflict, see below |
-| `verification.qualification`, `evidence` | point at the existing record of the silence, whichever status is chosen | same | **BLOCKED** on the verification owner |
+| `verification.qualification` | records the silence, and is USER-VISIBLE, not metadata | same | **BLOCKED** on the verification owner, as published prose |
+| `verification.evidence` | points at the existing record of the silence; not rendered | same | **BLOCKED** on the verification owner |
+| `verification.last_verified_date` | ABSENT | ABSENT | PINNED as absent, and only the verification owner may ever add one |
 | `exercised_by_scenarios` | `["F", "A-rescope"]` | `["F", "A-rescope", <the new explicit-no fixture>]` | PINNED per rule, derived against each trigger |
+
+**The three that had slipped the table, each read in `parseRule` and in the renderer rather than
+assumed.** Round 5 wrote that an unmentioned field is an invitation, and then left three unmentioned,
+so they are decided here:
+
+- **`output.portal`** is consumed at `packages/engine/src/ruleset.ts:443` into `portalName`,
+  `portalUrl` and `portalInstructions`, and `PlanLine` hands all three to `PortalBlock`, which renders
+  F-204's "apply at" route. ABSENT: these rules are not an application, `DOB-ASSEMBLY-001` already
+  publishes the TPA portal, and a second "apply at" beside it would invite a filing that does not
+  exist.
+- **`output.notes`** is concatenated into the finding's `notes` and rendered paragraph by paragraph.
+  Every entry is regulatory prose and would need its own source, which is the thing this feature has
+  none of. ABSENT, and the note text carries everything these rules say.
+- **`verification.last_verified_date`** renders as "last verified <date>" in the detail panel
+  (`plan-line.tsx:224`). ABSENT, and this one is not a preference: F-206 Acceptance Criterion 5 says a
+  date is stored only when every contributing rule publishes one and that no other date may stand in,
+  and the published legend reserves verification to the verification owner. A date here would print a
+  verification of a fact nobody verified. If the verification owner ever publishes one, note that
+  `mergeFindings` takes the earliest of two and null if either is missing, so it also changes what a
+  merged line would show.
+
+**And one correction inside the row above them.** `verification.qualification` was marked BLOCKED as
+though it were metadata. It is not: `findings.ts:61` appends it to `notes`, so whatever it says is
+rendered to the operator as a paragraph on the line. It is published prose subject to the same rules
+as `note_text`, including the answer-neutrality test above, and the row now says so.
 
 **`kind: note`, and the alternative was measured rather than assumed.** A `permit`-kind finding is
 trackable: `apps/api/src/checklist.ts` limits tasks to `permit` and `insurance`, so a permit-kind
@@ -373,7 +464,7 @@ from the published ruleset with a shared key added:
    in the schema or in `parseRule` prevents either order.
 3. **Merging re-keys the requirement, and live checklists pay for it.** F-202 identifies a
    requirement by its whole sorted rule-id set, so `[DOB-ASSEMBLY-001]` and
-   `[DOB-ASSEMBLY-001, DOB-ASSEMBLY-HOST-HELD-001]` are different requirements. On publication every
+   `[DOB-ASSEMBLY-001, DOB-ASSEMBLY-VENUE-APPROVAL-001]` are different requirements. On publication every
    existing checklist strikes its assembly row and appends an unstarted one, and the organizer's
    status, notes and uploaded documents stay on the struck row.
 
@@ -393,8 +484,8 @@ guard firing):
 
 | Answer | Emits | Note |
 | --- | --- | --- |
-| `yes` | HELD only | the `in ["no", "unknown"]` term resolves false |
-| `no` | UNRESOLVED only | the `eq yes` term resolves false |
+| `yes` | `-001` only | the `in ["no", "unknown"]` term resolves false |
+| `no` | `-002` only | the `eq yes` term resolves false |
 | explicit `unknown` | **BOTH** | a rule that does not list `unknown` among its accepted values gets tri-state `unknown` for an explicit `unknown`, and `findings.ts` continues only on `false` |
 | in scope, no answer | **BOTH**, and only on the rescope path | the terms read an absent answer as tri-state `unknown`; the submission path never gets there because `validateIntake` refuses the omission |
 
@@ -450,14 +541,14 @@ documented rescopes. Recorded as a coordination point, not adopted.
 
 Round 5 pinned the same list on both rules, which the agreement suite refuses in the other direction:
 `claimsButCannotReach` fails a rule listing a scenario it never reaches, and the explicit-`no` fixture
-is unreachable for the HELD rule because `eq yes` resolves false on it. With the `A-rescope` entry
+is unreachable for the `eq yes` rule, which resolves false on it. With the `A-rescope` entry
 removed last round, that makes two entries wrong in the same table, so every entry is now derived
 against the trigger rather than copied:
 
-| Scenario | HELD (`eq yes`) | UNRESOLVED (`in ["no", "unknown"]`) | Why |
+| Scenario | `-001` (`eq yes`) | `-002` (`in ["no", "unknown"]`) | Why |
 | --- | --- | --- | --- |
-| F (explicit `unknown`) | listed | listed | measured: an explicit `unknown` resolves tri-state `unknown` for HELD and TRUE for UNRESOLVED, and both emit |
-| the new explicit-`no` fixture | **NOT listed** | listed | `eq yes` resolves false on `no`, so HELD is not reached, fired or conditional |
+| F (explicit `unknown`) | listed | listed | measured: an explicit `unknown` resolves tri-state `unknown` for `-001` and TRUE for `-002`, and both emit |
+| the new explicit-`no` fixture | **NOT listed** | listed | `eq yes` resolves false on `no`, so `-001` is not reached, fired or conditional |
 | `A-rescope` (absent) | listed | listed | both terms read an absent in-scope answer as `unknown`, and the rescope path runs no validator |
 | A, B, C, D, E base | neither | neither | the gate needs `private_venue` and `headcount gte 75`; B is a private venue at 60 |
 
@@ -609,9 +700,12 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    `docs/BASELINE.md` update (current row repointed, new sha256, superseded-lineage row for v2.8, and
    the Scenario-fixtures row's version marker if the new fixture lands), the deletion of
    `rules/nyc-rules.v2.8.json`, the current-version references in the approved documents listed under
-   System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, and **the
-   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**. That commit boots AND
-   passes `pnpm check:baseline`.
+   System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, **the
+   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the rule and advisory
+   counts in the five documents that state them**, and, if Scenario G lands, **the scenario counts in
+   the eleven places that state them, two of which are other features' approved acceptance criteria,
+   plus `G` added to `DOB-ASSEMBLY-001` and `ADV-VENUE-OCCUPANCY-001`'s `exercised_by_scenarios`**.
+   That commit boots AND passes `pnpm check:baseline`.
 9. **F-1NN-AC-09 · No fact beyond the ruleset.** Every regulatory statement rendered traces to a
    published rule's `output`, `notes`, `source` or `verification`. Nothing is asserted that the
    published artifact does not carry, and DOB-ASSEMBLY-001's position that the question is "NOT
@@ -698,6 +792,51 @@ which is why the manifest row in the audit above covers more than the ruleset di
 them is the one used here: open the test the criterion names, read what it imports, and put every file
 in that chain in the footprint.
 
+### What Scenario G reaches, MEASURED, and the existing metadata it moves
+
+A new scenario is not additive. Every rule it reaches, fired or conditional, must name it, or
+`metadataOmissions` fails in the direction that has now caught this document twice. So the set is
+measured rather than reasoned: the intake below was built, validated through `parseIntakeContract` and
+`validateIntake` with zero errors, and evaluated against the published ruleset, and the trace was read
+for every `true` or `unknown` result.
+
+**G is pinned as the MINIMAL private-venue intake at the gate**, because the fixture's own answers
+decide how much existing metadata moves, and that is a design choice rather than a consequence:
+`private_venue`, `headcount: 80`, `venue_has_assembly_approval: "no"`, no alcohol, no food, no
+amplified sound, no structures, no flame, no generator, no battery, not open to the public.
+
+| Rule G reaches | Result | `exercised_by_scenarios` today | Action |
+| --- | --- | --- | --- |
+| `DOB-ASSEMBLY-001` | `true` | `["F", "A-rescope"]` | **add `G`** |
+| `ADV-VENUE-OCCUPANCY-001` | `true` | `["B", "F", "A-rescope"]` | **add `G`** |
+| `DOB-ASSEMBLY-VENUE-APPROVAL-002` | `true` | new rule | lists `G` |
+| `DOB-ASSEMBLY-VENUE-APPROVAL-001` | not reached | new rule | must NOT list `G` |
+
+Exactly the two the reviewer named, and no others. **G's expected findings in the answer key must
+therefore list `DOB-ASSEMBLY-001` and `ADV-VENUE-OCCUPANCY-001` as well as the new note**, or the
+reached-versus-key check fails from the other side. The measured verdict for the two existing findings
+alone is `FEASIBLE_AT_RISK`; the key's expected verdict is derived by running the fixture once the
+rules land rather than predicted here.
+
+**The cost of a non-minimal G, also measured, because it is the argument for the pin.** Built off
+Scenario F's answers instead, G reaches EIGHT existing rules, none of which lists it:
+`NYPD-SOUND-001`, `DOHMH-EXEMPTION-001`, `DOB-ASSEMBLY-001`, `SLA-VENUE-LICENSE-001`,
+`SLA-ONEDAY-001`, `SLA-CATERING-001`, `ADV-NOISE-CODE-001`, `ADV-VENUE-OCCUPANCY-001`. Every one would
+need a metadata edit and a place in G's expected findings, which is four times the blast radius for a
+fixture whose whole purpose is one answer to one field.
+
+**And the cheaper alternative, reported because the derivation exposed it and the choice is not
+mine.** Acceptance Criterion 3 needs the explicit-`no` path covered; it does not necessarily need an
+approved scenario. The same coverage is available as an engine unit case against the PUBLISHED ruleset
+with a hand-built private-venue intake, which is what the measurement above already is, in the file
+`packages/engine/src/engine.test.ts` that exists for "engine behaviors the scenario fixtures do not
+reach". That costs one test file already in the footprint, and it moves no metadata, no manifest row,
+no scenario count, and no other spec's acceptance criteria. What it does not do is put the `no` path in
+the approved regulatory record, which is the answer key's job and the verification owner's call.
+Stated as a comparison, not a decision: **Scenario G costs three artifacts, two existing rules'
+metadata, the manifest's fixtures row, and the seven count statements enumerated in the sweep below,
+two of which are other features' approved acceptance criteria. The unit case costs one file.**
+
 ### Every row audited against the change class it actually describes
 
 The engine owner was missing from the publication row, and a single missing name is not the defect:
@@ -783,6 +922,59 @@ model it. **It moves with the publication, or is derived from `EXPECTED_RULESET_
 the same file and already moves.** Deriving it is preferable, because it is then impossible to leave
 behind on the next publication, and it costs one interpolation in a message no test asserts on. Either
 way it is in the same commit.
+
+### Category 5: COUNTS the publication moves, which the version sweep could not see
+
+Round 7's sweep looked for the version string. **A document can name no version and still be made
+false by this change, by stating a COUNT**, and two of those are approved acceptance criteria. Swept
+with `git grep -niE "\b(six|seven|6) scenarios|all six|scenarios \(a.f\)|six approved"` and again for
+rule and advisory counts, over every tracked file.
+
+**Scenario counts, which move only if Scenario G lands** (see the alternative above; if the `no` path
+is covered as a unit case, none of these moves and that is most of the cost difference):
+
+| File | What it states | Why it moves |
+| --- | --- | --- |
+| `specs/F-201-permit-plan-generator.md:35` | "six scenarios (A-F)" | names the suite's contents |
+| `specs/F-201-permit-plan-generator.md:37` | **Acceptance Criterion 7, "All six scenarios pass"** | an APPROVED acceptance criterion of another feature |
+| `specs/F-201-permit-plan-generator.md:51` | "All six + the boundary list" | its Scenarios Exercised line |
+| `specs/F-101-event-intake.md:32` | **Acceptance Criterion 1, "All six fixture scenarios"** | an APPROVED acceptance criterion of another feature |
+| `specs/F-101-event-intake.md:55` | "All six (A-F) as input fixtures" | its Scenarios Exercised line |
+| `specs/F-206-rules-snapshot-banner.md:55` | "All six indirectly" | its Scenarios Exercised line |
+| `CONTRIBUTING.md:60` | "the full fixture suite (6 scenarios + boundary fixtures)" | defines the engine gate |
+| `CONTRIBUTING.md:84` | "Engine scenario suite still green (all six)" | the done checklist a contributor ticks |
+| `docs/DESIGN.md:50` | the green-gate criterion, "6 scenarios" | the lane gate |
+| `docs/DESIGN.md:57` | "all 6 scenarios pass end-to-end" | the same gate, end to end |
+| `docs/PRD.md:114` | the plan-generation metric, "6 scenarios + boundary fixtures" | the success metric |
+
+**Rule and advisory counts, which move whenever a rule is published, so they move under either route:**
+
+| File | What it states |
+| --- | --- |
+| `docs/ARCHITECTURE.md:312` | boot validation, "33 rules + 4 advisories present" |
+| `docs/PRD.md:143` | "`rules/nyc-rules.v2.8.json`: 33 rules + 4 advisories" |
+| `docs/ROADMAP.md:12` | the ratification line, "33 rules + 4 advisories" |
+| `docs/DESIGN.md:7` | "(33 rules + 4 advisories, evidence-linked)" |
+| `specs/F-201-permit-plan-generator.md:31` | Acceptance Criterion 6, boot validation, "33 rules + 4 advisories" |
+
+Two new rules make those 35 and 4. The advisory count does not move, which the audited conditional row
+above already settled, and `apps/api/src/ruleset.test.ts`'s `/expected 33 rules/` expectation is
+already in the pinned tests.
+
+**Counts that do NOT move, and the distinction is the same one the version sweep uses.**
+`docs/test-scenario-answer-key.md:4` says "fixtures v4 (same six scenarios)", which is a true statement
+about v4's lineage and stays true. The comments in `packages/engine/src/acceptance.test.ts`,
+`proposals.ts`, `checklist.test.ts` and `fixture-ruleset-agreement.test.ts`, and the counts in
+`docs/proposals/`, are category 4. The two in
+`packages/engine/src/intake/scenario-intake-fixtures.ts` are comments as well, but the change already
+opens that file to add the fixture, so they are corrected there rather than left stale.
+
+**The two approved acceptance criteria are the expensive part, and they are named as such**: this
+feature cannot add a seventh scenario without amending F-201 Acceptance Criterion 7 and F-101
+Acceptance Criterion 1, which are other features' approved criteria under
+`docs/DOCUMENTATION-GOVERNANCE.md` §7. That is each spec's owner plus the product owner, and it is a
+coordination cost the fixture decision above should be weighed against rather than discovered during
+implementation.
 
 Category 4, which does NOT move: `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
 `docs/VERIFICATION-SOURCES.md`'s dated round records, `docs/ARCHITECTURE-FUTURE.md`'s historical
@@ -911,9 +1103,10 @@ Rollout is one change or none. In it:
    approval metadata this spec requires of it.
 5. The derived test pins updated, per the footprint, including the `snapshotDate` pin, which moves
    unconditionally because item 1 advances the date.
-6. The answer key updated for Scenario F and Scenario A's rescope, plus the new explicit-`no` scenario
-   and its entry in `SCENARIO_INTAKE_FIXTURES`, which the agreement suite requires to name the same
-   set.
+6. The answer key updated for Scenario F and Scenario A's rescope, plus, if the explicit-`no` path is
+   covered as an approved scenario rather than as a unit case, the new scenario, its entry in
+   `SCENARIO_INTAKE_FIXTURES`, `G` added to the two existing rules it reaches, and every scenario
+   count in the sweep's category 5.
 7. The current-version references in the approved documents updated, per the derivation in the
    footprint, **including `AGENTS.md` and `CONTRIBUTING.md`**. These are not documentation tidying:
    `AGENTS.md` tells every worker to open the ruleset before touching rules, plans or verdicts, so a
@@ -1023,7 +1216,7 @@ has a describable subject at all; the ones above it are about publishing a featu
     reported with all four options, each other legend value refused on the published legend, and the
     owners named. The rest were the same mistake in different places, and the mistake is checking one
     path: `exercised_by_scenarios` was pinned identically on two rules with different triggers, so the
-    HELD rule claimed a fixture its own `eq yes` term cannot reach; the no-answer case was retired on
+    `eq yes` rule claimed a fixture its own term cannot reach; the no-answer case was retired on
     the strength of `validateIntake` when the rescope path that produces it runs no validator; and the
     `name` fallback was read for what it puts in the heading without reading that `PlanLine` renders
     `noteText` again below it, so every note would have shown its sentence twice. Each output now
@@ -1051,7 +1244,23 @@ has a describable subject at all; the ones above it are about publishing a featu
     file its own required test reads. And a derived-test row still carried a condition Acceptance
     Criterion 8 had made unconditional, so every conditional row is now audited, which settled two of
     them and showed a third depends on blocker 13's route.
-15. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+15. **Round 8 found the rule's own ID publishing the fact the spec forbids inferring, which no copy
+    discipline elsewhere could have repaired.** `DOB-ASSEMBLY-HOST-HELD-001` named an approval as held,
+    and its `eq yes` trigger is deliberately emitted on an explicit `unknown` and on an absent in-scope
+    answer, so on the two cases this document exists to handle carefully the identifier asserted the
+    thing nothing can infer. Rule ids render, and after PR #176 they render unconditionally. Both rules
+    are renamed onto a subject-and-check axis, `DOB-ASSEMBLY-VENUE-APPROVAL-001` and `-002`, and every
+    other string the feature introduces is audited against the same test, which tightened both note
+    texts: neither may describe the answer, because each rule fires on three of them. The audit also
+    found the same defect already shipped in `SLA-VENUE-LICENSE-001` and a double-rendered
+    confirm-with-agency line, both reported and neither this footprint's to fix. Three consequences of
+    the same not-looking: three rendered rule fields were neither pinned nor blocked while the table
+    claimed all were, a new scenario moves two existing rules' metadata and eleven scenario counts
+    including two other features' approved acceptance criteria, and `verification.qualification` was
+    filed as metadata when it renders to the operator as a paragraph. The scenario-count cost also
+    surfaced a cheaper way to cover the explicit-`no` path, reported as a comparison for the
+    verification owner.
+16. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
