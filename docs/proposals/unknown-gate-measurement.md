@@ -12,7 +12,8 @@ round 4's `readChecked` runtime measurement in R3, the branch-versus-threshold s
 enumerable recount there; round 5's rebuilt S2/S3 probe, the numeric recount in R5, and the trigger
 propagation table in S4; round 6's two-rule split in S2/S3, the `plaza_level` recount in R5, and the
 persistence measurement below; round 7's surfacing-versus-silence separation in S4 and the four
-answer states measured there.
+answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` correction in R5, and
+the live restatement of both conditions in S4.
 
 **Which guards each measurement went through, because they are not the same.** Every measurement
 against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
@@ -357,13 +358,44 @@ So `branches` and `thresholds` arrive in the browser and sit there unread. `unre
 `ConsumedVerdictDetail` but likewise not stripped by it. `unresolvedTimelines` reaches the screen by
 another path: it is carried on the finding, not on the verdict detail.
 
-**What this changes about the F-102 AC 6 work.** Since the values already arrive, AC 6 is not a
-plumbing task. No API change, no new response member, no serialization work: `apps/api/src/plan.ts`
-stores and returns `verdict_detail` whole. The work is to declare what is already there
-(`ConsumedVerdictDetail` and `MISSING_FACT_CHECKS` widened from `Pick<MissingFact, "field">` to the
-members the table needs, with the checks to match) and to write the component that renders it.
-Rounds 1 to 3 described this as data being dropped in transit and repeated that to the product
-owner twice; it sizes the work larger than it is.
+**What this changes about the F-102 AC 6 work, split by unknown rather than stated as one number.**
+Rounds 1 to 3 called this a plumbing problem, data dropped in transit, which is wrong: nothing is
+dropped and no API change, response member or serialization work is needed, because
+`apps/api/src/plan.ts` stores and returns `verdict_detail` whole. Rounds 4 to 6 then called it a
+renderer-only task, which is right for the unknowns the engine already surfaces and wrong for one of
+the three AC 6 names. Both statements reached the product owner, so both are corrected here.
+
+AC 6 names three unknowns for Scenario F, and the fixture answers all three `"unknown"`. Measured:
+
+```
+F answers: sound=unknown  venue_license=unknown  assembly=unknown
+F missingFacts: ["sound_audible_from_public_way","venue_license_covers_event_area"]
+venue_has_assembly_approval appears anywhere in the plan: false
+```
+
+| AC 6 unknown | Engine emits a missing fact | What AC 6 needs |
+| --- | --- | --- |
+| `sound_audible_from_public_way` | yes, 2 branches | renderer only |
+| `venue_license_covers_event_area` | yes, 2 branches | renderer only |
+| **`venue_has_assembly_approval`** | **no, absent from the plan entirely** | **a rules or engine resolution FIRST, then the renderer** |
+
+Widening `ConsumedVerdictDetail` and `MISSING_FACT_CHECKS` cannot render a branch the engine never
+produces. The reason is recorded in the ruleset guard itself, in
+`packages/engine/src/ruleset.ts:622-628`'s exemption entry for the field, quoted verbatim:
+
+> "The rule now says that in its notes instead of describing a branch nothing evaluates, but its
+> trigger still reads location_type and headcount only, so answering this changes no output. Open on
+> issue #89, blocks F-102 AC 6."
+
+Measured against the published rule: `DOB-ASSEMBLY-001` fires in Scenario F, and its trigger is
+`all` of `location_type = private_venue` and `headcount gte 75`. It never reads
+`venue_has_assembly_approval`, so the answer cannot enter `unknownFields` by any route in S4's
+surfacing condition.
+
+So AC 6 is renderer-only for two of its three unknowns and blocked on a rules or engine question for
+the third, which is open on issue #89. **Connection worth recording, not a decision:** PR #171's
+spec would make that field consumed, which is one route to unblocking the third branch. Whether to
+take it is not this document's call.
 
 On whether the UI honours the engine's own completeness rule: `verdict.ts` treats leaving a branch
 out as a defect ("drop it from the branch table (P1-B)"). The UI does not render the table, so the
@@ -409,10 +441,28 @@ F: [{"field":"sound_audible_from_public_way","branches":2,"thresholds":null},
 ```
 
 So **three of the six approved scenarios' missing facts reach an unrendered branch table** (one in
-E, two in F), and **one reaches unrendered threshold guidance instead** (`tent_area_sqft` in E,
-whose organizer is never told the 400 sqft number that decides the requirement). Having a missing
-fact and having a branch table are different conditions, and a fix for one does not cover the
-other. Rounds 1 to 3 collapsed them.
+E, two in F), and **one reaches unrendered threshold guidance instead** (`tent_area_sqft` in E).
+Having a missing fact and having a branch table are different conditions, and a fix for one does not
+cover the other. Rounds 1 to 3 collapsed them.
+
+**Correction to round 5 on what the threshold gap costs.** Round 5 said the organizer is never shown
+the 400 sq ft number that decides the requirement. That is wrong, and it was relayed as the concrete
+cost. `DOB-TENT-001` is a finding on the same plan, and the number is in its published name and
+notes, both of which are rendered (`apps/web/app/plan/plan-line.tsx:99` for the name, `:188` for the
+notes). Measured on Scenario E:
+
+```
+DOB-TENT-001 finding present? true
+name  = "DOB permit - tent/canopy over 400 gross sq ft or in place 30+ days"
+notes = ["Exactly 400 sq ft (e.g. 20x20) sits ON the published 'more than 400' boundary -> engine
+          renders CONDITIONAL, not REQUIRED, with 'confirm footprint calculation with DOB'.", ...]
+missingFact thresholds = "DOB-TENT-001 applies above 400"
+```
+
+So `MissingFact.thresholds` is an unread detail member whose regulatory content is duplicated
+visibly on the finding. It is still a real gap, because a reader working through the missing-fact
+list is not given the number there and has to connect it to a separate finding, but it is not a
+user-facing omission of the deciding number and this document should not have said it was.
 
 Upper bound on the surface, recounted. Round 3 said 15 fields, taking every enumerable
 trigger-referenced field. That overstates it: `validateIntake` closes the route for a field that
@@ -483,12 +533,14 @@ Establishes:
 - rendering the branch table is an acceptance criterion of an approved spec, unimplemented;
 - the organizer sees a de-underscored field name and nothing else of the table;
 - the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
-  than a plumbing one;
+  than a plumbing one for the two Scenario F unknowns the engine surfaces, and blocked on a rules or
+  engine question for the third, `venue_has_assembly_approval`, which no trigger reads (issue #89);
 - no renderer exists anywhere in the web app;
 - two of six approved scenarios reach it today, and at least 8 enumerable fields can resolve
   unknown, 7 read by triggers plus `plaza_level` read only by a deadline; a further gap, unrendered
   threshold guidance, is separate from the branch table and is reachable through 8 of the 10 numeric
-  fields, not all 10.
+  fields, not all 10; for `tent_area_sqft` the deciding number is duplicated on a rendered finding,
+  so that gap costs a reader of the missing-fact list a connection rather than the number itself.
 
 Does not establish, and is outside this measurement:
 
@@ -768,8 +820,24 @@ to it. `deadlineUnknownFields` in turn has exactly two producers, `deadlines.ts:
 field and `:183` for the multi-block field. So:
 
 > **SURFACING.** A field's unknown reaches `unknownFields`, and therefore `missingFacts`, if and
-> only if some live trigger evaluation propagates it, or some firing rule's deadline reads it as its
-> level or multi-block field while it is unanswered.
+> only if some trigger evaluation in the run RETURNS it in `unknownFields`, or some firing rule's
+> deadline computation RETURNS `{ kind: "unknown", field }` for it.
+
+Both halves are stated as returned output rather than as what a rule reads, because the second half
+has the same static-versus-live gap the first one had. A deadline that reads a field does not
+necessarily emit it. Measured: on `sapo_event_type: "unknown"` in scenario A, `SAPO-PLAZA-001` fires
+and its deadline keys on `plaza_level`, but the field is out of scope, so `deadlines.ts:140-143`
+returns a `timelineUnresolvedReason` instead of an unknown field:
+
+```
+SAPO-PLAZA-001 fires? true
+plaza_level in missingFacts? false
+unresolvedTimelines=[{"ruleIds":["SAPO-PLAZA-001"],
+  "reason":"the plan was never asked plaza_level, which this deadline keys on"}]
+```
+
+Same rule, same deadline, same field: emitted as an unknown in scenario E (R5) and as an unresolved
+timeline here. Only the live return distinguishes them.
 
 Every route, named or not yet named, is a way of failing or satisfying that disjunction.
 
@@ -808,9 +876,27 @@ propagates it and no deadline reads it, and the plan still changes: an advisory 
 not otherwise get is added, and `trace` records the rule as `true`. It is invisible in
 `unknownFields` and in `missingFacts` while altering findings and trace. Stated separately:
 
-> **SILENCE.** The requirement is lost silently when the unknown does not surface AND no rule
-> reading the field emits a finding on the strength of it, which is to say no trigger accepts the
-> unknown as an answer.
+> **SILENCE.** The requirement is lost silently when the unknown does not surface AND no rule's
+> trigger evaluation RETURNS a non-false result carrying the field in `triggeredBy`.
+
+**Third statement of this condition, and the same failure mode each time.** Rounds 4 to 6 qualified
+on what a trigger MENTIONS; round 7 qualified on what a trigger ACCEPTS. Both are properties of the
+rule text, and a live evaluation contradicted both. Static acceptance is not enough because
+`evaluateTrigger` (`conditions.ts:352-366`) can settle the node before the accepting leaf matters:
+if the accepting leaf sits in an `all` whose sibling is false, the decisive-false path returns empty
+`unknownFields` AND empty `triggeredBy`, the trace stays false, and nothing is emitted. Measured on
+`DOHMH-EXEMPTION-001` with `event_open_to_public: "unknown"` both ways:
+
+```
+food_present TRUE : result=true  unknownFields=[] triggeredBy=[food_present, event_open_to_public:"unknown"]
+                    trace=true   inFindings=true
+food_present FALSE: result=false unknownFields=[] triggeredBy=[]
+                    trace=false  inFindings=false
+```
+
+Identical rule, identical answer to the gate, opposite outcome. The condition above is therefore
+phrased on the returned `triggeredBy` and nothing else. Any restatement in terms of what a trigger
+says will be wrong again.
 
 Surfacing is about visibility; silence is about the plan being unchanged. The S3 probe result is a
 silence result, and it holds, because the gate there is read by no trigger at all and so no trigger
@@ -854,8 +940,9 @@ route, no guard is involved at all: the five rows above are published v2.8 rules
 written.
 
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question, where the SILENCE condition above holds (no trigger evaluation propagates the
-gate, no firing rule's deadline reads it, and no trigger accepts the unknown as an answer),
+that gates a question, where the SILENCE condition above holds (no trigger evaluation returns the
+gate in `unknownFields`, no firing rule's deadline returns an unknown for it, and no trigger
+evaluation returns a non-false result carrying it in `triggeredBy`),
 reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
 touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
 acting on before such a rule exists is the product owner's call, and this document does not make it.
