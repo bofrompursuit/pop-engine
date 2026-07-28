@@ -12,9 +12,11 @@ spec, answer key, BASELINE row or engine file is changed by this document.
 example: three of the four absences that scenario names sit on a different axis from the one the line
 measures, and one, sound, genuinely overlaps. It also makes the near-empty case noisier on every
 measure. Separately, and possibly the largest item here, confirmation rules on the two motivating
-fields cannot boot without an approved regulatory source, which is a verification-owner cost rather
-than an engineering one. All three are reasons to revisit the framing before deciding, and they are in
+fields cannot boot without an approved regulatory source, and none is recorded in this repository today,
+which makes the next step verification research rather than engineering. All three are reasons to revisit the framing before deciding, and they are in
 sections 1, 3 and 5.
+
+**Fifth revision.** Four further findings applied. One is NOT adopted as stated, and the document says why: the two conditionally asked booleans are safe, because a not-asked field makes its condition false rather than unknown, so nothing is emitted. One of my own sentences is withdrawn as having priced a field the registry does not contain. The 17-field inventory is now propagated to every downstream total with each derivation stated. A universal negative about agency publication is restated as what was searched and what was found, and the approval list goes from two owner sets to four, cited by row content rather than by a section number.
 
 **Fourth revision.** Four further findings applied, all verified through the guards named in section 3.
 Two change conclusions: the count tables now describe the shape actually measured rather than a remedied
@@ -65,8 +67,45 @@ approved spec; restricting confirmations to boolean gates, which drops NINE of t
 `"no"` enums plus both multi_enum fields, and drops exactly ONE of the issue's four named candidates,
 `obstructs_public_way`, because `alcohol`, `generator_present` and `battery_present` are already
 booleans. Corrected in review: an earlier version said five and two, which made this remedy look
-cheaper on one axis and more destructive on the other. It is also only a partial remedy, because a
-nullable boolean left unanswered is asked-not-answered and evaluates UNKNOWN by the same path; or accepting that the proposal does not work for enum gates
+cheaper on one axis and more destructive on the other. **Corrected in review, and the correction went further than the review did.** An earlier version said
+this remedy is partial because "a nullable boolean left unanswered evaluates UNKNOWN". That priced a
+field the registry does not contain: v2.8 carries exactly eight `nullable: true` fields and all eight are
+numeric (`tent_area_sqft`, `tent_days_in_place`, `stage_height_ft`, `stage_area_sqft`,
+`generator_gasoline_gallons`, `generator_diesel_gallons`, `generator_kw`, `battery_system_kwh`). No
+boolean is nullable. Sentence withdrawn.
+
+**Verified through the guards in order, and boolean-only turns out to be TOTAL for booleans rather than
+partial.** Guard 1 `parseIntakeContract`, guard 2 `validateIntake`, guard 3 `evaluate`. All three routes
+by which a boolean could reach an unknown state are closed:
+
+| Route | Result | Where |
+|---|---|---|
+| asked, answered `"unknown"` | rejected `invalid_value` | `validateIntake` |
+| asked, `null` | rejected `required` | `validateIntake` |
+| asked, omitted | rejected `required` | `validateIntake`, the non-nullable branch |
+| **not asked** | condition evaluates `"false"`, so the trigger is false and `resolveFindings` skips the rule: **silence, not a false confirmation** | `conditions.ts` `resolveAnswer` returns a `not_asked` state distinct from `unknown`, and the condition branch for it returns `"false"`; `findings.ts` continues on a false result |
+
+So an asked boolean is necessarily `true` or `false`, and an unasked one produces nothing. Measured
+directly: a synthetic confirmation rule on `plaza_multiple_blocks` and on `has_amusement_ride`, under
+both `bool` and `eq` operators, emits NOTHING in Scenario A where neither is asked, while the same rule
+on `alcohol`, which is asked and answered false, emits.
+
+**A review finding is not adopted here, and this is why.** The review held that the two conditionally
+asked booleans, `plaza_multiple_blocks` (asked when `sapo_event_type = plaza_event`) and
+`has_amusement_ride` (asked when `= block_party`), are unsafe because an unasked field resolves FALSE
+and so an `eq false` trigger would emit a false absence. The mechanism half is right, the consequence
+does not follow: resolving false makes the CONDITION false, which makes the trigger false, which is
+exactly the case `resolveFindings` skips. Nothing is emitted, so there is no false confirmation by that
+route. The engine distinguishes "never asked" from "answered no" and the shape reads the distinction
+correctly.
+
+**The useful consequence, which cuts toward the proposal rather than against it.** The `not_asked` state
+already implements the issue's own second half, stay silent when the absence follows from something the
+organizer never mentioned, at the engine level and without a rule change. Whatever line is chosen, that
+half is free for any gate whose `asked_when` is not satisfied.
+
+What remains partial is the coverage, not the safety: boolean-only still drops nine of seventeen fields,
+and the nine dropped are exactly where section 0's unknown route lives; or accepting that the proposal does not work for enum gates
 as shaped.
 
 ## 1. The proposed line, applied
@@ -148,8 +187,10 @@ Three observations, each verified rather than inferred:
    answer ruled out rule X".
 2. **One of the four is already implemented.** `obstructs_public_way = "no"` is exactly
    SAPO-SCOPE-001's second trigger condition. That confirmation exists today.
-3. **Seven fields that pass the same test are not named**, and between them they gate 19 rule
-   triggers, which is more than the four named candidates gate combined.
+3. **Thirteen fields that pass the same test are not named.** Corrected in review: this said seven,
+   which was left on the pre-correction inventory. Derivation: 17 qualifying fields minus the issue's
+   four named candidates. Of the 13, nine have at least one rule their negative rules out; the other
+   four qualify on the inclusion test while no trigger reads them.
 4. **`event_open_to_public = "no"` is a mixed case and belongs in the inventory with that stated.** It
    rules out the two DOHMH rules that require `"yes"` and simultaneously TRIGGERS
    DOHMH-EXEMPTION-001, which fires on `"no"` or `"unknown"`. So one answer both establishes an
@@ -162,7 +203,7 @@ Three observations, each verified rather than inferred:
 Fixture answers read from `packages/engine/src/intake/scenario-intake-fixtures.ts`. A field
 contributes only when its answer is the negative value and the field was in scope.
 
-Under the **eleven-field** reading:
+Under the **seventeen-field** reading:
 
 | Scenario | Confirmation set | Count |
 |---|---|---|
@@ -197,16 +238,20 @@ the two review findings compound: the inventory correction and the unknown corre
 fixing either alone would still have understated it. The earlier figures of 4 and 6 for E and F were
 low on both axes.
 
-A table for a REMEDIED shape, in which unknown answers emit nothing, is the earlier one: E 4 and F 6,
-with A, B, C and D unchanged. It is **conditional on a remedy nobody has chosen** and is labelled that
+A table for a REMEDIED shape, in which unknown answers emit nothing, is the true column of the table
+above: A 5, B 7, C 7, D 7, E 5, F 6. Corrected in review: an earlier version gave E 4 and F 6, which
+predated the 17-field inventory; E gains `plaza_multiple_blocks` and F gains `event_open_to_public` as
+true confirmations. It is **conditional on a remedy nobody has chosen** and is labelled that
 way rather than presented as the measurement.
 
 **The three fields added in this round do not change those counts, and that is the point of separating
 two numbers.** The fixtures answer `structure_over_10ft_tall`, `sound_audible_from_public_way` and
 `venue_license_covers_event_area` as `"unknown"`, so they contribute no confirmation in any scenario.
 The count an implementation must carry is therefore FOURTEEN rules, while the count a fixture displays
-is 4 to 7. The gap matters twice: it is unmeasured noise for any real organizer who answers those three
-negatively, and under section 0 it is exactly where a false confirmation would be stated in Scenarios E
+is 5 to 10 in the measured shape and 5 to 7 in a remedied one. Corrected in review: this said 14 rules
+and 4 to 7 lines, both pre-correction. Derivation: the rule count is the inclusion test's 17; the line
+counts are the totals column and the true column of the table above. The gap matters twice: it is
+unmeasured noise for any real organizer who answers those fields negatively, and under section 0 it is exactly where a false confirmation would be stated in Scenarios E
 and F.
 
 Under the issue's **four-field** reading:
@@ -259,8 +304,9 @@ aggregated form:
 - **E:** `9. Confirmations: no alcohol, no battery system stated in your answers.`
 - **F:** `6. Confirmations: no generator, no battery system stated in your answers.`
 
-Under the eleven-field reading the same line carries 4 to 7 items instead of 2 to 3, or 4 to 7
-separate plan lines in the shape that exists today.
+Under the seventeen-field reading the same line carries 5 to 10 items instead of 2 to 3, or 5 to 10
+separate plan lines in the shape that exists today, doubling to 10 to 20 rendered sentences once
+section 3's duplication is included. Corrected in review: this said eleven-field and 4 to 7.
 
 ### It contradicts an APPROVED artifact, which is a SPEC-CONFLICT rather than answer-key movement
 
@@ -370,9 +416,26 @@ rule whose `source` is absent unless its verification status is COVERAGE_GAP, an
 requires a nonempty `citation` string plus a `urls` array with at least one non-empty entry. F-201
 permits an empty source snapshot only for a source-less coverage gap.
 
-`generator_present` and `battery_present` have no trigger and no regulatory citation. The intake
-registry is not a regulatory source, and no agency publishes "if the organizer has no battery, nothing
-applies". So a confirmation rule on either needs one of:
+**Corrected in review: what follows is what was searched and what was found, not a universal claim.**
+An earlier version said "no agency publishes" such guidance. The repository search cannot establish
+that, and using a universal negative to identify the brief's largest cost is the same failure as
+inventing a permit fact in the other direction.
+
+What was searched: this repository's `rules/nyc-rules.v2.8.json`, every rule's `source` and
+`verification` block, and `docs/VERIFICATION-SOURCES.md`. What was found: `generator_present` and
+`battery_present` are read by no trigger and **no approved source is currently recorded for an absence
+claim about either**. Whether an agency publishes guidance that would support one is unknown and
+unsearched here; settling it is verification research, and the research itself is a cost:
+
+- two fetch-confirmed passes are this repository's standard for a regulatory fact, per the Round 1 and
+  Round 2 structure of `VERIFICATION-SOURCES.md`, and a NOT PUBLISHED conclusion has previously been
+  recorded only after both;
+- the outcome is genuinely open in both directions, so the cost is the research whether or not it finds
+  a source, and a NOT PUBLISHED result still has to be recorded as evidence rather than assumed;
+- it is verification-owner work under the "Regulatory source/status/content" row quoted above, so it
+  cannot be absorbed by an engineering lane.
+
+Given only that no approved source is recorded today, a confirmation rule on either field needs one of:
 
 - a source and verification state obtained and approved by the verification owner, which is
   regulatory-source work and not engineering work;
@@ -451,7 +514,7 @@ independent work. Two specifics for whoever picks it up:
 ## 5. THE QUESTION: does Scenario B get clearer or noisier? Noisier, and the line misses it entirely
 
 **Volume.** Scenario B has three substantive findings today. Under the four-field reading it becomes
-three findings plus three confirmations, so half the plan is absences. Under the eleven-field reading it
+three findings plus three confirmations, so half the plan is absences. Under the seventeen-field reading it
 becomes three plus seven, so 70 percent of the plan is absences. There is no reading under which the
 near-empty case gets shorter, and the case whose entire purpose is to look trustworthy when almost
 nothing applies is the case that grows most, because it has the most negative answers.
@@ -463,10 +526,10 @@ is what the proposed line does with each:
 |---|---|---|
 | street / SAPO | `location_type = private_venue` | **silent**, the organizer never mentioned a street |
 | park | `location_type = private_venue` | **silent**, same |
-| sound | `amplified_sound = false` | named only under the eleven-field reading, not among the issue's four |
+| sound | `amplified_sound = false` | named only under the seventeen-field reading, not among the issue's four |
 | assembly | `headcount = 60`, below the 75 threshold | **silent**, a threshold rather than an absence answer |
 
-**Under the broad eleven-field reading the overlap is one of four:** sound, via
+**Under the broad seventeen-field reading the overlap is one of four:** sound, via
 `amplified_sound = false`. Under the issue's four named fields it is zero, because `amplified_sound`
 is not one of them, so that reading would produce alcohol, generator and battery, none of which the
 copy mentions, and would omit all four that it does. The one-of-four figure is the one to quote,
@@ -489,7 +552,7 @@ issue's own success criterion, the proposal is not merely noisy, it is measuring
 
 Stated as an observation and not a recommendation, since this is the rules-owner's call: a line that
 would reproduce Scenario B keys on permit families ruled out by location and scale, which is
-per-agency rather than per-question, and which the eleven-field enumeration above does not describe at
+per-agency rather than per-question, and which the seventeen-field enumeration above does not describe at
 all. Deciding between the two axes looks like the actual decision hiding inside #107.
 
 ---
@@ -502,7 +565,7 @@ Three changes are pending for one bump.
 |---|---|---|---|
 | TPA source re-attribution on DOB-ASSEMBLY-001 | edits `deadline.qualification` | no date, status or verdict moves; the qualification is rendered, so organizer-visible text changes | **yes**: regulatory source and content, needing the verification owner plus rules reviewer |
 | `DEPENDENCY_SEQUENCING_BINDINGS` into the ruleset | adds published data, removes an engine constant | only if the published table differs from the constant | **yes**: `proposals.ts` carries an explicit "PROPOSAL — NOT YET APPROVED" header requiring verification-owner plus engine-owner sign-off, and publishing the machine-readable binding IS approving the sequencing semantics |
-| Named confirmations | adds N rules | **yes, moves approved answer-key output** | **yes, undecided** |
+| Named confirmations | adds N rules | **yes, moves approved answer-key output** | **yes, undecided, and FOUR owner sets rather than two** |
 
 **Corrected in review: none of the three is decision-free, so there are no ready passengers.** An
 earlier version of this brief described the first two that way, and I relayed it. What is true is
@@ -518,6 +581,23 @@ difference between them is how many owners each needs and whether the underlying
 The confirmations need two calls that have not been made at all, the rules-owner call on the line and
 the product-owner call on moving approved output, so bundling them still makes the other two wait on
 the least settled item.
+
+**Corrected in review: two owner sets were listed and four are required.** Governance's
+"Change classes and approvals" table is cited here by the row rather than by a section number, because
+a number behind a sigil is the citation shape this session has had to correct four times. Every named
+confirmation adds a rule trigger AND organizer-visible regulatory text, so it lands on four rows at
+once:
+
+| Change class row | Required approval, quoted from the row |
+|---|---|
+| Product scope, feature meaning, phase | "Product owner/team decision" |
+| Rule trigger, dedupe, branch, deadline, or formula semantics | "Verification owner plus engine owner" |
+| Regulatory source/status/content | "Verification owner plus rules reviewer" |
+| UI copy only | "Feature owner, unless it makes a regulatory claim", and a confirmation does make one, so this row routes to the two above rather than standing alone |
+
+Listing only the rules-owner and product-owner calls understated the critical path and could let a v2.9
+publication proceed without the engine and verification reviews. The engine owner is reachable here in
+particular because section 0's remedies include changing `resolveFindings`.
 
 Two specifics worth having:
 
