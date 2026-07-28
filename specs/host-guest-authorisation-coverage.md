@@ -158,7 +158,7 @@ So the feature emits an ordinary finding, and the answer decides whether it is e
 
 | `venue_has_assembly_approval` | Finding | `disposition` | Note text must |
 | --- | --- | --- | --- |
-| not in scope (gate false) | none | n/a | n/a |
+| not in scope (gate false) | none FROM THIS FEATURE | n/a | the plan still carries `ADV-VENUE-OCCUPANCY-001`; see Edge Cases |
 | **`yes`** | emitted | **`may_be_required`** | direct the operator to confirm with DOB; assert no reduction |
 | **`no`** | emitted | **`may_be_required`** | state that the operator's own filing is unresolved |
 | **`unknown`** (explicit) | emitted, **both rules** | **`may_be_required`** | both texts; measured, see below |
@@ -612,7 +612,10 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    finding is emitted with `disposition: may_be_required` and note text directing the operator to
    confirm with DOB. No output string may assert that the operator is covered, exempt, has a
    reduced obligation, or has no obligation. Reduces, removes and does nothing are three claims and
-   the sources license none of them. **And no output string may state or imply that the approval
+   the sources license none of them. **The strings this criterion governs are the ones this feature
+   publishes**, which is a scope the criterion needed: `ADV-VENUE-OCCUPANCY-001` also renders at this
+   headcount and its published text describes the below-75 case, so read as a claim about the whole
+   plan this criterion would fail an approved advisory rather than this feature. **And no output string may state or imply that the approval
    belongs to a party other than the organizer**, since no intake field distinguishes them and the
    output is venue-neutral by the route 1 decision. The test asserts the
    ABSENCE of each of those claims, not merely the presence of the correct one, because the failure
@@ -640,8 +643,12 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    and this criterion is tested on that variant, built the way the agreement suite builds it.
    `resolveAnswer`'s `isExplicitUnknown` distinction is real and still matters for the
    `in ["no", "unknown"]` term, which an explicit `unknown` answers TRUE and an absent one does not.
-5. **F-1NN-AC-05 · A field the gate did not reach emits nothing**, per F-201 Acceptance Criterion
-   4's rule that a field never asked is not a material unknown.
+5. **F-1NN-AC-05 · A field the gate did not reach emits nothing FROM THIS FEATURE**, per F-201
+   Acceptance Criterion 4's rule that a field never asked is not a material unknown. The scope of the
+   word "nothing" is the two new rules and only them: measured on the published ruleset, a private
+   venue below 75 still renders `ADV-VENUE-OCCUPANCY-001`, so a test written against "no assembly
+   output" would contradict a finding that ships today. The criterion is tested by asserting the
+   absence of the two new rule ids, not the absence of assembly content.
 6. **F-1NN-AC-06 · Alcohol is untouched, compared against an INDEPENDENT copy.** The three SLA
    rules' triggers, outputs and dispositions are unchanged. The comparison must NOT read the newly
    published artifact for both sides: rollout deletes `rules/nyc-rules.v2.8.json`, so a test
@@ -670,7 +677,8 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    the Scenario-fixtures row's version marker if the new fixture lands), the deletion of
    `rules/nyc-rules.v2.8.json`, the current-version references in the approved documents listed under
    System Impact **including `AGENTS.md` and `CONTRIBUTING.md` at the repository root**, **the
-   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the rule and advisory
+   version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message**, **the six authority
+   comments in category 4a of the sweep**, **the rule and advisory
    counts in the five documents that state them**, and, if Scenario G lands, **the scenario counts in
    the eleven places that state them, two of which are other features' approved acceptance criteria,
    plus `G` added to `DOB-ASSEMBLY-001` and `ADV-VENUE-OCCUPANCY-001`'s `exercised_by_scenarios`**.
@@ -682,15 +690,58 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 10. **F-1NN-AC-10 · Determinism.** Same intake, same ruleset, same `today`, same calendar produces
     the same findings, matching F-102 Acceptance Criterion 9.
 
+### Every claim about output, checked against the PUBLISHED plan rather than against this feature's scope
+
+The edge case below said a private venue under 75 produces no assembly output, which was written from
+what this feature adds rather than from what the organizer would see. **This is the second time a claim
+about output was derived from the feature's own scope**, after round 6's plan-state claim, so every such
+claim is now checked against a measured plan. Each shape below was built as a valid intake, run through
+`parseIntakeContract` and `validateIntake`, and evaluated against the published ruleset, with the
+published findings read off the result:
+
+| Intake, private venue | Published findings TODAY | Verdict | What this feature adds |
+| --- | --- | --- | --- |
+| `headcount: 60` | `ADV-VENUE-OCCUPANCY-001` | FEASIBLE | nothing; the gate is closed |
+| `headcount: 74` | `ADV-VENUE-OCCUPANCY-001` | FEASIBLE | nothing; the gate is closed |
+| `headcount: 75`, answer `yes` | `DOB-ASSEMBLY-001`, `ADV-VENUE-OCCUPANCY-001` | FEASIBLE_AT_RISK | `-001`'s note |
+| `headcount: 80`, answer `no` | the same two | FEASIBLE_AT_RISK | `-002`'s note |
+| `headcount: 80`, answer explicit `unknown` | the same two | FEASIBLE_AT_RISK | BOTH notes |
+| `headcount: 80`, answer ABSENT | the same two, and `validateIntake` reports `venue_has_assembly_approval: required` | FEASIBLE_AT_RISK | both notes, on the rescope path only |
+
+**Three consequences the table forced, beyond the edge case itself.**
+
+1. Acceptance Criterion 5's "emits nothing" is narrowed to the two new rule ids, because assembly
+   content is on the plan at every headcount in a private venue.
+2. **Acceptance Criterion 1's prohibition is scoped to the strings this feature publishes.** It says no
+   output string may assert that the organizer is covered or exempt. Read as a claim about the whole
+   plan it would fail an APPROVED advisory: `ADV-VENUE-OCCUPANCY-001` emits at 75-plus as well, and its
+   published text says ordinary assembly certification is typically not triggered below 75, which is a
+   sentence about a different headcount sitting on a plan for this one. That is published content
+   inside another artifact's approval, not this feature's to change, and the criterion now says which
+   strings it governs.
+3. **`missingFacts` cannot be measured for this field yet, and the criterion now says so.** With the
+   field absent today, `missingFacts` is EMPTY, because no published trigger reads it. The mechanism is
+   observable on a field that is read: Scenario F's `missingFacts` carries
+   `venue_license_covers_event_area` with its branches, which is an unknown-capable enum answered
+   explicit `unknown` and read by the SLA triggers. So Acceptance Criterion 4's `missingFacts`
+   expectation follows from that mechanism rather than from a measurement of this field, which cannot
+   exist until the `UNCONSUMED_INTAKE_FIELDS` entry is removed.
+
 ## Edge Cases
 
 - The venue reports `yes` and the event is plainly outside what that certificate covers. The
   product cannot detect this: nothing in the intake describes the operator's activity in the terms a
   certificate uses. The note text is worded so this case cannot falsify it, which is a second
   reason the finding asserts nothing about the operator's obligation.
-- `headcount` below 75 leaves `venue_has_assembly_approval` unasked even in a private venue, so a
-  smaller event produces no assembly output at all. That is the gate as published and this spec does
-  not change it.
+- `headcount` below 75 leaves `venue_has_assembly_approval` unasked even in a private venue, so
+  **NEITHER NEW RULE emits. The plan still carries assembly output, and the earlier claim that a
+  smaller event produces none was false.** `ADV-VENUE-OCCUPANCY-001`'s published trigger is
+  `location_type eq private_venue` and nothing else, so it emits at any headcount, and its published
+  text speaks to exactly this case: "Below 75 indoors, ordinary assembly certification is typically
+  not triggered [thresholds source-confirmed]; confirm the venue's permitted use and occupancy."
+  Measured on the published ruleset, a private venue at 60 or at 74 produces exactly
+  `ADV-VENUE-OCCUPANCY-001` and a FEASIBLE verdict. The gate is as published and this spec does not
+  change it; what this spec adds is nothing below the threshold.
 - An event in a venue whose own authorisation has lapsed is not modelled and cannot be: the intake
   collects the reported answer, not the authorisation's current status.
 
@@ -734,6 +785,8 @@ Files this feature may touch, and who must be in the room:
 | the test files below | version, count and expectation pins | engine owner |
 | the documents below, **including `AGENTS.md` and `CONTRIBUTING.md`** | current-version references | product owner + each artifact's owner |
 | `apps/api/src/ruleset.ts` | the version literal in the offset diagnostic at `:324` | engine owner |
+| `packages/engine/src/intake/registry.ts`, `packages/engine/src/proposals.ts` | the two engine authority comments, text only | engine owner |
+| `apps/web/app/verification-copy.ts`, `plan/plan-line.tsx`, `verification-copy.test.ts`, `verification-copy-prose.test.ts` | the four web authority comments, text only | web lane owner |
 
 ### The new fixture needs three artifacts, not one, and the id is pinned
 
@@ -957,18 +1010,47 @@ Acceptance Criterion 1, which are other features' approved criteria under
 coordination cost the fixture decision above should be weighed against rather than discovered during
 implementation.
 
-Category 4, which does NOT move: `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
+### Category 4 was too coarse and is SPLIT, because a comment can be an authority statement
+
+Round 7 treated every comment as uniformly low-cost. **A comment that states WHERE AUTHORITY LIVES is
+not a comment that mentions a version in passing**, and `packages/engine/src/intake/registry.ts:3` is
+the proof: its opening comment says `rules/nyc-rules.v2.8.json` "owns the field list, the enums, and
+the asked-when conditions". That is the engine's own contract documentation naming its authority, and
+after the deletion it names a missing, superseded file. The test that separates them: **does the comment
+present the named file as the CURRENT authority for something the code does, or is it scoped to the
+version it names as a past fact?** The first becomes false on publication; the second stays true.
+
+**Category 4a, AUTHORITY AND LIVE CITATIONS. Six occurrences in six files, and they move with the
+version retarget:**
+
+| File | What it states | Why it moves |
+| --- | --- | --- |
+| `packages/engine/src/intake/registry.ts:3` | the file "owns the field list, the enums, and the asked-when conditions" | the engine's contract documentation naming its authority |
+| `packages/engine/src/proposals.ts:17` | the file "is published and immutable", which is why that module exists | asserts which artifact is currently published |
+| `apps/web/app/verification-copy.ts:3` | the string is "mandated, not chosen", by the legend in that file | the live mandate for a shipped string |
+| `apps/web/app/plan/plan-line.tsx:201` | the rendering rule, cited to "(published legend, `rules/nyc-rules.v2.8.json`)" | the live authority for a rendering decision |
+| `apps/web/app/verification-copy-prose.test.ts:95` | "the formulation the published legend uses, in" that file | the citation behind the pattern the guard enforces |
+| `apps/web/app/verification-copy.test.ts:12` | that file "calls it" the quoted legend text | the citation behind a live assertion about the current legend |
+
+**The footprint consequence, named rather than absorbed:** four of the six are in `apps/web`, a lane
+this feature otherwise does not touch, and two are in `packages/engine`. They are comment-only edits with
+no behaviour attached, which makes them cheap, not free: the web lane's owner and the engine owner
+approve their own files, and the footprint gains those six paths for comment text only.
+
+**Category 4b, PASSING MENTIONS AND HISTORICAL RECORDS. Thirty-two occurrences across eight files, and
+they do not move:** `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
 `docs/VERIFICATION-SOURCES.md`'s dated round records, `docs/ARCHITECTURE-FUTURE.md`'s historical
-references, the three files under `docs/proposals/`, the comments in
-`packages/engine/src/types.ts`, `proposals.ts`, `intake/registry.ts` and
-`__fixtures__/published-ruleset.ts`, the twenty-five in `scripts/check-baseline-drift.mjs` (all of
-them commentary on path-matching bugs the guard has already fixed), and the six in `apps/web`
-(`rules-file.ts`, `verification-copy.ts`, `plan-line.tsx`, and three test comments), each of which
-cites where the published legend lives rather than asserting the current version. **The cost of that
-rule is stated rather than hidden:** those comments will name a superseded version until they are next
-edited. Moving them would widen this footprint into `apps/web`, which the feature otherwise does not
-touch and which PR #176 is currently changing, so it is recorded as a follow-up sweep for whoever owns
-those files and not taken here. `specs/F-102-feasibility-verdict.md`'s single occurrence is in its `Updated:` history
+references, the three files under `docs/proposals/`, `packages/engine/src/types.ts:198` ("optional and
+null throughout nyc.v2.8", which is scoped to the version it names and stays true),
+`packages/engine/src/__fixtures__/published-ruleset.ts:4` and `apps/web/app/rules-file.ts:4` (both
+narrating the hard-coding defect those modules exist to remove), `apps/web/app/pages.test.tsx:65`
+(narrating a rejected approach), and the twenty-five in `scripts/check-baseline-drift.mjs`, every one of
+them commentary on path-matching bugs the guard has already fixed and none of them executable, which was
+checked rather than assumed. **The cost of leaving them is stated rather than hidden:** they will name a
+superseded version until they are next edited, and a reader who follows one learns a historical fact
+rather than a wrong authority.
+
+`specs/F-102-feasibility-verdict.md`'s single occurrence is in its `Updated:` history
 line, which records a retarget rather than asserting the current version, so it does not move
 either. **That is why the footprint permits F-102 nothing:** round 3 forbade touching it and this
 derivation confirms nothing in it needs touching.
@@ -1095,14 +1177,22 @@ Rollout is one change or none. In it:
 8. **The version literal in `apps/api/src/ruleset.ts:324`'s diagnostic message** moved, or derived
    from `EXPECTED_RULESET_VERSION` in the same file. It is executable text rather than an assertion,
    which is the category round 3's sweep did not model.
+9. **The six authority comments** in the sweep's category 4a retargeted:
+   `packages/engine/src/intake/registry.ts`, `packages/engine/src/proposals.ts`,
+   `apps/web/app/verification-copy.ts`, `apps/web/app/plan/plan-line.tsx`,
+   `apps/web/app/verification-copy-prose.test.ts` and `apps/web/app/verification-copy.test.ts`. Comment
+   text only, no behaviour, and no guard reads any of them, so like items 7 and 8 this ships green if
+   it is forgotten. `registry.ts` is the one that matters most: it is the engine's own statement of
+   which artifact owns the field list, the enums and the `asked_when` conditions.
 
 Items 1 to 4 each fail independently: 1 and 2 at boot, 3 at load, 4 in CI. No subset starts. There is
 no partial state worth shipping. **Two parts of the set fail nothing and are in it anyway.** Item 1's
 publication record: a stale `supersedes` or `provenance` is read by no code, and a copied `status`
-satisfies the one check there is. And items 7 and 8: no guard reads `AGENTS.md`, `CONTRIBUTING.md` or a
-diagnostic message, so a stale path in the contributor instructions ships green and is discovered by
-the next worker who tries to follow them. Both are in the atomic set because they are unenforceable,
-not because something will catch them.
+satisfies the one check there is. And items 7, 8 and 9: no guard reads `AGENTS.md`,
+`CONTRIBUTING.md`, a diagnostic message or a comment, so a stale path in the contributor instructions
+or in the engine's own contract documentation ships green and is discovered by the next worker who tries
+to follow it. All of them are in the atomic set because they are unenforceable, not because something
+will catch them. AC-08 lists them for the same reason.
 
 Fallback is to publish nothing and leave the field in `UNCONSUMED_INTAKE_FIELDS`. That is the
 current state, it is stable, and its cost is recorded honestly there: the field is collected and
@@ -1244,7 +1334,19 @@ route 1 does not touch it.
     filed as metadata when it renders to the operator as a paragraph. The scenario-count cost also
     surfaced a cheaper way to cover the explicit-`no` path, reported as a comparison for the
     verification owner.
-16. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+16. **Round 10 found both remaining claims measured against this feature's scope rather than against
+    the published product.** The edge case said a private venue below 75 produces no assembly output;
+    `ADV-VENUE-OCCUPANCY-001` triggers on `location_type` alone, so it emits at any headcount, and its
+    published text is about the below-75 case specifically. Every claim about output is now checked
+    against a measured plan, which narrowed Acceptance Criterion 5 to the two new rule ids, scoped
+    Acceptance Criterion 1's prohibition to the strings this feature publishes rather than to a plan
+    that also carries an approved advisory, and turned Acceptance Criterion 4's `missingFacts`
+    expectation from an unmeasurable claim into a mechanism observed on a field that is read. The second
+    finding split the sweep's comment category: a comment stating WHERE AUTHORITY LIVES is not a comment
+    mentioning a version in passing, six occurrences are the former and move with the retarget, and
+    thirty-two are the latter and stay. `registry.ts` was filed as history while actively stating that
+    the deleted file owns the field list, the enums and the `asked_when` conditions.
+17. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
