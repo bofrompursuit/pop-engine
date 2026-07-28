@@ -44,11 +44,11 @@ Synthetic demo UI only — no real organizer or attendee data. Intake is a live 
 
 *Intake — short questionnaire that drives the rules engine.*
 
-![Permit plan with citations and snapshot banner](docs/screenshots/plan.png)
+![Permit plan with citations and snapshot banner](docs/screenshots/plan.jpg)
 
 *Permit plan — findings, citations, and ruleset snapshot banner (illustrative).*
 
-![Live ops check-in dashboard](docs/screenshots/live-ops.png)
+![Live ops check-in dashboard](docs/screenshots/live-ops.jpg)
 
 *Live ops (stretch) — check-in totals vs capacity; arrivals only, not occupancy (illustrative).*
 
