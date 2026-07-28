@@ -14,25 +14,35 @@ propagation table in S4; round 6's two-rule split in S2/S3, the `plaza_level` re
 persistence measurement below; round 7's surfacing-versus-silence separation in S4 and the four
 answer states measured there; round 8's AC 6 split in R3, the `DOB-TENT-001` correction in R5, and
 the live restatement of both conditions in S4; round 9's level-field finding-set diff in S4 and the
-answer-key confirmation in R1.
+answer-key confirmation in R1; round 10's provenance diff in S4, the authority order in R1, and the
+per-measurement method table below.
 
-**Which guards each measurement went through, per section rather than once.** A single global claim
-has now been wrong three times in three different ways, so it is stated per section instead:
+**Which guards each measurement went through, per measurement rather than per section.** A global
+claim has been wrong four times, and round 9's per-section table was wrong a fifth time because one
+section contains measurements of two different kinds. This table is keyed to measurements, and every
+row was checked against the measurement it names rather than against a representative one:
 
-| Section | Guards reached |
+| Measurement | Method, exactly |
 | --- | --- |
-| 1, and R5's recounts | `parseIntakeContract` -> `validateIntake` ONLY. Most of these probes are REJECTED by the validator, which IS the result; they never reach `evaluate` or any plan path. |
-| 2, 3, 4, 5, 6, 7 | `parseIntakeContract` -> `validateIntake` -> `evaluate` |
-| R1 through R6 | the same, plus the plan path (`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`) |
-| S2, S3, S4's plan-level results | `parseEngineRuleset` -> `parseIntakeContract` -> `validateIntake` -> `evaluate`. NOT persistence, which the probe cannot pass. |
+| Section 1's gate/dependent table; section 3's blast radius | read from the PARSED ruleset (`parseEngineRuleset`, `parseIntakeContract`). No submission is evaluated. |
+| Section 1's `"unknown"` acceptance results; **R5's two recounts** (the 8 non-nullable enumerable fields, and `headcount` and `food_vendor_count`) | `parseIntakeContract` -> `validateIntake` ONLY. Most of these probes are REJECTED by the validator, which IS the result; they never reach `evaluate`. |
+| Sections 2 and 4; **R5's per-scenario missing-fact measurements**; S4's plan-level results and diffs | `parseIntakeContract` -> `validateIntake` -> `evaluate` |
+| R2 | the component path: `PlanView` rendered with `@testing-library/react` and a stubbed `fetch` in the page's three-call shape, over a plan body from `validateIntake` -> `evaluate`. `apps/api/src/plan.ts` is NOT in the loop; the stub stands in for it. |
+| R3's runtime member measurement | `evaluate`, then a JSON round trip, then the web's own parser (`readChecked`, `arrayOf`, `shapedLike`) called directly. No component is rendered. |
+| S2, S3 | `parseEngineRuleset` -> `parseIntakeContract` -> `validateIntake` -> `evaluate` |
 | S4's per-rule tables | `evaluateTrigger` and `evaluateCondition` called directly, because per-rule `unknownFields` and `triggeredBy` are not observable from the plan |
+| S2's persistence result | a direct `INSERT` against the migrated `events` table |
+| R1, R4, sections 5, 6 and 7 | no submission measured. R1 reads two approved artifacts, R4 is a repo-wide search for a renderer, and section 5's layer table is read from the code. |
 
-Two consequences worth stating rather than leaving implied. **No measurement in this document is
-stored and reloaded**, so none exercises persistence; the difference is that the published-ruleset
-submissions are storable and the S2/S3 probe's is not. And **R5's recounts are validator-only
-results**: the eight non-nullable enumerable fields and the two non-nullable numerics were rejected
-by `validateIntake`, so the finding is that they cannot reach `evaluate` at all, which is a real
-result and not the same claim as an evaluated one.
+Three consequences that were previously implied or wrong, stated instead:
+
+- **`apps/api/src/plan.ts` is not exercised at runtime by anything here.** Rounds 4 to 9 listed it in
+  the chain; R2 stubs `fetch` and section 5 reads it. Nothing is stored and reloaded, so nothing
+  exercises persistence either.
+- **R5 contains measurements of two kinds** and round 9's table lumped them: its per-scenario
+  missing-fact results go through `evaluate`, its two recounts stop at the validator.
+- **A validator-only result is a real result** and not the same claim as an evaluated one. The
+  recounts establish that those fields cannot reach `evaluate` at all.
 
 **The S2/S3 probe passes four guards and cannot pass persistence.** It passes `parseEngineRuleset`,
 `parseIntakeContract`, `validateIntake` and `evaluate`, which rounds 3 and 4 could not because their
@@ -309,17 +319,47 @@ plan, because `DOB-ASSEMBLY-001`'s trigger reads `location_type` and `headcount`
 engine produces missing facts for the other two Scenario F unknowns,
 `sound_audible_from_public_way` and `venue_license_covers_event_area`.
 
-Which of the two readings applies is a rules question this document does not settle:
+**Round 9 recorded this as an open question with two coequal readings. That was wrong: the
+repository has already decided it, and leaving it open is not neutral.** The answer key settles it
+in its own header, on the line above the scenarios:
 
-- the key and the published ruleset currently DISAGREE about whether assembly approval is a
-  branching fact, and one of them is wrong; or
-- the key describes an expectation the ruleset has not implemented yet, which is how
-  `packages/engine/src/ruleset.ts:622-628` reads it, recording the field as open on issue #89 and
-  blocking F-102 AC 6.
+> "**Authority hierarchy:** approved primary source -> published rule (`nyc-rules.v2.8.json`) ->
+> this fixture suite -> engine output -> UI copy. **This document is derived from the ruleset, not
+> an independent authority.** If a fixture and the published ruleset disagree, the fixture is wrong;
+> if the ruleset and a primary source disagree, the ruleset is wrong. Fix the lower authority."
 
-What is measured rather than argued is that the two artifacts do not agree today, that the
-disagreement is on one of the three Scenario F unknowns, and that no engine or rules change is
-proposed here. Whichever way it resolves, it is a rules or engine question and not a rendering one.
+And `docs/DOCUMENTATION-GOVERNANCE.md` section 2 says what to do with the disagreement:
+
+> "When levels disagree, inspect and correct the lower-authority artifact. Never alter an engine
+> merely to reproduce an unsupported expected result."
+
+The fixture suite is level 3 and the published rule is level 2. So the Scenario F assembly-approval
+branch is **an answer-key defect**, not an open choice between two artifacts. The key's own rule,
+"if a fixture and the published ruleset disagree, the fixture is wrong", applies to it directly.
+
+**Why saying "open" was worse than saying nothing.** An open question between a level-2 and a level-3
+artifact licenses closing it from either end, and closing it from the fixture end means changing a
+rule or the engine to reproduce an expected output that no source supports. That is the exact move
+governance section 2 exists to forbid. Recording the authority order removes the license.
+
+**The escape hatch, which is real and is the only route the other way.** A level-1 approved primary
+source could still require `DOB-ASSEMBLY-001` to read `venue_has_assembly_approval`, and then the
+ruleset would be the artifact that is wrong and would change. That is a primary-source finding,
+which is what `packages/engine/src/ruleset.ts:622-628` is holding the field open for on issue #89.
+What cannot carry it is the fixture's expectation on its own.
+
+**What this does NOT settle, because the hierarchy does not list it.** The authority order runs
+approved primary source -> published rule -> fixture suite -> engine output -> UI copy. A SPEC is
+not a level in it, so the order resolves the answer key against the ruleset and says nothing about
+`specs/F-102-feasibility-verdict.md` AC 6, which independently names three Scenario F unknowns and
+requires a branch for each. The AC 6 half stays what R3 calls it: blocked on a rules or engine
+question for `venue_has_assembly_approval`, open on issue #89. Two artifacts expect the branch, and
+only one of them is placed by the hierarchy.
+
+This document proposes no change to any artifact and does not decide when the defect should be
+fixed. What is recorded is that the two artifacts do not agree today, that the disagreement is on
+one of the three Scenario F unknowns, and that the repository's own authority order names which of
+those two is the lower one.
 
 ## R2. What the organizer actually sees
 
@@ -567,6 +607,9 @@ Establishes:
 - rendering the branch table is required by TWO approved artifacts and implemented by neither: an
   acceptance criterion and Outputs rule of `specs/F-102-feasibility-verdict.md`, and the Scenario F
   expected verdict of `docs/test-scenario-answer-key.md`, the green-gate acceptance suite;
+- the answer key's Scenario F assembly-approval branch is an ANSWER-KEY DEFECT under the
+  repository's own authority order, not an open choice between two artifacts, unless a level-1
+  primary source first requires the rule to change (R1);
 - the organizer sees a de-underscored field name and nothing else of the table;
 - the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
   than a plumbing one for the two Scenario F unknowns the engine surfaces, and blocked on a rules or
@@ -912,10 +955,11 @@ propagates it and no deadline reads it, and the plan still changes: an advisory 
 not otherwise get is added, and `trace` records the rule as `true`. It is invisible in
 `unknownFields` and in `missingFacts` while altering findings and trace. Stated separately:
 
-> **SILENCE, stated per lost dependent rather than per gate.** A question the gate scopes out is
-> lost silently when the gate's unknown does not surface, no rule's trigger evaluation RETURNS a
-> non-false result carrying the gate in `triggeredBy`, AND no firing rule's deadline RETURNS a
-> `timelineUnresolvedReason` naming that dependent.
+> **SILENCE, a SCREENING HEURISTIC and not a sufficient condition.** A question the gate scopes out
+> is a CANDIDATE for silent loss when the gate's unknown does not surface, no rule's trigger
+> evaluation RETURNS a non-false result carrying the gate in `triggeredBy`, and no firing rule's
+> deadline RETURNS a `timelineUnresolvedReason` naming that dependent. Confirm every candidate by
+> diffing the two plans; the heuristic has been insufficient at every statement of it so far.
 
 The third clause is new in round 9 and it is the reason the predicates alone were never enough.
 `computeDeadline` has a branch for a level or multi-block field that is OUT OF SCOPE
@@ -957,11 +1001,57 @@ finding and `verdictDetail` names the missing question in words, underscore incl
 earlier condition, applied to the gate, would have predicted a silent loss for both, and the plan
 comparison shows it is wrong for one of them.
 
-**Fourth statement of this condition, and the same failure mode a fourth time.** Round 4 qualified
-on what a trigger MENTIONS, rounds 5 and 6 on live trigger propagation, round 7 on what a trigger
-ACCEPTS, round 8 on returned trigger output. Every one was stated on a PROXY for the plan, and each
-time a plan comparison contradicted it. The condition above is the current best statement and it is
-not offered as final; what should be trusted is the finding-set diff beside it.
+**The predicate above is a SCREENING HEURISTIC, not a sufficient condition, and this section no
+longer leans on it.** Round 9 said the diff is what should be trusted and then still let the
+predicate carry the conclusion. Finishing that thought: the predicate cannot be made sufficient by
+adding clauses, because it is stated on trigger and deadline output while the claim is about the
+whole plan, and each added clause has only closed the one hole that was found.
+
+Here is the hole that defeats the round-9 version. `FDNY-GENERATOR-001`'s trigger is an `any` over
+three amounts. `battery_system_kwh` is gated by `battery_present`, the other two by
+`generator_present`. Give the battery arm a qualifying answer so it stays decisively true, and the
+finding survives the gate going unknown; but the decisive-`any` path (`conditions.ts:352-366`)
+rebuilds `triggeredBy` from the true children only, so the scoped-out amount silently leaves the
+finding's provenance. Measured, same technique as S2, `rules`, `advisories` and `config`
+byte-identical, base intake approved scenario C, `generator_kw` held under DEP's 40 kW threshold so
+that rule fires in neither run and provenance is the only thing that can move:
+
+```
+A. gate = "yes", gasoline 5, battery 30 kWh
+   FEASIBLE, 5 findings
+   FDNY triggeredBy = [{"generator_gasoline_gallons":5},{"battery_system_kwh":30}]
+
+B. gate = "unknown", amounts scoped out, battery 30 kWh
+   FEASIBLE, 5 findings
+   FDNY triggeredBy = [{"battery_system_kwh":30}]
+
+COMPARISON
+   finding SETS equal?    true
+   plan payloads equal?   FALSE
+   FDNY provenance equal? false
+   lost from provenance:  ["generator_gasoline_gallons"]
+   missingFacts, unresolvedTimelines: empty in both
+   gate named anywhere:   false in both
+```
+
+All three clauses of the predicate hold. The finding set is identical. And the plan is NOT the same:
+the organizer's answer that half-drove an FDNY permit is gone from the record of why that permit
+applies, with nothing anywhere saying so. That is the fifth proxy and the fifth contradiction. Round
+4 qualified on what a trigger MENTIONS, rounds 5 and 6 on live trigger propagation, round 7 on what
+a trigger ACCEPTS, round 8 on returned trigger output, round 9 on that plus deadline reasons.
+
+**So S4's conclusion rests on the plan comparisons, and the predicate is kept only to say where to
+look.** The two comparisons together are what the section establishes:
+
+| Comparison | What moved between answered and unknown |
+| --- | --- |
+| S3 (generator amounts, no other reader) | two findings DROPPED, `FDNY-GENERATOR-001` and `DEP-GENERATOR-REG-001`, nothing reported |
+| the `plaza_level` diff above | no finding dropped; the loss REPORTED as an unresolved timeline |
+| the `any`-arm diff here | no finding dropped; provenance changed, nothing reported |
+
+Silence in the sense #108 alleges is the first row and only the first row. The third row is a
+smaller and different harm, a plan that is right about what applies and wrong about why. Anyone
+reusing the predicate should diff the plans.
 
 **Third statement of this condition, and the same failure mode each time.** Rounds 4 to 6 qualified
 on what a trigger MENTIONS; round 7 qualified on what a trigger ACCEPTS. Both are properties of the
@@ -1024,10 +1114,9 @@ route, no guard is involved at all: the five rows above are published v2.8 rules
 written.
 
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question, where the SILENCE condition above holds for that question (the gate's unknown
-does not surface, no trigger evaluation returns a non-false result carrying the gate in
-`triggeredBy`, and no firing rule's deadline returns a `timelineUnresolvedReason` naming the
-question), reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
+that gates a question, where a plan diff between the answered and unknown submissions shows the
+requirement DROPPED and nothing added in its place (the S3 row of the comparison table above),
+reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
 touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
 acting on before such a rule exists is the product owner's call, and this document does not make it.
 
