@@ -1,10 +1,33 @@
+/* Altitude MTL-derived palette (docs/DESIGN-SYSTEM.md): a warm architectural canvas rather than
+   pure white, white surface cards, and the amber/emerald/rose/neutral badge system stated once
+   here so every route (checklist, promote, guests, check-in, ops, the public page) inherits it
+   instead of redeclaring its own copy. */
 :root {
+  --canvas: #ede9e3;
+  --card: #ffffff;
   --ink: #14161a;
-  --muted: #5b6270;
-  --line: #d6dae2;
+  --muted: #6b6459;
+  --line: #d8d2c7;
   --warning-bg: #fff6e0;
   --warning-line: #d9a300;
   --error: #a4160f;
+
+  --badge-neutral-bg: #f1f0ec;
+  --badge-neutral-text: #57534e;
+  --badge-neutral-line: #d8d2c7;
+  --badge-amber-bg: #fffbeb;
+  --badge-amber-text: #92400e;
+  --badge-amber-line: #fde68a;
+  --badge-emerald-bg: #ecfdf5;
+  --badge-emerald-text: #065f46;
+  --badge-emerald-line: #a7f3d0;
+  --badge-rose-bg: #fff1f2;
+  --badge-rose-text: #9f1239;
+  --badge-rose-line: #fecdd3;
+
+  --font-sans: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
   color-scheme: light;
 }
 
@@ -15,11 +38,8 @@
 body {
   margin: 0;
   padding: 1.5rem 1rem 4rem;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  background: var(--canvas);
+  font-family: var(--font-sans);
   color: var(--ink);
   line-height: 1.5;
 }
@@ -44,8 +64,10 @@ body {
   gap: 0.4rem;
   margin: 0;
   padding: 0.9rem 1rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 .intake__label {
@@ -119,8 +141,10 @@ body {
 .intake__saved,
 .intake__stale {
   padding: 0.75rem 1rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 .intake__stale button {
@@ -152,10 +176,12 @@ body {
 .snapshot {
   padding: 0.6rem 0.9rem;
   margin-bottom: 1.25rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   font-size: 0.9375rem;
   color: var(--muted);
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 .snapshot__version {
@@ -179,8 +205,10 @@ body {
 
 .line {
   padding: 0.9rem 1rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 .line__head {
@@ -301,9 +329,11 @@ body {
 
 .plan__empty {
   padding: 0.9rem 1rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   color: var(--muted);
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 /* F-205: the insurance panel. AC 2's whole distinction lives in these two rules and nowhere else
@@ -320,8 +350,10 @@ body {
 
 .insurance__card {
   padding: 0.9rem 1rem;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgba(20, 22, 26, 0.05);
 }
 
 .insurance__card--required {

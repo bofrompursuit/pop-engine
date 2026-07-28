@@ -1,0 +1,86 @@
+/* Route-local styles for the landing page — the Altitude MTL-derived editorial layout applied to
+   the one page in this app with no organizer data to show: a nav with the brand centered, a
+   hairline-divided hero, and the spatial-coordinate caption device from docs/DESIGN-SYSTEM.md. */
+
+.home {
+  max-width: 68rem;
+  margin: 0 auto;
+}
+
+.home__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1.5rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.home__nav-links a {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.home__brand {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.home__hero {
+  position: relative;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.home__photo {
+  display: block;
+  width: 100%;
+  height: 26rem;
+  object-fit: cover;
+}
+
+.home__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: linear-gradient(0deg, rgba(20, 22, 26, 0.75), rgba(20, 22, 26, 0));
+  color: #fff;
+}
+
+.home__caption-text {
+  margin: 0;
+  max-width: 26rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.home__coords {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.home__lede {
+  margin-top: 2rem;
+  color: var(--muted);
+}
+
+.home__lede a {
+  color: var(--ink);
+  font-weight: 600;
+}

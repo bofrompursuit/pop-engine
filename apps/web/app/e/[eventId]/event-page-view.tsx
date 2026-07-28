@@ -86,6 +86,12 @@ export function EventPageView({ eventId, apiBaseUrl }: EventPageViewProps) {
 
   return (
     <div className="event-page">
+      <img
+        className="event-page__photo"
+        src="/photos/times-square-street.jpg"
+        alt=""
+        aria-hidden="true"
+      />
       <p className="event-page__eyebrow">{event.event_date}</p>
       <h1 className="event-page__title">{event.title}</h1>
       <p className="event-page__lede">{venueLabel}</p>
