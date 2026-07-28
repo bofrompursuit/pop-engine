@@ -10,18 +10,29 @@ Measured at `bd8d05e`, ruleset `nyc-rules.v2.8.json`, Node v24.18.0, suite size 
 corrections were re-measured on the rebased branch at suite size 1356 against the same ruleset:
 round 4's `readChecked` runtime measurement in R3, the branch-versus-threshold split in R5 and the
 enumerable recount there; round 5's rebuilt S2/S3 probe, the numeric recount in R5, and the trigger
-propagation table in S4.
+propagation table in S4; round 6's two-rule split in S2/S3, the `plaza_level` recount in R5, and the
+persistence measurement below.
 
 **Which guards each measurement went through, because they are not the same.** Every measurement
 against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
-through the full chain in order: `parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan
-path (`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`), with no engine internal called
-directly. **The S2/S3 probe now goes through that same chain**, because its `rules` and `advisories`
-are published content and `parseIntakeContract` accepts it. Rounds 3 and 4 could not: their probe
-invented its rules, `parseIntakeContract` rejected it, `validateIntake` was never run on it, and
-`evaluate` was given a hand-built record. The one place an engine internal is called directly is
-S4's per-rule propagation table, which uses `evaluateTrigger` because per-rule `unknownFields` is
-not observable from the plan; the plan-level result in the same section is from the full chain.
+through `parseIntakeContract` -> `validateIntake` -> `evaluate` -> the plan path
+(`apps/api/src/plan.ts`, `apps/web/app/plan/verdict-copy.ts`), with no engine internal called
+directly. **No measurement in this document is stored and reloaded**, so none of them exercises
+persistence; the difference is that the published-ruleset submissions above are storable and the
+S2/S3 probe's is not.
+
+**The S2/S3 probe passes four guards and cannot pass persistence.** It passes `parseEngineRuleset`,
+`parseIntakeContract`, `validateIntake` and `evaluate`, which rounds 3 and 4 could not because their
+probe invented its rules and `parseIntakeContract` rejected it. It cannot pass PERSISTENCE:
+`events.generator_present` is `boolean, notNull` and Postgres rejects `"unknown"` outright (S2), so
+no stored event can carry this state and `apps/api/src/plan.ts` can never reload one. S3 is a
+contract-and-engine result, not an end-to-end product one. Round 5 called those four checks the full
+guard chain, which is the same kind of over-broad methodology claim round 4 made one layer in; this
+is the second correction of it.
+
+The one place an engine internal is called directly is S4's per-rule propagation table, which uses
+`evaluateTrigger` because per-rule `unknownFields` is not observable from the plan; the plan-level
+result in the same section is from the guards above.
 
 PR #167 measured a gate that was legitimately NOT ASKED because its parent held a different value.
 This measures a gate that was ASKED and ANSWERED `"unknown"`, which is the case issue #108's title
@@ -437,7 +448,32 @@ across all six approved scenarios:
   are `nullable: true` and accept `null` in all six scenarios, which is how `tent_area_sqft` reaches
   the threshold path in scenario E above.
 
-So the reachable surface is 7 enumerable fields plus 8 numeric ones, not 15 plus 10.
+**One enumerable field is reachable that no trigger reads, so 7 is the trigger-only count and not
+the total.** `plaza_level` is read by no rule trigger, which is why it never appeared in the list of
+15. It is read by `SAPO-PLAZA-001`'s deadline as `level_field`, and `resolveFindings` unions
+deadline unknown fields into the same set `evaluateConditional` consumes (`findings.ts:261-263`).
+Measured on approved scenario E, where `SAPO-PLAZA-001` fires:
+
+```
+E plaza_level="unknown": ACCEPTED verdict=CONDITIONAL
+  missingFacts=["plaza_level","tent_area_sqft","structure_over_10ft_tall"]
+  plaza_levelEntry=branches=4 thresholds=null
+```
+
+Four branches, unrendered like the rest. `plaza_multiple_blocks`, the deadline's other bound field,
+does not add a case: it is `required` in scenario E and rejects `"unknown"` as a boolean, so it was
+checked and produces nothing.
+
+Stated with both numbers rather than one doing two jobs:
+
+| Count | Enumerable | Numeric |
+| --- | --- | --- |
+| Trigger-referenced and reachable | 7 | 8 |
+| Plus deadline-only consumption | **8** (`plaza_level`) | 8 |
+
+So the reachable surface is **at least 8 enumerable fields plus 8 numeric ones**, not 15 plus 10.
+"At least" is meant literally: the count is over fields the published ruleset consumes today, and
+S4 records that consumption route, not field type, is what decides whether an unknown surfaces.
 
 ## R6. What this round establishes and does not
 
@@ -448,9 +484,10 @@ Establishes:
 - the branches arrive in the browser and are read by nothing, so AC 6 is a rendering task rather
   than a plumbing one;
 - no renderer exists anywhere in the web app;
-- two of six approved scenarios reach it today, and 7 enumerable trigger-referenced fields can
-  resolve unknown; a further gap, unrendered threshold guidance, is separate from the branch table
-  and is reachable through 8 of the 10 numeric fields, not all 10.
+- two of six approved scenarios reach it today, and at least 8 enumerable fields can resolve
+  unknown, 7 read by triggers plus `plaza_level` read only by a deadline; a further gap, unrendered
+  threshold guidance, is separate from the branch table and is reachable through 8 of the 10 numeric
+  fields, not all 10.
 
 Does not establish, and is outside this measurement:
 
@@ -545,9 +582,18 @@ RULES_ADVISORIES_CONFIG_UNCHANGED true
 
 `generator_present` is a real published field, and the published ruleset already makes it a
 scope-only gate: no trigger and no deadline reads it, and its whole job is to gate
-`generator_gasoline_gallons`, `generator_diesel_gallons` and `generator_kw`. Those three are read by
-the trigger of `FDNY-GENERATOR-001`, a published `kind: "permit"` rule whose permit name, agency and
-verification status are published content and are quoted here rather than invented:
+`generator_gasoline_gallons`, `generator_diesel_gallons` and `generator_kw`. **Those three belong to
+TWO published rules, not one**, which round 5 got wrong by attributing all three to FDNY:
+
+| Gated dependent | Read by | Threshold |
+| --- | --- | --- |
+| `generator_gasoline_gallons` | `FDNY-GENERATOR-001` (`kind: "permit"`) | `gt 2.5` |
+| `generator_diesel_gallons` | `FDNY-GENERATOR-001` | `gt 10` |
+| `generator_kw` | `DEP-GENERATOR-REG-001` (`kind: "registration"`) | `gte 40` |
+
+`FDNY-GENERATOR-001`'s third trigger condition reads `battery_system_kwh`, which
+`battery_present` gates, not `generator_present`. Both rules are published content, quoted here
+rather than invented:
 
 ```json
 { "id": "FDNY-GENERATOR-001", "kind": "permit",
@@ -556,13 +602,24 @@ verification status are published content and are quoted here rather than invent
                         { "field": "battery_system_kwh",        "op": "gt", "value": 20 } ] },
   "output": { "permit_name": "FDNY Generator/Battery Permit", "agency": "FDNY" },
   "verification": { "status": "SOURCE_CONFIRMED" } }
+
+{ "id": "DEP-GENERATOR-REG-001", "kind": "registration",
+  "trigger": { "all": [ { "field": "generator_kw", "op": "gte", "value": 40 } ] },
+  "output": { "requirement_name": "DEP generator registration (40 kW or greater)",
+              "agency": "NYC DEP" },
+  "verification": { "status": "SOURCE_CONFIRMED" } }
 ```
 
 Nothing regulatory is invented anywhere in this probe. The only synthetic element is the gate's
 type and its `asked_when` wiring.
 
-**This probe goes through the full guard chain, which rounds 3 and 4 could not.** Because the
-published rules are intact, `parseIntakeContract` no longer rejects it:
+**Which guards this probe passed, and the one it cannot.** Round 5 called the four checks below the
+full guard chain. They are not: they are the contract-and-engine guards, and the product has one
+more. Naming them precisely, because this document has now overstated a methodology claim twice and
+the correction should be exact rather than softer.
+
+Passed, because the published rules are intact and `parseIntakeContract` no longer rejects the
+ruleset:
 
 ```
 parseEngineRuleset:   ACCEPTED
@@ -571,18 +628,41 @@ validateIntake:       ACCEPTED for all three answers
 evaluate:             ran on all three
 ```
 
+NOT passed, and not passable: **persistence**. `apps/api/migrations/001_initial_schema.ts:103`
+declares `generator_present: { type: "boolean", notNull: true }`, and the events router inserts the
+validated record verbatim (`apps/api/src/events.ts:178` then `insert(values)`). A submission
+carrying `"unknown"` is rejected by Postgres before it is ever stored, measured directly:
+
+```
+=# INSERT INTO events (generator_present) VALUES ('unknown');
+ERROR:  invalid input syntax for type boolean: "unknown"
+```
+
+This cuts both ways and both matter:
+
+- **Against the probe.** It does not show that a real submission can reach the engine in this state.
+  The plan service reloads a stored event, and no such event can exist, so S3 is a
+  contract-and-engine result rather than an end-to-end product result.
+- **For the safety of v2.8.** The column is a second independent thing standing between the
+  published product and the dangerous shape, alongside `validateIntake` rejecting `"unknown"` for a
+  boolean field. It belongs in the "what saves v2.8 today" list in S4, and it is worth noting that
+  it saves by accident of the column type rather than by any check that understands gates.
+
 ## S3. The result
 
-Base intake is approved scenario C, unchanged apart from the generator answers.
+Base intake is approved scenario C, unchanged apart from the generator answers. The qualifying
+answers are 5 gasoline gallons (over FDNY's 2.5) and 50 kW (over DEP's 40), so both rules fire when
+the gate is answered `"yes"`.
 
-| Answer to `generator_present` | Verdict | Findings | `FDNY-GENERATOR-001` | `missingFacts` | `unresolvedTimelines` | Gate named anywhere in the plan |
+| Answer to `generator_present` | Verdict | Findings | `FDNY-GENERATOR-001` | `DEP-GENERATOR-REG-001` | `missingFacts` | Gate named anywhere in the plan |
 | --- | --- | --- | --- | --- | --- | --- |
-| `"yes"`, 5 gasoline gallons | FEASIBLE | 5 | **present** | none | none | no |
-| `"no"` | FEASIBLE | 4 | absent | none | none | no |
-| **`"unknown"`** | **FEASIBLE** | **4** | **absent** | **none** | **none** | **no** |
+| `"yes"`, 5 gal + 50 kW | FEASIBLE | 6 | **present** | **present** | none | no |
+| `"no"` | FEASIBLE | 4 | absent | absent | none | no |
+| **`"unknown"`** | **FEASIBLE** | **4** | **absent** | **absent** | **none** | **no** |
 
-**A published FDNY permit leaves the plan with no missing fact, no branch, no finding and no
-unresolved timeline.** The verdict stays FEASIBLE, which is the engine saying the plan is complete.
+**TWO published requirements leave the plan with no missing fact, no branch, no finding and no
+unresolved timeline**: an FDNY permit and a DEP registration, from two different agencies. The
+verdict stays FEASIBLE, which is the engine saying the plan is complete.
 
 The sharpest form of the result:
 
@@ -592,13 +672,7 @@ plan(generator_present = "no") === plan(generator_present = "unknown")   ->   tr
 
 The two plans are byte-identical JSON. There is no channel, rendered or unrendered, that
 distinguishes "I do not know whether there is a generator" from "there is no generator". The
-`trace` is identical too, and records the unknown answer as a settled false:
-
-```
-TRACE_yes      [{"ruleId":"FDNY-GENERATOR-001","result":"true"}]
-TRACE_no       [{"ruleId":"FDNY-GENERATOR-001","result":"false"}]
-TRACE_unknown  [{"ruleId":"FDNY-GENERATOR-001","result":"false"}]
-```
+`trace` is identical too, and records the unknown answer as a settled false for both rules.
 
 **For contrast, the engine handles an unanswered DEPENDENT correctly.** With `generator_present`
 answered `"yes"` and the amounts left null, the same probe reports `generator_kw` as a missing fact
@@ -610,11 +684,23 @@ the branching.
 
 **V2.8 happens to be safe.** Stated without hedging, because the disposition turns on it.
 
-What makes v2.8 safe is a property of the ruleset, not of the engine: `sapo_event_type` is the only
-gate whose `"unknown"` scopes dependents out, and it is read directly by SAPO rule triggers. That
-makes it a missing fact in its own right, which is what fires the branch machinery. The branch table
-in round 1 was produced by the trigger layer noticing the gate, not by the scoping layer reporting
-what it excluded.
+**What saves v2.8 today, all three of them incidental.** None is a check that understands gates:
+
+1. **The ruleset shape.** `sapo_event_type` is the only gate whose `"unknown"` scopes dependents
+   out, and it is read directly by SAPO rule triggers, which makes it a missing fact in its own
+   right and fires the branch machinery. The branch table in round 1 came from the trigger layer
+   noticing the gate, not from the scoping layer reporting what it excluded.
+2. **The intake contract.** `generator_present`, the one published field that is a scope-only gate
+   today, is declared `boolean`, so `validateIntake` rejects `"unknown"` for it with
+   `invalid_value`. The probe had to re-type it to a three-state enum to test the mechanism at all.
+3. **The events table.** `generator_present` is `boolean, notNull` at
+   `apps/api/migrations/001_initial_schema.ts:103`, so even a submission that got past the contract
+   could not be stored: `ERROR: invalid input syntax for type boolean: "unknown"` (S2). This one is
+   a column type doing safety work by accident, and it applies per column rather than per gate.
+
+Numbers 2 and 3 both stop the specific probe, and neither would stop a gate published as an enum
+that declares `unknown` and is stored as `text`, which is how `sapo_event_type` and `plaza_level`
+are already declared.
 
 Remove that overlap, as the probe does, and the whole surfacing apparatus is silent. Round 1 said
 the scoping layer "returns a set with no record of what it excluded or why"; this measures what that
@@ -665,6 +751,28 @@ another, and it is reachable in a ruleset where every trigger reads the gate. A 
 cannot tell from the rule text whether a gate is covered; it depends on what the other conditions in
 the same node evaluate to for that submission.
 
+**Deadline-only consumption is a third route, and it runs the other way: it rescues.** `plaza_level`
+is read by no trigger, so on the trigger side alone it would be silent, but `SAPO-PLAZA-001` uses it
+as its deadline's `level_field`. When the rule fires and the field is unanswered,
+`deadlines.ts:148` returns `{ kind: "unknown", field: "plaza_level" }`, `findings.ts:263` unions it
+into `unknownFields`, and `evaluateConditional` produces a branch table for it like any other
+missing fact. Measured on approved scenario E, `plaza_level: "unknown"` is accepted and yields a
+four-branch entry (R5). So the consumption route decides whether an unknown surfaces, in both
+directions, and none of the three is visible from the rule's own text.
+
+**Whether the three are exhaustive: the routes are not, but the underlying condition is.**
+"Scope-only", "short-circuit" and "deadline-only" are three patterns that were observed, and there
+is no argument here that no fourth pattern exists. The condition beneath them is closed, though,
+because `resolveFindings` has exactly two places that add to the set (`findings.ts:260` from trigger
+evaluation and `:263` from `finding.deadlineUnknownFields`), and nothing else in the engine writes
+to it. `deadlineUnknownFields` in turn has exactly two producers, `deadlines.ts:148` for the level
+field and `:183` for the multi-block field. So:
+
+> a field's unknown surfaces if and only if some live trigger evaluation propagates it, or some
+> firing rule's deadline reads it as its level or multi-block field while it is unanswered.
+
+Every route, named or not yet named, is a way of failing or satisfying that disjunction.
+
 **Is the condition reachable by a valid published ruleset? Yes on both routes.** For scope-only
 consumption, `rejectUnconsumedFields` (`packages/engine/src/ruleset.ts:654`) builds its `consumed`
 set from trigger fields, deadline-consumed fields and `askedWhenClauses` fields, and accepts a field
@@ -688,7 +796,13 @@ acting on before such a rule exists is the product owner's call, and this docume
 - The re-typing of `generator_present` from boolean to a three-state enum is synthetic. What it
   shows is that IF the gate can carry `"unknown"`, the requirement below it is lost silently; it does
   not show that anyone will re-type it. As published, `generator_present` is a boolean and
-  `validateIntake` rejects `"unknown"` for it, which is what closes this route on v2.8 today.
+  `validateIntake` rejects `"unknown"` for it, and `events.generator_present` is `boolean, notNull`,
+  so the contract and the schema each close this route on v2.8 today.
+- **It is not an end-to-end product result.** The probe passes `parseEngineRuleset`,
+  `parseIntakeContract`, `validateIntake` and `evaluate`, and cannot pass persistence, so no stored
+  event can exist in this state and the plan service cannot reload one. What it establishes is that
+  the contract and the engine lose the requirement silently, not that a real submission can get
+  there.
 - The probe uses `=` for the gate clause. Round 1 established that `!=` clauses keep dependents in
   scope, so a gate written with `!=` does not exhibit this.
 - S4's short-circuit result is measured on one submission (approved scenario A). Which rules
