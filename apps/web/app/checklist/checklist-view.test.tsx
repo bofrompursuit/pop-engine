@@ -106,6 +106,22 @@ const renderView = async () => {
 const rowFor = (ruleId: string) => screen.getByRole("article", { name: nameOf(ruleId) });
 
 /**
+ * One row with its detail expanded when it has any.
+ *
+ * The row is progressively disclosed: the summary carries the status badge, agency, disposition,
+ * the deadline including `apply_after_date` (F-202 AC 5 requires it here even though the plan line
+ * keeps it behind the expand), the fee, the verification badge and the primary citation. These
+ * cases assert a field renders with the right content, which the split does not change, so the
+ * helper opens the panel first.
+ */
+const expandedRowFor = async (ruleId: string): Promise<HTMLElement> => {
+  const row = rowFor(ruleId);
+  const toggle = within(row).queryByRole("button", { name: /^Details for/ });
+  if (toggle !== null) await userEvent.click(toggle);
+  return row;
+};
+
+/**
  * The status badge on a row. Read by class rather than by text: the status control lists every
  * status as an option, so "submitted" as text matches the badge and the option alike.
  */
@@ -160,8 +176,10 @@ describe("AC 1 · one click converts the latest plan into a checklist", () => {
     });
     await renderView();
 
-    const row = rowFor(STREET_MEDIUM);
-    expect(within(row).getByText(STREET_MEDIUM)).toBeDefined();
+    const row = await expandedRowFor(STREET_MEDIUM);
+    // By class, not by text: the rule id is the display name here, so it also appears in the
+    // heading and in the expand control's label, which names what it expands.
+    expect(row.querySelector(".check-item__rule-ids")?.textContent).toBe(STREET_MEDIUM);
     expect(within(row).getByText(/apply by 2026-08-01/)).toBeDefined();
     expect(within(row).getByText(citationOf(STREET_MEDIUM))).toBeDefined();
     expect(within(row).getByText(feeOf(STREET_MEDIUM) as string)).toBeDefined();
@@ -804,7 +822,7 @@ describe("AC 5 · deadline context lives where the work happens", () => {
     });
     await renderView();
 
-    const row = rowFor(SOUND_DEPENDENCY);
+    const row = await expandedRowFor(SOUND_DEPENDENCY);
     expect(within(row).getByText("the processing time is not published")).toBeDefined();
     expect(within(row).getByText("depends on: structure types")).toBeDefined();
     // The dependency rule's published note is what says the sequencing is unconfirmed.
@@ -819,13 +837,16 @@ describe("AC 5 · deadline context lives where the work happens", () => {
 
     // NYPD-SOUND-001 publishes a precinct and a form number instead of a URL, and that text is
     // the entire filing route for the row (F-204 AC 1).
-    const row = rowFor(SOUND);
+    const row = await expandedRowFor(SOUND);
     const portalName = portalNameOf(SOUND) as string;
     expect(portalUrlOf(SOUND)).toBeNull();
     expect(within(row).queryByRole("link", { name: portalName })).toBeNull();
     expect(
       within(row).getByText((_content, element) => {
-        return element?.tagName === "P" && (element.textContent ?? "").startsWith(`apply at ${portalName}`);
+        return (
+          element?.tagName === "P" &&
+          (element.textContent ?? "").startsWith(`apply at ${portalName}`)
+        );
       }),
     ).toBeDefined();
   });
@@ -839,14 +860,14 @@ describe("AC 5 · deadline context lives where the work happens", () => {
     });
     await renderView();
 
-    const parks = rowFor("PARKS-EVENT-001");
+    const parks = await expandedRowFor("PARKS-EVENT-001");
     expect(
       within(parks)
         .getByRole("link", { name: portalNameOf("PARKS-EVENT-001") as string })
         .getAttribute("href"),
     ).toBe(portalUrlOf("PARKS-EVENT-001"));
 
-    const sound = rowFor(SOUND);
+    const sound = await expandedRowFor(SOUND);
     expect(within(sound).queryByRole("link", { name: portalNameOf(SOUND) as string })).toBeNull();
     expect(
       within(sound).getByText((_content, element) => {
@@ -895,7 +916,7 @@ describe("F-206 AC 2 · every row shows its verification status", () => {
     });
     await renderView();
 
-    const row = rowFor(PARKS_TUA);
+    const row = await expandedRowFor(PARKS_TUA);
     expect(within(row).getByTestId("verification-status").textContent).toBe("OFFICIAL CONFLICT");
     // Both readings, verbatim, never resolved to one.
     expect(within(row).getByText(noteTextOf(PARKS_TUA) as string)).toBeDefined();
@@ -1351,7 +1372,9 @@ describe("F-203 · a channel that failed to deliver is reported to the organizer
     await renderView();
 
     const notice = screen.getByText(/not been confirmed as delivered/);
-    expect(notice.textContent).toContain("2 email alerts for this event have not been confirmed as delivered.");
+    expect(notice.textContent).toContain(
+      "2 email alerts for this event have not been confirmed as delivered.",
+    );
     expect(notice.textContent).toContain(
       "Retrying is paused because this event changed after their plan was made: regenerate the " +
         "plan and review the checklist to start it again.",
@@ -1983,5 +2006,90 @@ describe("the checklist route", () => {
       ),
     );
     vi.unstubAllEnvs();
+  });
+});
+
+describe("a fee stated only where the ruleset states one", () => {
+  it("renders no fee row when the row carries no amount, whatever the row is", async () => {
+    // Neither an advisory nor a permit is captioned for a null fee. A finding cannot tell "this
+    // filing has no fee" from "the amount was not published" — both arrive as null — and reading it
+    // off the row's KIND only relocates the guess to what other rules of that kind publish. So the
+    // row says nothing, which is the one thing the data supports.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem(STREET_MEDIUM, { feeDisplay: null })],
+        contextItems: [planContext(NOISE_ADVISORY)],
+      }),
+    });
+    await renderView();
+
+    for (const ruleId of [STREET_MEDIUM, NOISE_ADVISORY]) {
+      const row = await expandedRowFor(ruleId);
+      expect(within(row).queryByText("fee not published")).toBeNull();
+      expect(row.querySelector(".check-item__text:empty")).toBeNull();
+    }
+  });
+
+  it("renders the published amount when the ruleset publishes one", async () => {
+    // The withdrawal is of the CAPTION, not of the fee: an amount that exists still renders.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({ created: true, items: [trackedItem(STREET_MEDIUM)] }),
+    });
+    await renderView();
+
+    const fee = feeOf(STREET_MEDIUM);
+    expect(fee).not.toBeNull();
+    expect(within(await expandedRowFor(STREET_MEDIUM)).getByText(fee as string)).toBeDefined();
+  });
+
+  it("states each row's rule ids once, not twice, when the row is expanded", async () => {
+    // The summary already carries them, so the copy added inside the panel rendered a row's
+    // provenance twice as soon as anyone opened it.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        items: [trackedItem(STREET_MEDIUM, { lastVerifiedDate: "2026-07-01" })],
+      }),
+    });
+    await renderView();
+
+    const row = await expandedRowFor(STREET_MEDIUM);
+    expect(row.querySelectorAll(".check-item__rule-ids")).toHaveLength(1);
+    expect(row.querySelectorAll(".check-item__verified-date")).toHaveLength(1);
+  });
+});
+
+describe("the checklist's expand control matches what is behind it", () => {
+  it("offers no expand on a row whose only extra fact is stated in its summary", async () => {
+    // `lastVerifiedDate` renders in the row's SUMMARY, so it must not open the panel: it used to be
+    // listed as detail, and a row carrying only that date rendered a control over an empty panel.
+    stubApi({
+      [GET_CHECKLIST]: checklistOf({
+        created: true,
+        contextItems: [
+          planContext(NOISE_ADVISORY, {
+            lastVerifiedDate: "2026-06-15",
+            noteText: null,
+            conflictText: null,
+            publishedNotes: [],
+            portalName: null,
+            portalUrl: null,
+            portalInstructions: null,
+            timelineUnresolvedReason: null,
+            deadlineUnknownFields: [],
+            sources: [],
+          }),
+        ],
+      }),
+    });
+    await renderView();
+
+    const row = rowFor(NOISE_ADVISORY);
+    expect(within(row).queryByRole("button", { name: /^Details for/ })).toBeNull();
+    // And the date it carries is on the row regardless, not lost with the control.
+    expect(within(row).getByText("last verified 2026-06-15")).toBeDefined();
+    // Nor are the rule ids, which the plan line keeps in its panel and this row keeps in its head.
+    expect(row.querySelectorAll(".check-item__rule-ids")).toHaveLength(1);
   });
 });
