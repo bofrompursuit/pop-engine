@@ -371,3 +371,144 @@ Does not establish, and is outside this measurement:
 - whether the approved answer key expects the branch table on screen, which is a question about
   `docs/test-scenario-answer-key.md` rather than about the engine or the component;
 - anything about whether #108 should be closed, which this document does not address.
+
+
+---
+
+# Round 3: is the engine safe, or is v2.8 safe
+
+Round 1 found that answering `sapo_event_type: "unknown"` surfaces the loss through a branch table,
+and noted that this happens **because that gate is itself read by rule triggers**. That left one
+question open, and it is the one the #108 disposition turns on: is the surfacing a property of the
+engine, or an overlap in this particular ruleset?
+
+**Answer: v2.8 happens to be safe. The engine is not.**
+
+## S1. The dangerous shape is expressible, and the loader accepts it
+
+The first thing to check was whether the schema forbids a gate that no trigger reads, because a
+validator that rejects the shape would be a real guarantee. It does not.
+
+`rejectUnconsumedFields` (`ruleset.ts:654`) counts a field as consumed when a trigger reads it, when
+a deadline resolves against it, **or when it scopes another question**:
+
+```ts
+const consumed = new Set<string>([
+  ...published.flatMap((rule) => triggerFields(rule.trigger)),
+  ...deadlineConsumedFields(published),
+  ...intakeFields.flatMap((field) => (field.askedWhenClauses ?? []).map((clause) => clause.field)),
+]);
+```
+
+So gating something is sufficient to be consumed. A gate read by nothing else loads cleanly.
+
+## S2. The synthetic ruleset
+
+Test scope only. It asserts no permit fact, names no agency or citation beyond a placeholder, and
+`rules/` is untouched. Carried here in full so the result is reproducible:
+
+```ts
+const SYNTHETIC = {
+  ruleset_version: "probe.v1",
+  jurisdiction: "US-NY-NYC",
+  snapshot_date: "2026-07-22",
+  config: {
+    slack_warning_days: { value: 14 },
+    business_day_math: { calendar: "test-calendar@2026" },
+  },
+  intake_fields: [
+    { field: "event_date", type: "date", collected: true },
+    // The gate. Declares "unknown". Read by NO trigger; consumed only by scoping the dependent.
+    { field: "gate_field", type: "enum", values: ["yes", "no", "unknown"], collected: true },
+    // Scoped out when the gate is answered "unknown", because "unknown" !== "yes".
+    { field: "dependent_field", type: "boolean", collected: true, asked_when: "gate_field = yes" },
+  ],
+  rules: [
+    {
+      id: "PROBE-REQUIREMENT-001",
+      kind: "permit",
+      trigger: { all: [{ field: "dependent_field", op: "eq", value: true }] },
+      output: { permit_name: "Probe requirement", agency: "PROBE" },
+      verification: { status: "SOURCE_CONFIRMED" },
+      source: { citation: "synthetic probe, no source", urls: ["https://example.test/probe"] },
+    },
+  ],
+  advisories: [],
+};
+```
+
+Driven through the guards in order:
+
+- **`parseEngineRuleset`: ACCEPTED.** The shape loads.
+- **`parseIntakeContract`: REJECTED**, with "ruleset does not publish SAPO-BLOCK-PARTY-ELIG-001".
+  That guard requires two specific published notice rules by id, so it cannot be driven on a
+  synthetic ruleset at all. It is a constraint on this probe, not a protection against the shape:
+  any real published ruleset carries those two rules and would pass. `validateIntake` therefore
+  could not be driven here either, and the intake record below is built the way `validateIntake`
+  persists one, every declared field present with un-asked fields NULL.
+- **`evaluate`: ran on all three answers.**
+
+## S3. The result
+
+| Answer to `gate_field` | Verdict | Findings | `missingFacts` | `unresolvedTimelines` | Gate named anywhere in the plan |
+| --- | --- | --- | --- | --- | --- |
+| `"yes"` + `dependent_field: true` | FEASIBLE | `PROBE-REQUIREMENT-001` | none | none | no |
+| `"no"` | FEASIBLE | none | none | none | no |
+| **`"unknown"`** | **FEASIBLE** | **none** | **none** | **none** | **no** |
+
+**The requirement leaves with no missing fact, no branch, no finding and no unresolved timeline.**
+The verdict stays FEASIBLE, which is the engine saying the plan is complete.
+
+The sharpest form of the result:
+
+```
+plan(gate_field = "no") === plan(gate_field = "unknown")   ->   true
+```
+
+The two plans are byte-identical JSON. There is no channel, rendered or unrendered, that
+distinguishes "I do not know whether this applies" from "this does not apply". The `trace` is
+identical too: `[{"ruleId":"PROBE-REQUIREMENT-001","result":"false"}]` in both cases, so even the
+unrendered diagnostic channel records the unknown answer as a settled false.
+
+**For contrast, the engine handles an unanswered DEPENDENT correctly.** With
+`gate_field: "yes"` and `dependent_field` unanswered, the same ruleset gives CONDITIONAL with a full
+branch table:
+
+```json
+{ "field": "dependent_field", "branches": [
+  { "value": "true",  "verdict": "FEASIBLE", "reason": "same findings, re-dated" },
+  { "value": "false", "verdict": "FEASIBLE", "reason": "drops PROBE-REQUIREMENT-001" } ] }
+```
+
+So the gap is specific to the GATE. An unknown one level down is branched; an unknown at the gate is
+consumed by the scoping layer and never reaches the trigger layer that does the branching.
+
+## S4. Which world we are in
+
+**V2.8 happens to be safe.** Stated without hedging, because the disposition turns on it.
+
+What makes v2.8 safe is a property of the ruleset, not of the engine: `sapo_event_type` is the only
+gate whose `"unknown"` scopes dependents out, and it is read directly by SAPO rule triggers. That
+makes it a missing fact in its own right, which is what fires the branch machinery. The branch table
+in round 1 was produced by the trigger layer noticing the gate, not by the scoping layer reporting
+what it excluded.
+
+Remove that overlap, as the synthetic ruleset does, and the whole surfacing apparatus is silent.
+Round 1 said the scoping layer "returns a set with no record of what it excluded or why"; this
+measures what that costs when nothing else happens to compensate.
+
+**What follows for #108, stated as measurement rather than recommendation:** a future published rule
+that gates a question without any trigger reading the gate reintroduces exactly the silent
+requirement-drop #108 alleges, and the F-102 rendering fix would not touch it, because there is
+nothing in `verdictDetail` to render. Whether that is worth acting on before such a rule exists is
+the product owner's call, and this document does not make it.
+
+## S5. What this does not establish
+
+- It does not show that any such gate is likely, or that anyone intends to write one. It shows the
+  loader accepts it and the engine goes quiet on it.
+- It does not measure `validateIntake` on the synthetic ruleset, which `parseIntakeContract` made
+  impossible. On the published ruleset, round 1 established that `"unknown"` is accepted for all
+  three gates that declare it.
+- The probe uses `=` for the gate clause. Round 1 established that `!=` clauses keep dependents in
+  scope, so a gate written with `!=` does not exhibit this.
