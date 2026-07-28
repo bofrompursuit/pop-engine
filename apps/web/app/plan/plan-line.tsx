@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CONFIRM_WITH_AGENCY, type FindingSource } from "@pop-engine/engine";
+import { Disclosure } from "../disclosure";
 import { PortalBlock } from "../portal-block";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
 import type { ConsumedFinding } from "./plan-api";
@@ -8,6 +9,33 @@ import type { ConsumedFinding } from "./plan-api";
 // visible. Nothing here composes regulatory prose — every string an organizer reads is either
 // published in the rules artifact and carried through the plan, or one of the schema's own
 // status/kind tokens.
+//
+// PROGRESSIVE DISCLOSURE, and nothing is removed. A line renders twenty-three distinct blocks, and
+// Scenario F renders eight lines, which is a page an organizer scrolls past rather than reads. The
+// split below is only between what is visible before an interaction and what is one interaction
+// away; every field this file rendered before still renders.
+//
+// WHAT IS IN THE SUMMARY, and why each thing that is not obvious is there:
+//
+//   • name, agency, fee, the deadline, the verification badge and the citation — what the organizer
+//     came for: what is required, what it costs, when, and on whose authority.
+//   • DISPOSITION, which no brief listed and which belongs here more than most: "required" versus
+//     "may be required" versus "prohibited or ineligible" is the answer to "what do I actually have
+//     to do", and a summary that omits it makes eight lines look alike.
+//   • deadlineDisplay and the deadline TYPE label, because they are part of the deadline rather
+//     than decoration on it. A NOT_CALCULABLE line has no computed date, so the published prose is
+//     the only timing it has; SAPO-INSURANCE-001 has neither prose nor date and its type label
+//     ("before issuance") is its whole timing requirement. Hiding those leaves a line that states
+//     no deadline at all, which is the one thing the summary exists to state.
+//   • the RESEARCH_REQUIRED and COVERAGE_GAP lines, because each explains an ABSENCE the summary
+//     would otherwise show as an empty cell. A citation slot with nothing in it reads as a
+//     rendering fault; "confirm with the agency" reads as the finding it is.
+//
+// Everything else is in the panel: the sources beyond the first, the rule ids, the last-verified
+// date, the notes and note text, the portal block, the conflict text, the earliest-realistic-filing
+// date, and the two timeline explanations. The conflict text sits there while the badge saying
+// OFFICIAL CONFLICT stays in the summary, so the caveat is signalled where it is scannable and
+// stated in full one interaction away.
 
 const humanize = (token: string): string => token.replace(/_/g, " ");
 
@@ -86,9 +114,34 @@ function Citation({ source }: { source: FindingSource }) {
   );
 }
 
+/**
+ * A fee the ruleset does not publish, said explicitly.
+ *
+ * Twelve of thirty-three rules publish no fee, and several publish hedged text ("varies - confirm",
+ * "premium varies"). A blank cell reads as a rendering fault and a zero would be an amount no
+ * source states, so the absence is rendered as itself. Fees are never summed for the same reason:
+ * `output.fee.display` is published TEXT, and a total would be a number this product computes and
+ * no agency publishes.
+ */
+const FEE_NOT_PUBLISHED = "fee not published";
+
 export function PlanLine({ finding }: { finding: ConsumedFinding }) {
   const ruleIds = finding.ruleIds.join(", ");
   const isResearchRequired = finding.verificationStatus === "RESEARCH_REQUIRED";
+  const name = finding.name ?? ruleIds;
+  const [primarySource, ...furtherSources] = finding.sources;
+  const hasDetail =
+    furtherSources.length > 0 ||
+    finding.conflictText !== null ||
+    (finding.noteText !== null && finding.noteText !== finding.conflictText) ||
+    finding.notes.length > 0 ||
+    finding.portalName !== null ||
+    finding.portalUrl !== null ||
+    finding.portalInstructions !== null ||
+    finding.applyAfterDate !== null ||
+    finding.timelineUnresolvedReason !== null ||
+    finding.deadlineUnknownFields.length > 0 ||
+    finding.lastVerifiedDate !== null;
 
   return (
     /* An article rather than a list item: each finding is a self-contained requirement, and its
@@ -96,7 +149,7 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
     <article className="line" aria-labelledby={`line-${finding.ruleIds.join("-")}`}>
       <div className="line__head">
         <h3 className="line__name" id={`line-${finding.ruleIds.join("-")}`}>
-          {finding.name ?? ruleIds}
+          {name}
         </h3>
         <VerificationBadge status={finding.verificationStatus} />
       </div>
@@ -106,26 +159,7 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
             label is omitted rather than rendered empty. */}
         {finding.agency !== null && <span className="line__agency">{finding.agency}</span>}
         <span className="line__disposition">{humanize(finding.disposition)}</span>
-        <span className="line__rule-ids">{ruleIds}</span>
-        {finding.lastVerifiedDate !== null && (
-          <span className="line__verified-date">last verified {finding.lastVerifiedDate}</span>
-        )}
       </p>
-
-      {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
-          on the line itself rather than discover in a tooltip. */}
-      {isResearchRequired && (
-        <p className="line__research" role="note">
-          {CONFIRM_WITH_AGENCY}
-        </p>
-      )}
-
-      {/* Both readings of an official conflict, verbatim. The sources below carry every page the
-          two readings come from. */}
-      {finding.conflictText !== null && <p className="line__conflict">{finding.conflictText}</p>}
-      {finding.noteText !== null && finding.noteText !== finding.conflictText && (
-        <p className="line__note">{finding.noteText}</p>
-      )}
 
       {/* The published prose is optional and ten dated rules omit it, including
           SAPO-STREET-LARGE-001 — the demo anchor's blocking finding. Gating the block on the
@@ -144,18 +178,6 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
               {finding.deadlineDisplay !== null && " · "}apply by {finding.latestApplyDate}
             </span>
           )}
-          {/* When pursuit can realistically begin, NOT a bar on filing earlier. The engine dates
-              this from the upstream's published processing range and says in
-              findings.ts why it stops short of the stronger claim: the strictness of the
-              ordering is RESEARCH_REQUIRED on the dependency rule, whose own note_text — rendered
-              on this line above — states that a strict issued-before-filed sequence is not
-              confirmed by located primary text. "Not before" would assert the sequencing the
-              verification owner declined to assert. */}
-          {finding.applyAfterDate !== null && (
-            <span className="line__deadline-after">
-              {" · "}earliest realistic filing {finding.applyAfterDate}
-            </span>
-          )}
           {finding.deadlineStatus !== "not_applicable" && (
             <span className="line__deadline-status">
               {" · "}
@@ -164,44 +186,94 @@ export function PlanLine({ finding }: { finding: ConsumedFinding }) {
           )}
         </p>
       )}
-      {finding.timelineUnresolvedReason !== null && (
-        <p className="line__timeline">{finding.timelineUnresolvedReason}</p>
-      )}
-      {finding.deadlineUnknownFields.length > 0 && (
-        <p className="line__unknowns">
-          depends on: {finding.deadlineUnknownFields.map(humanize).join(", ")}
+
+      <p className="line__fee">
+        {finding.feeDisplay ?? <span className="line__fee--absent">{FEE_NOT_PUBLISHED}</span>}
+      </p>
+
+      {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
+          on the line itself rather than discover behind an expand: the absence IS the finding. */}
+      {isResearchRequired && (
+        <p className="line__research" role="note">
+          {CONFIRM_WITH_AGENCY}
         </p>
       )}
-
-      {finding.feeDisplay !== null && <p className="line__fee">{finding.feeDisplay}</p>}
-
-      {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
-      <PortalBlock
-        portalName={finding.portalName}
-        portalUrl={finding.portalUrl}
-        portalInstructions={finding.portalInstructions}
-        className="line__portal"
-        instructionsClassName="line__portal-instructions"
-      />
-
-      {finding.notes.map((note) => (
-        <p className="line__note" key={note}>
-          {note}
-        </p>
-      ))}
 
       {/* COVERAGE_GAP means this ruleset version does not model the combination, not that a
           source is missing (published legend, rules/nyc-rules.v2.8.json). Saying "no source" here
-          would state RESEARCH_REQUIRED's meaning, which renders CONFIRM_WITH_AGENCY above. */}
+          would state RESEARCH_REQUIRED's meaning, which renders CONFIRM_WITH_AGENCY above. Also a
+          summary field, because it too explains why no citation follows. */}
       {finding.verificationStatus === "COVERAGE_GAP" && finding.sources.length === 0 && (
         <p className="line__not-covered">{NOT_COVERED_BY_RULESET}</p>
       )}
-      {finding.sources.length > 0 && (
+
+      {primarySource !== undefined && (
         <ul className="line__citations">
-          {finding.sources.map((source) => (
-            <Citation key={`${source.ruleId}:${source.citation}`} source={source} />
-          ))}
+          <Citation source={primarySource} />
         </ul>
+      )}
+
+      {hasDetail && (
+        <Disclosure label={`Details for ${name}`} className="line__detail">
+          <p className="line__meta">
+            <span className="line__rule-ids">{ruleIds}</span>
+            {finding.lastVerifiedDate !== null && (
+              <span className="line__verified-date">last verified {finding.lastVerifiedDate}</span>
+            )}
+          </p>
+
+          {/* Both readings of an official conflict, verbatim. The badge in the summary already
+              says OFFICIAL CONFLICT, so this states what the summary signals. */}
+          {finding.conflictText !== null && <p className="line__conflict">{finding.conflictText}</p>}
+          {finding.noteText !== null && finding.noteText !== finding.conflictText && (
+            <p className="line__note">{finding.noteText}</p>
+          )}
+
+          {/* When pursuit can realistically begin, NOT a bar on filing earlier. The engine dates
+              this from the upstream's published processing range and says in findings.ts why it
+              stops short of the stronger claim: the strictness of the ordering is
+              RESEARCH_REQUIRED on the dependency rule, whose own note_text — rendered just above —
+              states that a strict issued-before-filed sequence is not confirmed by located primary
+              text. "Not before" would assert the sequencing the verification owner declined to
+              assert. It sits beside that note rather than in the summary for that reason: the
+              caveat and the date are one fact. */}
+          {finding.applyAfterDate !== null && (
+            <p className="line__deadline-after">
+              earliest realistic filing {finding.applyAfterDate}
+            </p>
+          )}
+          {finding.timelineUnresolvedReason !== null && (
+            <p className="line__timeline">{finding.timelineUnresolvedReason}</p>
+          )}
+          {finding.deadlineUnknownFields.length > 0 && (
+            <p className="line__unknowns">
+              depends on: {finding.deadlineUnknownFields.map(humanize).join(", ")}
+            </p>
+          )}
+
+          {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
+          <PortalBlock
+            portalName={finding.portalName}
+            portalUrl={finding.portalUrl}
+            portalInstructions={finding.portalInstructions}
+            className="line__portal"
+            instructionsClassName="line__portal-instructions"
+          />
+
+          {finding.notes.map((note) => (
+            <p className="line__note" key={note}>
+              {note}
+            </p>
+          ))}
+
+          {furtherSources.length > 0 && (
+            <ul className="line__citations">
+              {furtherSources.map((source) => (
+                <Citation key={`${source.ruleId}:${source.citation}`} source={source} />
+              ))}
+            </ul>
+          )}
+        </Disclosure>
       )}
     </article>
   );

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { CHECKLIST_STATUSES, CONFIRM_WITH_AGENCY, type ChecklistStatus } from "@pop-engine/engine";
+import { Disclosure } from "../disclosure";
 import { PortalBlock } from "../portal-block";
 import { formatSnapshotDate } from "../plan/snapshot-banner";
 import { NOT_COVERED_BY_RULESET } from "../verification-copy";
@@ -63,6 +64,39 @@ const samePlan = (left: SourcePlan, right: SourcePlan): boolean =>
  * because the two say exactly the same things about a requirement and only differ in whether the
  * organizer can act on them.
  */
+/**
+ * A fee the ruleset does not publish, said explicitly rather than left blank. See
+ * apps/web/app/plan/plan-line.tsx for why a blank is wrong and a total is impossible.
+ */
+const FEE_NOT_PUBLISHED = "fee not published";
+
+/** One citation with click-through to each official page it rests on. */
+function ContextCitation({ source }: { source: PlanContext["sources"][number] }) {
+  return (
+    <li key={`${source.ruleId}:${source.citation}`}>
+      <span>{source.citation}</span>
+      {source.urls.map((url, index) => (
+        <a key={url} href={url} target="_blank" rel="noreferrer noopener">
+          source {source.urls.length > 1 ? index + 1 : ""}
+        </a>
+      ))}
+    </li>
+  );
+}
+
+/** Whether this row has anything behind its expand, so an empty control is never rendered. */
+const hasContextDetail = (context: PlanContext): boolean =>
+  context.sources.length > 1 ||
+  context.conflictText !== null ||
+  (context.noteText !== null && context.noteText !== context.conflictText) ||
+  context.publishedNotes.length > 0 ||
+  context.portalName !== null ||
+  context.portalUrl !== null ||
+  context.portalInstructions !== null ||
+  context.timelineUnresolvedReason !== null ||
+  context.deadlineUnknownFields.length > 0 ||
+  context.lastVerifiedDate !== null;
+
 export function PlanContextBody({
   context,
   currentPlan,
@@ -75,6 +109,7 @@ export function PlanContextBody({
   currentPlan: SourcePlan;
 }) {
   const ruleIds = context.ruleIds.join(", ");
+  const [primarySource, ...furtherSources] = context.sources;
 
   return (
     <>
@@ -106,23 +141,20 @@ export function PlanContextBody({
       </p>
 
       {/* A RESEARCH_REQUIRED line has no located primary source, which the organizer has to see
-          on the row itself rather than discover in a tooltip. */}
+          on the row itself rather than behind an expand: the absence IS the finding. */}
       {context.verificationStatus === "RESEARCH_REQUIRED" && (
         <p className="check-item__caveat" role="note">
           {CONFIRM_WITH_AGENCY}
         </p>
       )}
 
-      {/* Both readings of an official conflict, verbatim; never resolved to one silently. */}
-      {context.conflictText !== null && (
-        <p className="check-item__caveat">{context.conflictText}</p>
-      )}
-      {context.noteText !== null && context.noteText !== context.conflictText && (
-        <p className="check-item__text">{context.noteText}</p>
-      )}
-
       {/* AC 5: the deadline context lives where the work happens. The published prose is optional
-          and ten dated rules omit it, so any deadline data at all renders the block. */}
+          and ten dated rules omit it, so any deadline data at all renders the block.
+
+          `applyAfterDate` stays VISIBLE here, unlike on the plan line, because F-202 AC 5 requires
+          each item's latest_apply_date and its apply_after_date when gated to appear on the
+          checklist. The checklist is where the organizer works the item, so the window it can be
+          worked in is summary information there and detail on the plan. */}
       {hasDeadlineData(context) && (
         <p className="check-item__deadline">
           {context.deadlineDisplay !== null && <span>{context.deadlineDisplay}</span>}
@@ -148,50 +180,80 @@ export function PlanContextBody({
           )}
         </p>
       )}
-      {context.timelineUnresolvedReason !== null && (
-        <p className="check-item__text">{context.timelineUnresolvedReason}</p>
-      )}
-      {context.deadlineUnknownFields.length > 0 && (
-        <p className="check-item__text">
-          depends on: {context.deadlineUnknownFields.map(humanize).join(", ")}
-        </p>
-      )}
 
-      {context.feeDisplay !== null && <p className="check-item__text">{context.feeDisplay}</p>}
-
-      {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
-      <PortalBlock
-        portalName={context.portalName}
-        portalUrl={context.portalUrl}
-        portalInstructions={context.portalInstructions}
-        className="check-item__text"
-        instructionsClassName="check-item__text"
-      />
-
-      {context.publishedNotes.map((note) => (
-        <p className="check-item__text" key={note}>
-          {note}
-        </p>
-      ))}
+      <p className="check-item__text">
+        {context.feeDisplay ?? (
+          <span className="check-item__fee--absent">{FEE_NOT_PUBLISHED}</span>
+        )}
+      </p>
 
       {/* Same copy as the plan line, for the same reason: COVERAGE_GAP is an unmodelled
-          combination, not a missing source. See apps/web/app/plan/plan-line.tsx. */}
+          combination, not a missing source. A summary field, because it explains why no citation
+          follows. See apps/web/app/plan/plan-line.tsx. */}
       {context.verificationStatus === "COVERAGE_GAP" && context.sources.length === 0 && (
         <p className="check-item__text">{NOT_COVERED_BY_RULESET}</p>
       )}
-      {context.sources.length > 0 && (
+      {primarySource !== undefined && (
         <ul className="check-item__citations">
-          {context.sources.map((source) => (
-            <li key={`${source.ruleId}:${source.citation}`}>
-              <span>{source.citation}</span>
-              {source.urls.map((url, index) => (
-                <a key={url} href={url} target="_blank" rel="noreferrer noopener">
-                  source {source.urls.length > 1 ? index + 1 : ""}
-                </a>
-              ))}
-            </li>
-          ))}
+          <ContextCitation source={primarySource} />
         </ul>
+      )}
+
+      {hasContextDetail(context) && (
+        <Disclosure label={`Details for ${displayName(context)}`} className="check-item__detail">
+          <p className="check-item__meta">
+            <span className="check-item__rule-ids">{ruleIds}</span>
+            {/* F-206 AC 5: the date the plan item stored, and only when it stored one. A null
+                renders nothing at all — the snapshot's publication date is a different fact, and
+                standing it in here would state a verification that never happened. */}
+            {context.lastVerifiedDate !== null && (
+              <span className="check-item__verified-date">
+                last verified {context.lastVerifiedDate}
+              </span>
+            )}
+          </p>
+
+          {/* Both readings of an official conflict, verbatim; never resolved to one silently. The
+              badge in the summary already says OFFICIAL CONFLICT. */}
+          {context.conflictText !== null && (
+            <p className="check-item__caveat">{context.conflictText}</p>
+          )}
+          {context.noteText !== null && context.noteText !== context.conflictText && (
+            <p className="check-item__text">{context.noteText}</p>
+          )}
+
+          {context.timelineUnresolvedReason !== null && (
+            <p className="check-item__text">{context.timelineUnresolvedReason}</p>
+          )}
+          {context.deadlineUnknownFields.length > 0 && (
+            <p className="check-item__text">
+              depends on: {context.deadlineUnknownFields.map(humanize).join(", ")}
+            </p>
+          )}
+
+          {/* F-204: application path from the rules data only. AC 2 — "apply at [portal]", new tab. */}
+          <PortalBlock
+            portalName={context.portalName}
+            portalUrl={context.portalUrl}
+            portalInstructions={context.portalInstructions}
+            className="check-item__text"
+            instructionsClassName="check-item__text"
+          />
+
+          {context.publishedNotes.map((note) => (
+            <p className="check-item__text" key={note}>
+              {note}
+            </p>
+          ))}
+
+          {furtherSources.length > 0 && (
+            <ul className="check-item__citations">
+              {furtherSources.map((source) => (
+                <ContextCitation key={`${source.ruleId}:${source.citation}`} source={source} />
+              ))}
+            </ul>
+          )}
+        </Disclosure>
       )}
 
       {/* AC 8: the plan whose values this row is showing, read off the row and never off the live
