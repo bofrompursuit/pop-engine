@@ -115,10 +115,28 @@ Rather than leaving these to be re-derived:
   related capabilities are absorbed into existing IDs rather than split: run-of-show lives in F-405
   (day-of runbook); consent separation lives in F-403 (lead capture & consent)."
 
-**Neither answer is forced for item 1.** Both options are governance-compliant if decided and
-recorded: expanding F-203 explicitly is permitted because the prohibition is on silent expansion and
-on contributor-initiated meaning changes, and a new F-id is permitted because nothing requires a
-phase of a feature to share its predecessor's id.
+**Option A for item 1 is NOT compliant as written, and an earlier revision said both options were.**
+The absorption rule quoted above was cited here as "directly relevant to item 2" and then not applied
+to item 1, which was an assertion rather than a reading. It says closely related capabilities are
+absorbed into existing ids rather than SPLIT, and it gives two examples of exactly that shape:
+run-of-show into F-405, consent separation into F-403. Option A splits capabilities this brief itself
+calls the Phase 2 DEPTH of F-203, already assigned to F-203 by the Roadmap, the PRD and the spec.
+That is the case the rule names.
+
+So option A additionally requires either amending `docs/DESIGN.md:27` or recording an approved
+exception to it, with the status header and BASELINE consequences that carries. Option B remains
+compliant without an exception: expanding F-203 explicitly is permitted because the prohibition is on
+silent expansion and on contributor-initiated meaning changes, and it is what the absorption rule
+points at.
+
+Nothing here forbids option A. An approved policy can be amended by the body that approved it, and
+the product owner may decide that a phase of a feature is not a "closely related capability" in the
+rule's sense. What is corrected is the claim that option A needs no such decision.
+
+**This should be read consistently with PR #171**, which proposes absorbing a host/guest
+authorisation spec into F-108 under this same rule. If the rule reaches that case it reaches this
+one; the two should not be read differently, and if the product owner reads them differently the
+reason belongs in whichever document is amended.
 
 **For item 2 the approved ID policy leans one way** without forbidding the other. The absorption rule
 and its two named precedents point at keeping POS support inside F-408. That is a stated preference
@@ -155,46 +173,76 @@ extends a range published in APPROVED `DESIGN.md`, which makes the new-id option
 approved artifacts rather than one. That is a real cost difference between the options and it is not
 visible from the issue.
 
-## Every approved artifact naming the ids being moved
+## How these change sets were derived, and the searches to re-run
 
-Three of round 2's five findings were the same defect: an id retarget priced against fewer artifacts
-than actually name the id. So this is a sweep of every approved artifact rather than a list of the
-ones anyone remembered, and the change sets below are built from it.
+Rounds 1, 2 and 3 each extended a change set by whatever that round's reviewer happened to find:
+the F-203 spec pointer, then `docs/PRD.md:206` and `docs/PRD.md:226` and
+`docs/ARCHITECTURE-FUTURE.md:336`, then the absorption policy, the spec's own approval records and
+the PRD half of option B. Three rounds, one defect: a change set priced against fewer approved
+artifacts than the change touches. Extending it a fourth time would repeat the method that produced
+the first three, so the change sets below are DERIVED rather than assembled, by the procedure here.
 
-**Item 1, the F-203 Phase 2 depth.** Places that ASSIGN the Phase 2 scope, which a retarget must
-move:
+**The procedure, applied to each option of each item.**
 
-| location | text | in which option's change set |
+1. Search every approved artifact for the id being moved, AND for the capability being reassigned by
+   name. The id search alone is what missed things: an artifact can assign a capability without
+   naming the id, and a declared id RANGE can be broken by an id that does not appear in it yet.
+2. Classify every hit as **moves**, **stays**, or **flagged** for the product owner. Record the
+   classification, so a later round can disagree with a judgement rather than rediscover the hit.
+3. For every artifact that MOVES, include its status header and its BASELINE row. That pairing has
+   been the missing half three times, so it is now part of the derivation and not a step to remember.
+4. Record the searches themselves, below, so the next round re-runs them instead of re-deriving them.
+
+**The searches, runnable as written.** The artifact set is the APPROVED rows of `docs/BASELINE.md`,
+which is 25 files: `AGENTS.md`, `CONTRIBUTING.md`, `DEPLOY.md`, the nine approved `docs/*.md`, the
+published ruleset, and the twelve `specs/F-*.md`.
+
+```
+# by id
+grep -n "F-203" <approved artifacts>
+grep -n "F-408" <approved artifacts>
+
+# by capability name, which the id search cannot reach
+grep -nEi "escalation|digest|team reminder|per-user preference" <approved artifacts>
+grep -nEi "square|\bPOS\b|webhook|low-stock|inventory" <approved artifacts>
+
+# by declared id range, which neither of the above reaches
+grep -nE "F-[0-9]{3}[–-]F-[0-9]{3}" <approved artifacts>
+```
+
+**Item 1, the F-203 Phase 2 depth.**
+
+| location | classification | why |
 |---|---|---|
-| `docs/ROADMAP.md:57` | `- **F-203 (full)** — alert escalations, digests, team reminders.` | A and B |
-| `docs/PRD.md:206` | `- **F-203 (full)** — alert escalations, digests, and team reminders.` | A, added this round |
-| `specs/F-203-deadline-alerts.md:53` | `Phase 2 (F-203 full, per ROADMAP)` | A, added round 1; B rewrites it anyway |
+| `docs/ROADMAP.md:57` | **moves** under A | assigns the Phase 2 scope |
+| `docs/PRD.md:206` | **moves** under A | assigns the same scope; found round 2 |
+| `specs/F-203-deadline-alerts.md:53` | **moves** under A and B | names the destination; B rewrites it anyway |
+| `docs/DESIGN.md:34` STAGE 2 `F-201–F-214` | **moves** under A | saturated, so a new id extends it |
+| `docs/DESIGN.md:27` absorption policy | **moves or exception** under A | see below; found round 3 |
+| `docs/ARCHITECTURE-FUTURE.md:328` `F-208–F-214` | **flagged** | a new F-215 falls outside every ownership row in that table, and which row should cover it is a judgement this brief does not make. **Found by the range search, not by the id search** |
+| `docs/ARCHITECTURE-FUTURE.md:396` | **flagged** | lists F-203 among the outbound worker's consumers; whether the depth is a distinct consumer is a reading |
+| `docs/ARCHITECTURE.md:58` `COMPLY (F-201–F-206)` | **stays** | a Phase 0-1.5 subset, not an enumeration: F-207 to F-214 already exist and are already outside it |
+| `docs/DESIGN.md` 12, 16, 18, 73, 80, 86; `docs/PRD.md:167`; `docs/ROADMAP.md:29`, `:53`; `docs/ARCHITECTURE.md:193`, `:276`, `:281`; `specs/F-102`, `F-201`, `F-202` | **stay** | name F-203 as the Phase 1 feature: tracks, lanes, dependency graph, Twilio reuse, endpoints |
 
-Places that name F-203 as the PHASE 1 feature, which a Phase 2 retarget does not touch and which are
-listed so the next reader does not have to re-derive the distinction: `docs/DESIGN.md` lines 12, 16,
-18, 73, 80 and 86 (tracks, lanes, dependency graph, Twilio plumbing reuse), `docs/PRD.md:167` (the
-F-203 requirement itself), `docs/ROADMAP.md:29` and `:53`, `docs/ARCHITECTURE.md:193`, `:276` and
-`:281`, `specs/F-102`, `specs/F-201` and `specs/F-202` cross-references.
+**Item 2, the Square/POS scope.**
 
-One judgement call is flagged rather than decided: `docs/ARCHITECTURE-FUTURE.md:396` lists "F-203
-deadline alerts" among the outbound worker's consumers. That is a Phase 2+ document naming F-203 for
-alert delivery generally, which covers the Phase 1 alerts too, so whether a depth retarget should add
-the new id beside it depends on whether escalations and digests are read as a distinct consumer. This
-brief does not decide it.
-
-**Item 2, the Square/POS scope.** Every approved artifact naming it:
-
-| location | text | in which option's change set |
+| location | classification | why |
 |---|---|---|
-| `docs/ROADMAP.md:103` | `- Square/POS integrations.` | A replaces, B deletes |
-| `docs/ROADMAP.md:90` | `- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook` | A bounds, B absorbs |
-| `docs/PRD.md:226` | `**F-308 / F-408** — … manual counts or Square webhook` | A, added this round |
-| `docs/ARCHITECTURE-FUTURE.md:336` | external-integrations row mapping webhooks to `F-108, F-212, F-308, F-408` | A, added this round |
+| `docs/ROADMAP.md:103` | **moves** under A and B | the standalone entry itself |
+| `docs/ROADMAP.md:90` | **moves** under A and B | F-408's entry, bounded under A, absorbing under B |
+| `docs/PRD.md:226` | **moves** under A and B | assigns the Square webhook to F-408; found round 2 for A, round 3 for B |
+| `docs/ARCHITECTURE-FUTURE.md:336` | **moves** under A | maps webhooks to F-408 and no other id; found round 2 |
+| `docs/DESIGN.md:36` STAGE 4 `F-401–F-413` | **moves** under A | saturated |
+| `docs/ARCHITECTURE-FUTURE.md:331` `F-401–F-413` | **flagged** | a second declared range covering the same band. A new F-414 sits outside it, and whether it belongs in this row or in the External integrations row at `:336` is a judgement. **Found by the range search, not by the id search** |
+| `docs/ARCHITECTURE-FUTURE.md:67`, `:401` | **stay** | name POS and webhooks in a directory layout and a worker consumer list, both id-agnostic |
 
-Option B needs none of the last two, because it keeps the capability under F-408 and both artifacts
-already assign it there. **That asymmetry is the finding, not an oversight in B:** option A moves an
-id and therefore pays wherever the id is written, while option B moves nothing and pays nowhere. The
-earlier revision priced A as if it moved the id in one artifact.
+**Does the derived set differ from the current one anywhere other than the three findings? Yes, in
+two places, and both are the same shape.** `docs/ARCHITECTURE-FUTURE.md:328` and `:331` are declared
+id ranges in a second approved artifact, and neither the id search nor the capability search reaches
+them, because the new id does not appear in either row and neither row names the capability. Both are
+flagged rather than moved, because which ownership row should cover a new id is a product-owner
+judgement and this brief makes none. They are recorded here so the fourth round starts from them
+rather than finding them.
 
 ## Exact change sets
 
@@ -214,9 +262,22 @@ Line numbers are given only to locate the current text; the edits are described 
 4. `docs/ROADMAP.md` status header: record the id assignment, product-owner approved, dated.
 5. `docs/DESIGN.md` status header: record the range extension.
 6. `docs/PRD.md` status header: record the retarget.
-7. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md`, `docs/DESIGN.md` and `docs/PRD.md`.
-8. Tracker: open the F-215 issue; F-203's own issue needs no change.
-9. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
+7. `specs/F-203-deadline-alerts.md` status header: **required, and missing from an earlier revision.**
+   Step 11 edits the spec's content, so leaving its approval metadata alone would publish a spec whose
+   text points at the new id while its own header still describes the previously approved version.
+8. `docs/DESIGN.md:27`, the absorption policy: an amendment or a recorded approved exception, per the
+   compliance finding above, with its own status-header entry.
+9. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md`, `docs/DESIGN.md`, `docs/PRD.md` AND the
+   `Phase 1–1.5 specs` row covering `specs/F-*.md`. The spec's row was missing for the same reason its
+   header was: the change set listed the artifacts whose text changes and not the records that carry
+   their approval.
+10. `docs/ARCHITECTURE-FUTURE.md:328`: **flagged, not priced.** Its ownership table maps
+    `F-208–F-214` to application execution, and a new F-215 falls outside every row in that table.
+    Which row should cover it, or whether a new row is needed, is a product-owner judgement this
+    brief does not make. Surfaced by the range search recorded above, which neither the id search nor
+    the capability search reaches.
+11. Tracker: open the F-215 issue; F-203's own issue needs no change.
+12. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
    "Phase 2 (F-203 full, per ROADMAP)". Step 1 removes the `F-203 (full)` entry that sentence points
    at, so without this edit an APPROVED spec cites a Roadmap entry that no longer exists. Governance
    §5 makes that a conflict requiring reconciliation, so option A either retargets the pointer to the
@@ -263,18 +324,37 @@ one being written more carefully: A touches an approved spec that B was already 
 6. Status headers and BASELINE rows for all FOUR documents: `docs/ROADMAP.md`, `docs/PRD.md`,
    `docs/ARCHITECTURE-FUTURE.md` and `docs/DESIGN.md`. An earlier revision said "both documents",
    which was counted before the sweep below was done.
-7. Tracker: open the F-414 issue.
+7. `docs/ARCHITECTURE-FUTURE.md:331`: **flagged, not priced.** Its ownership table maps
+   `F-401–F-413` to event operations, so a new F-414 sits outside that range, while the External
+   integrations row at `:336` is where a POS id would more naturally belong. Which row should carry
+   it is a product-owner judgement this brief does not make. Surfaced by the range search recorded
+   above.
+8. Tracker: open the F-414 issue.
 
 ### Item 2, option B: remove the standalone entry, keep POS inside F-408
 
 1. `docs/ROADMAP.md:103`: delete `- Square/POS integrations.`
 2. `docs/ROADMAP.md:90`: F-408's entry absorbs the scope explicitly, so the capability is not lost
    with the bullet.
-3. `docs/ROADMAP.md` status header and BASELINE row.
-4. No DESIGN.md change, no new id, no new tracker issue.
+3. `docs/PRD.md:226`: **required, and missing from an earlier revision of this list.** It assigns
+   F-408 a narrower scope than the absorption gives it: "inventory low-stock alerts (manual counts or
+   Square webhook)". Absorbing a standalone `Square/POS integrations` entry widens F-408 beyond the
+   inventory-specific webhook, so leaving the PRD alone either silently drops the broader POS
+   capability or expands F-408 while the authoritative product requirement still describes only
+   low-stock alerts.
 
-This is the option DESIGN.md's absorption rule and its two precedents point at, and the only one of
-the four that touches a single approved artifact.
+   **This is a decision, not just an edit, and the product owner has to make it explicitly:** either
+   the PRD is widened to match the absorbed scope, or the absorption is narrowed to the inventory
+   webhook that already exists and the broader POS capability is recorded as dropped. This brief does
+   not choose, and does not assume the first, because the second is a real answer: `ROADMAP.md:103` is
+   a one-line entry with no spec and no stated contents beyond its own title.
+4. `docs/PRD.md` status header, if it moves under the decision above.
+5. `docs/ROADMAP.md` status header, and the BASELINE rows for both documents that move.
+6. No DESIGN.md change, no new id, no new tracker issue.
+
+This is the option DESIGN.md's absorption rule and its two precedents point at, and still the
+cheapest of the four. It is no longer a single-artifact change: an earlier revision called it that,
+counted before the PRD assignment was found.
 
 ## Sequencing note: PR #131
 
@@ -505,9 +585,14 @@ Stated as observations, not recommendations.
 it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
 scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
 choice that becomes live when that work is scheduled. Option B touches one spec and one Roadmap line,
-and its PR #131 sequencing block has merged away. Option A touches four approved artifacts once
-every place naming the id is counted: the Roadmap entry, `docs/PRD.md:206`, the F-203 spec pointer
-its own step 1 invalidates, and DESIGN.md's saturated STAGE 2 range.
+and its PR #131 sequencing block has merged away. Option A touches FIVE approved artifacts once the
+derivation above is run rather than a list assembled: the Roadmap entry, `docs/PRD.md:206`, the F-203
+spec pointer its own step 1 invalidates, DESIGN.md's saturated STAGE 2 range, and DESIGN.md's
+absorption rule, which option A needs amended or excepted because it is the split that rule names.
+Two further locations are flagged rather than priced, both declared id ranges in
+`docs/ARCHITECTURE-FUTURE.md`. **Option A is therefore not compliant as written**, which an earlier
+revision of this brief denied; it becomes compliant with a decision the product owner is entitled to
+make and has not yet been asked for.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
 only one of the four change sets that touches a single artifact.
