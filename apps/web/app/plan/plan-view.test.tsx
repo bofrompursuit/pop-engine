@@ -1897,13 +1897,26 @@ describe("a scannable line (progressive disclosure)", () => {
     },
   );
 
-  it.each(["permit", "insurance", "notification", "registration"] as const)(
-    "still reports an unpublished fee for a %s, which is a filing",
+  it.each(["permit", "insurance"] as const)(
+    "still reports an unpublished fee for a %s, a kind the artifact does charge for",
     async (kind) => {
       // The nearest true positive, and the case the line was written for: DOB-PROP-TRUSS-001 is a
       // permit whose amount the artifact does not carry. Narrowing the claim must not lose it.
       const line = await collapsedLine(finding({ kind, feeDisplay: null }));
       expect(line.getByText("fee not published")).toBeDefined();
+    },
+  );
+
+  it.each(["notification", "registration"] as const)(
+    "says nothing about a fee for a %s, which is a filing but not an evidenced charge",
+    async (kind) => {
+      // These two ARE filings, which was the argument for speaking for them. It is not enough:
+      // DOHMH-ORGANIZER-NOTIFY-001 and DEP-GENERATOR-REG-001 are the only rules of these kinds and
+      // neither publishes an amount, so "fee not published" would assert both that a price exists
+      // and that it was withheld. Showing nothing and saying nothing are the same act here.
+      const line = await collapsedLine(finding({ kind, feeDisplay: null }));
+      expect(line.queryByText("fee not published")).toBeNull();
+      expect(document.querySelector(".line__fee")).toBeNull();
     },
   );
 
