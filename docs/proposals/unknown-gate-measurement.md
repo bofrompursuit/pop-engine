@@ -11,7 +11,8 @@ corrections were re-measured on the rebased branch at suite size 1356 against th
 round 4's `readChecked` runtime measurement in R3, the branch-versus-threshold split in R5 and the
 enumerable recount there; round 5's rebuilt S2/S3 probe, the numeric recount in R5, and the trigger
 propagation table in S4; round 6's two-rule split in S2/S3, the `plaza_level` recount in R5, and the
-persistence measurement below.
+persistence measurement below; round 7's surfacing-versus-silence separation in S4 and the four
+answer states measured there.
 
 **Which guards each measurement went through, because they are not the same.** Every measurement
 against the PUBLISHED ruleset (R1 through R6, and S5's published-ruleset statements) was driven
@@ -740,14 +741,12 @@ plus `SAPO-BLOCK-PARTY-ELIG-001`, whose sibling `any` is not decisively false on
 The branch table round 1 measured is entirely their doing, and none of them is a rule the answer
 would have added.
 
-So the condition to qualify on is a live evaluation, not a static mention:
+So the condition to qualify on is a live evaluation, not a static mention. Rounds 4 to 6 stated one
+condition here and used it for two different questions; the two are separated below under
+"Surfacing is not the same question as silence".
 
-> the gate is silent when NO trigger evaluation in the run actually propagates it, that is, when
-> every node reading the gate is settled by a decisive sibling before the unknown is reached, and no
-> deadline of a firing rule reads it either.
-
-Scope-only consumption, round 4's condition, is one way to satisfy this. The short-circuit is
-another, and it is reachable in a ruleset where every trigger reads the gate. A ruleset author
+Scope-only consumption, round 4's condition, is one way for a gate to go unpropagated. The
+short-circuit is another, and it is reachable in a ruleset where every trigger reads the gate. A ruleset author
 cannot tell from the rule text whether a gate is covered; it depends on what the other conditions in
 the same node evaluate to for that submission.
 
@@ -768,10 +767,82 @@ evaluation and `:263` from `finding.deadlineUnknownFields`), and nothing else in
 to it. `deadlineUnknownFields` in turn has exactly two producers, `deadlines.ts:148` for the level
 field and `:183` for the multi-block field. So:
 
-> a field's unknown surfaces if and only if some live trigger evaluation propagates it, or some
-> firing rule's deadline reads it as its level or multi-block field while it is unanswered.
+> **SURFACING.** A field's unknown reaches `unknownFields`, and therefore `missingFacts`, if and
+> only if some live trigger evaluation propagates it, or some firing rule's deadline reads it as its
+> level or multi-block field while it is unanswered.
 
 Every route, named or not yet named, is a way of failing or satisfying that disjunction.
+
+### Surfacing is not the same question as silence
+
+Rounds 4, 5 and 6 each stated a condition here and then used it to conclude that the requirement is
+lost silently. That is a substitution, and it does not hold. The condition above answers **is the
+unknown visible**. Silence needs a second thing: **did nothing else in the plan move**. A case can
+satisfy the first and fail the second.
+
+`evaluateCondition` is where they come apart (`packages/engine/src/conditions.ts:319-325`). A
+trigger that reads the field with `eq "unknown"` or `in [..., "unknown"]` treats an EXPLICIT
+`"unknown"` as an answer rather than as a blocker, and returns
+
+```ts
+{ result: "true", unknownFields: [], triggeredBy: [contribution] }
+```
+
+Empty `unknownFields`, so nothing surfaces. A `triggeredBy` contribution and a `true` result, so a
+FINDING IS EMITTED. The published ruleset already depends on this; the comment at `:317-318` names
+`SLA-CATERING-001`, `ADV-NOISE-CODE-001` and `DOHMH-EXEMPTION-001`, and all three are published
+rules whose trigger carries `in ["no", "unknown"]`.
+
+Measured on `DOHMH-EXEMPTION-001` (`all` of `food_present = true` and
+`event_open_to_public in ["no", "unknown"]`), varying only that one answer:
+
+| Answer state | Trigger result | `unknownFields` | `triggeredBy` |
+| --- | --- | --- | --- |
+| answered `"no"` | true | `[]` | `food_present`, `event_open_to_public: "no"` |
+| **explicit `"unknown"`** | **true** | **`[]`** | **`food_present`, `event_open_to_public: "unknown"`** |
+| in scope, `null` | unknown | `["event_open_to_public"]` | both fields |
+| not asked (out of scope) | false | `[]` | none |
+
+So the explicit unknown satisfies BOTH halves of the surfacing condition being false, nothing
+propagates it and no deadline reads it, and the plan still changes: an advisory the organizer would
+not otherwise get is added, and `trace` records the rule as `true`. It is invisible in
+`unknownFields` and in `missingFacts` while altering findings and trace. Stated separately:
+
+> **SILENCE.** The requirement is lost silently when the unknown does not surface AND no rule
+> reading the field emits a finding on the strength of it, which is to say no trigger accepts the
+> unknown as an answer.
+
+Surfacing is about visibility; silence is about the plan being unchanged. The S3 probe result is a
+silence result, and it holds, because the gate there is read by no trigger at all and so no trigger
+can accept it either. Rounds 4 to 6 were right about that case and wrong to state the surfacing
+condition as if it settled the general one.
+
+**Whether the isolated case is reachable on v2.8: measured no, and the reason is incidental again.**
+All three accepting rules read a field that a NON-accepting rule also reads, and the non-accepting
+one propagates on the same submission. On `DOHMH-EXEMPTION-001`'s own answer above,
+`DOHMH-VENDOR-PERMIT-001` (`event_open_to_public eq "yes"`) goes `unknown` and propagates the field.
+The same holds for `venue_license_covers_event_area` (`SLA-VENUE-LICENSE-001` and `SLA-ONEDAY-001`
+both `eq`) and `sound_audible_from_public_way` (`NYPD-SOUND-001` `eq "yes"`). Checked across all six
+approved scenarios: in every case where an accepting rule fired on `"unknown"`, a sibling rule
+surfaced the field. So on v2.8 the accepting trigger always arrives with a channel that reports the
+unknown, and nothing published today is both plan-changing and invisible.
+
+**The not-asked and omitted cases, which are a different thing again.** `acceptsUnknown` requires
+`answer.isExplicitUnknown`, and `resolveAnswer` (`conditions.ts:238-244`) only sets that for the
+literal `"unknown"` string. The bottom two rows of the table above are the consequence, measured
+rather than reasoned:
+
+- **In scope and unanswered (`null`).** Not accepted. The condition returns `unknown` and propagates
+  the field, so an accepting trigger behaves like any other one and the fact surfaces. For all three
+  fields the comment names, `validateIntake` rejects this state anyway with `required`, so it is not
+  reachable through the product.
+- **Not asked (scoped out).** `conditions.ts:315` returns `false` with an empty `unknownFields` and
+  an empty `triggeredBy`, so the accepting rule does not fire. An accepting trigger changes nothing
+  here: this is the silent case, and accepting the unknown does not rescue it, because there is no
+  unknown to accept. This is the state PR #167 measured and the one rounds 5 and 6 keep next to it.
+
+The distinction that has now bitten twice, put plainly: `"unknown"` and unanswered are different
+answers to the engine, and a rule that accepts the first does nothing for the second.
 
 **Is the condition reachable by a valid published ruleset? Yes on both routes.** For scope-only
 consumption, `rejectUnconsumedFields` (`packages/engine/src/ruleset.ts:654`) builds its `consumed`
@@ -783,9 +854,10 @@ route, no guard is involved at all: the five rows above are published v2.8 rules
 written.
 
 **What follows for #108, stated as measurement rather than recommendation:** a future published rule
-that gates a question, where no trigger evaluation propagates the gate and no firing rule's deadline
-reads it, reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix
-would not touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
+that gates a question, where the SILENCE condition above holds (no trigger evaluation propagates the
+gate, no firing rule's deadline reads it, and no trigger accepts the unknown as an answer),
+reintroduces exactly the silent requirement-drop #108 alleges, and the F-102 rendering fix would not
+touch it, because there is nothing in `verdictDetail` to render. Whether that is worth
 acting on before such a rule exists is the product owner's call, and this document does not make it.
 
 ## S5. What this does not establish
@@ -808,3 +880,7 @@ acting on before such a rule exists is the product owner's call, and this docume
 - S4's short-circuit result is measured on one submission (approved scenario A). Which rules
   short-circuit depends on what their sibling conditions evaluate to, so the split is per-submission
   rather than a property of the ruleset.
+- The accepting-trigger case in S4 is measured on `DOHMH-EXEMPTION-001` and checked against the two
+  other accepting rules the engine comment names across the six approved scenarios. It shows that a
+  plan-changing invisible unknown is expressible and that v2.8 does not currently produce one, not
+  that no other published rule shape could.
