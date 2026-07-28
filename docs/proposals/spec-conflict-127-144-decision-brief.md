@@ -1,8 +1,21 @@
 # Decision brief: SPEC-CONFLICT #127 and #144
 
-**Status:** PROPOSED, and not a decision. This document resolves nothing. It records what is
-verifiably true on `main` at `048bff3` so that the two product-owner decisions can be made against
-the current tree rather than against issue text written days ago.
+**Status:** PROPOSED, and not a decision. This document resolves nothing.
+
+**Measured against `a7158c6`**, which is the commit this document's own parent is, and every claim
+below is stated against that tree and no other. An earlier revision measured against `048bff3` and
+kept saying so after being rebased, which put it four merges behind and made three of its claims
+false on the tree actually receiving it. Where re-measuring removed a cost or a blocker, this
+document now says the cost has DISAPPEARED rather than quietly dropping the line, because the
+product owner has been carrying some of them.
+
+Re-measured against `a7158c6`, three claims changed:
+
+| earlier claim, against `048bff3` | on `a7158c6` |
+|---|---|
+| PR #131 is open and sequencing-blocks option B | **gone.** `8d91e8c` merged it. Option B has no sequencing blocker |
+| `specs/F-203-deadline-alerts.md` has no 2026-07-27 amendments | **false.** `65730ec`, `951d2f4` and `54f659b` amended it that day |
+| OPEN-QUESTIONS T-4 cites sections that do not exist | **gone.** `7626391` merged the #161 citation fix |
 
 **Method:** every claim below was checked against `main` rather than taken from the issue. Where a
 claim could not be verified either way it says so. No approved artifact is changed by this document,
@@ -38,8 +51,26 @@ F-203's own APPROVED spec already assigns the Phase 2 scope to F-203. Its "Phase
 > Happy path only. Escalations, digests, team reminders, per-user preferences: Phase 2 (F-203 full,
 > per ROADMAP).
 
-So `ROADMAP.md:57` and the approved F-203 spec **agree**. There is no disagreement between artifacts
-about what F-203 means, which is what the issue's §5 citation implies.
+So `ROADMAP.md:57` and the approved F-203 spec **agree on three capabilities and not on a fourth**,
+which an earlier revision of this brief stated as unqualified agreement. Set side by side:
+
+| capability | `specs/F-203-deadline-alerts.md:53` | `docs/ROADMAP.md:57` | `docs/PRD.md:206` |
+|---|---|---|---|
+| escalations | yes | yes | yes |
+| digests | yes | yes | yes |
+| team reminders | yes | yes | yes |
+| **per-user preferences** | **yes** | **absent** | **absent** |
+
+The spec assigns four Phase 2 capabilities; the Roadmap and the PRD assign three. So there is no
+disagreement about what F-203 MEANS, which is what the issue's §5 citation implies, and there is a
+gap about what its Phase 2 depth CONTAINS.
+
+**That gap is a live scope item, not a wording slip, and neither option currently prices it.** Option
+B's rewrite covers the three capabilities the Roadmap names and would leave per-user preferences
+assigned by a spec and by nothing else. Option A would move three capabilities to a new id and leave
+the fourth behind. The product owner has to choose explicitly among retaining per-user preferences
+under whichever id takes the depth, retargeting it with the other three, or removing it, and this
+brief takes no position on which.
 
 **And there is no §7 problem either, which an earlier draft of this brief got wrong.** That draft
 read §7's "Every scheduled F-id receives one spec" as already biting, and reframed item 1 as how a
@@ -124,6 +155,47 @@ extends a range published in APPROVED `DESIGN.md`, which makes the new-id option
 approved artifacts rather than one. That is a real cost difference between the options and it is not
 visible from the issue.
 
+## Every approved artifact naming the ids being moved
+
+Three of round 2's five findings were the same defect: an id retarget priced against fewer artifacts
+than actually name the id. So this is a sweep of every approved artifact rather than a list of the
+ones anyone remembered, and the change sets below are built from it.
+
+**Item 1, the F-203 Phase 2 depth.** Places that ASSIGN the Phase 2 scope, which a retarget must
+move:
+
+| location | text | in which option's change set |
+|---|---|---|
+| `docs/ROADMAP.md:57` | `- **F-203 (full)** — alert escalations, digests, team reminders.` | A and B |
+| `docs/PRD.md:206` | `- **F-203 (full)** — alert escalations, digests, and team reminders.` | A, added this round |
+| `specs/F-203-deadline-alerts.md:53` | `Phase 2 (F-203 full, per ROADMAP)` | A, added round 1; B rewrites it anyway |
+
+Places that name F-203 as the PHASE 1 feature, which a Phase 2 retarget does not touch and which are
+listed so the next reader does not have to re-derive the distinction: `docs/DESIGN.md` lines 12, 16,
+18, 73, 80 and 86 (tracks, lanes, dependency graph, Twilio plumbing reuse), `docs/PRD.md:167` (the
+F-203 requirement itself), `docs/ROADMAP.md:29` and `:53`, `docs/ARCHITECTURE.md:193`, `:276` and
+`:281`, `specs/F-102`, `specs/F-201` and `specs/F-202` cross-references.
+
+One judgement call is flagged rather than decided: `docs/ARCHITECTURE-FUTURE.md:396` lists "F-203
+deadline alerts" among the outbound worker's consumers. That is a Phase 2+ document naming F-203 for
+alert delivery generally, which covers the Phase 1 alerts too, so whether a depth retarget should add
+the new id beside it depends on whether escalations and digests are read as a distinct consumer. This
+brief does not decide it.
+
+**Item 2, the Square/POS scope.** Every approved artifact naming it:
+
+| location | text | in which option's change set |
+|---|---|---|
+| `docs/ROADMAP.md:103` | `- Square/POS integrations.` | A replaces, B deletes |
+| `docs/ROADMAP.md:90` | `- **F-408 · Inventory Low-Stock Alerts** — manual counts or Square webhook` | A bounds, B absorbs |
+| `docs/PRD.md:226` | `**F-308 / F-408** — … manual counts or Square webhook` | A, added this round |
+| `docs/ARCHITECTURE-FUTURE.md:336` | external-integrations row mapping webhooks to `F-108, F-212, F-308, F-408` | A, added this round |
+
+Option B needs none of the last two, because it keeps the capability under F-408 and both artifacts
+already assign it there. **That asymmetry is the finding, not an oversight in B:** option A moves an
+id and therefore pays wherever the id is written, while option B moves nothing and pays nowhere. The
+earlier revision priced A as if it moved the id in one artifact.
+
 ## Exact change sets
 
 Line numbers are given only to locate the current text; the edits are described by content.
@@ -135,11 +207,16 @@ Line numbers are given only to locate the current text; the edits are described 
    escalations, digests, team reminders (the Phase 2 depth of F-203).`
 2. `docs/DESIGN.md`, lifecycle model: extend STAGE 2's declared range from `F-201–F-214` to
    `F-201–F-215`. Required because the range is saturated.
-3. `docs/ROADMAP.md` status header: record the id assignment, product-owner approved, dated.
-4. `docs/DESIGN.md` status header: record the range extension.
-5. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md` and `docs/DESIGN.md`.
-6. Tracker: open the F-215 issue; F-203's own issue needs no change.
-7. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
+3. `docs/PRD.md:206`: **required, and missing from an earlier revision of this list.** It carries the
+   same assignment as the Roadmap, "**F-203 (full)** — alert escalations, digests, and team
+   reminders". Retargeting only the Roadmap leaves one planned scope assigned to two different ids
+   across two approved artifacts.
+4. `docs/ROADMAP.md` status header: record the id assignment, product-owner approved, dated.
+5. `docs/DESIGN.md` status header: record the range extension.
+6. `docs/PRD.md` status header: record the retarget.
+7. `docs/BASELINE.md`: the rows for `docs/ROADMAP.md`, `docs/DESIGN.md` and `docs/PRD.md`.
+8. Tracker: open the F-215 issue; F-203's own issue needs no change.
+9. `specs/F-203-deadline-alerts.md:53`: **required, not optional.** Its Phase 1 Scope Cut reads
    "Phase 2 (F-203 full, per ROADMAP)". Step 1 removes the `F-203 (full)` entry that sentence points
    at, so without this edit an APPROVED spec cites a Roadmap entry that no longer exists. Governance
    §5 makes that a conflict requiring reconciliation, so option A either retargets the pointer to the
@@ -165,7 +242,7 @@ retarget on that account; and B's step 2 already rewrites the Scope Cut section,
 priced there in any case. The asymmetry in the two lists is therefore real and not an artefact of
 one being written more carefully: A touches an approved spec that B was already touching.
 
-**This option is cheaper in artifacts and blocked in sequencing.** See below.
+**This option is cheaper in artifacts, and its sequencing blocker has merged away.** See below.
 
 ### Item 2, option A: assign a permanent F-id to Square/POS
 
@@ -174,9 +251,19 @@ one being written more carefully: A touches an approved spec that B was already 
    not read as overlapping.
 2. `docs/ROADMAP.md:90`: F-408's "manual counts or Square webhook" needs a boundary sentence, or
    the two entries both claim the Square webhook.
-3. `docs/DESIGN.md`: extend STAGE 4's declared range from `F-401–F-413` to `F-401–F-414`.
-4. Status headers and BASELINE rows for both documents.
-5. Tracker: open the F-414 issue.
+3. `docs/PRD.md:226`: **required, and missing from an earlier revision of this list.** It assigns the
+   Square-webhook scope exclusively to F-408: "**F-308 / F-408** — ticketing integration/export;
+   inventory low-stock alerts (manual counts or Square webhook; deliberately last)". A Roadmap
+   boundary sentence does not reach it, so without this the product requirement keeps assigning the
+   capability to F-408.
+4. `docs/ARCHITECTURE-FUTURE.md:336`: **required, same reason.** Its external-integrations row maps
+   webhook events and provider mappings to `F-108, F-212, F-308, F-408` and to no other id, so a new
+   id owning POS integration is absent from the architecture mapping until this row names it.
+5. `docs/DESIGN.md`: extend STAGE 4's declared range from `F-401–F-413` to `F-401–F-414`.
+6. Status headers and BASELINE rows for all FOUR documents: `docs/ROADMAP.md`, `docs/PRD.md`,
+   `docs/ARCHITECTURE-FUTURE.md` and `docs/DESIGN.md`. An earlier revision said "both documents",
+   which was counted before the sweep below was done.
+7. Tracker: open the F-414 issue.
 
 ### Item 2, option B: remove the standalone entry, keep POS inside F-408
 
@@ -266,52 +353,69 @@ prohibition quote, VS Round2 #6". Round 2 #6 reads, in full:
 > "must be a member of a block association and given permission by their neighbors"; 60-day
 > deadline. Community-board recommendation per SAPO rules §1-04(h).
 
-| claim | located support |
+| claim | located in the dossier |
 |---|---|
-| block parties | **supported**, by the quoted line above |
-| street events | **no source located** |
-| festivals | **no source located** |
-| parades | **no source located.** The word "parade" does not appear anywhere in `VERIFICATION-SOURCES.md` |
+| block parties | **candidate lead located**, in the quoted line above |
+| street events | **no candidate lead located** |
+| festivals | **no candidate lead located** |
+| parades | **no candidate lead located** — "parade" appears nowhere in `VERIFICATION-SOURCES.md` |
 
 Two further precisions. The located prohibition is on `block-parties.page`, not on the CECM FAQ the
-advisory names, so the attribution does not match the record even for the one supported category.
-And the whole document was searched, not only the cited entry, before writing "no source located".
+advisory names, so the attribution does not match the record even for the one category with a lead.
+And the whole document was searched, not only the cited entry, before writing "no candidate lead located".
 
-**So the issue is right about this advisory.** Three of its four named categories assert a
-prohibition no located source supports, and the earlier draft's framing of the claims as evidenced
-would have steered a resolution toward keeping them.
+**NEITHER "SUPPORTED" NOR "UNSUPPORTED" IS THE RIGHT WORD, AND ROUND 1 GOT THIS WRONG TWICE OVER.**
+Round 1 declined the review's finding on `ADV-SAPO-OTHER-CLASS-001` by citing RF-2, as though
+locating text there settled that the deadlines are supported. It does not, and the document says so
+about itself on its own third line:
 
-**ADV-SAPO-OTHER-CLASS-001** claims four deadlines. Its evidence ref is "VS Round2 #4-5", and those
-two entries do not cover all four:
+> **Purpose:** Candidate primary sources for the 11 open `[VERIFY]` items in `OPEN-QUESTIONS.md` §2,
+> collected 2026-07-22 by a four-agent research pass. **Nothing in this document is a verification.**
+> … SUPPORT / CONTRADICT / NOT ADDRESS labels are the researchers' candidate assessments of fetched
+> text against the encoded claim, for triage only.
 
-> 4. **Open Culture**: 15 days (`open-culture.page` + deadlines page).
+Three of its own section headings repeat it: "Findings for rule authoring (candidate, not
+promoted)", "Per-rule attribution located (candidate, not promoted)", "Notes for rule authoring
+(candidate, not promoted)". `OPEN-QUESTIONS.md:48` puts promotion elsewhere: "Every promotion to
+VERIFIED follows the governance rules: primary sources only, record URL + date checked, update the
+rules file's `verification` block, named reviewer."
 
-> 5. **Single Block Festival OFFICIAL CONFLICT**: `single-block-festivals.page` + deadlines page say
-> 90 days; the CECM FAQ says December 31 of the preceding year. Both live.
+So what the dossier establishes is narrower than either side of the round-1 exchange said:
 
-But the other two ARE located in the same document, under a different reference. RF-2, in the table
-whose column heading is "What primary text says", records:
-
-> CECM FAQ publishes deadlines **by event type**: block parties/clean-ups/farmers markets/religious
-> 60 days; **street events 14–45 days**; plaza events 14–60; press/rallies/**productions 10 days**;
-> **street festivals: December 31 of the prior year**
-
-corroborated in section "7. R1 — SAPO fee schedule by event type":
-
-> https://codelibrary.amlegal.com/codes/newyorkcity/latest/NYCrules/0-0-0-84731 (50 RCNY §1-08):
-> codified fee + deadline table matching the CECM page.
-
-| claim | located support |
+| claim | status against the dossier |
 |---|---|
-| production 10 days | **supported**, by RF-2, not by the cited #4-5 |
-| open culture 15 days | **supported**, by #4 as cited |
-| street festival Dec 31 of prior year | **supported**, by RF-2, not by the cited #4-5 |
-| single block festival 90 days vs Dec 31 | **supported**, by #5 as cited |
+| production 10 days | **candidate lead located** (RF-2), fetched 2026-07-22, never promoted |
+| open culture 15 days | **candidate lead located** (Round 2 #4), same |
+| street festival Dec 31 of prior year | **candidate lead located** (RF-2), same |
+| single block festival 90 days vs Dec 31 | **candidate lead located** (Round 2 #5), same |
+| alcohol prohibited at block parties | **candidate lead located** (Round 2 #6), same |
+| alcohol prohibited at street events | **no candidate lead located** |
+| alcohol prohibited at festivals | **no candidate lead located** |
+| alcohol prohibited at parades | **no candidate lead located.** "parade" appears nowhere in the dossier |
 
-**So for this advisory the defect is the citation, not the claims.** All four deadlines are located
-in `VERIFICATION-SOURCES.md`; two of them are simply not where the evidence ref points. Reading the
-label alone would have produced the opposite conclusion, and acting on it would have removed
-regulatory text the record does support.
+**What promotion would cost.** The dossier records its own method: every URL was fetched on
+2026-07-22 and read before quoting, and most nyc.gov and codelibrary.amlegal.com pages return HTTP
+403 to generic fetchers and need a browser user-agent. A verification-owner pass over the four
+deadline claims is therefore a re-fetch and read of the CECM per-type deadlines page,
+`open-culture.page`, `single-block-festivals.page` and 50 RCNY §1-08, recording URL and date checked
+against each and updating the `verification` block under a named reviewer. Four URLs and one
+rules-file edit, by the one person governance allows to do it. For the three alcohol categories there
+is nothing to promote: that pass would be a search for a source not located in two research rounds,
+and its outcome may be that none exists.
+
+**So the issue's original statement is closer to right than either round-1 revision allowed**, and
+precisely: `ADV-ALCOHOL-PUBLIC-001` asserts a prohibition for three categories with no located
+candidate, and `ADV-SAPO-OTHER-CLASS-001` asserts four deadlines whose candidates are located but
+unpromoted. Different defects, different remedies, and this brief previously treated the two
+advisories as one.
+
+**Recorded for the revision history, because this correction was made twice at two different
+depths.** Round 1 corrected this brief for treating an evidence LABEL as a source record, and then
+made the same mistake one level down, treating the dossier's CONTENT as a verification without
+reading the dossier's own status header. The review confirmed that decline without checking the
+header either. The shape is identical both times, taking a label for the thing it labels, which is
+the same failure as trusting a line number behind a section sigil. What catches it is reading an
+artifact's own statement of what it is before quoting anything out of it.
 
 **What survives of the earlier draft's correction.** The distinction between a missing `source`
 object and unevidenced claims is still real, and SPEC-CONFLICT #75's exemption still permits the
@@ -400,9 +504,10 @@ Stated as observations, not recommendations.
 **#127 item 1** is narrower than filed, and narrower again than an earlier draft of this brief made
 it: the two artifacts already agree on F-203's meaning, and the Phase 2 depth is planned rather than
 scheduled scope, so no §7 obligation is outstanding today. What remains is a naming and tracking
-choice that becomes live when that work is scheduled. Option B touches one spec and one Roadmap line
-but is sequencing-blocked behind PR #131. Option A touches two approved artifacts because STAGE 2's
-declared id range is saturated, plus the F-203 spec pointer its own step 1 invalidates.
+choice that becomes live when that work is scheduled. Option B touches one spec and one Roadmap line,
+and its PR #131 sequencing block has merged away. Option A touches four approved artifacts once
+every place naming the id is counted: the Roadmap entry, `docs/PRD.md:206`, the F-203 spec pointer
+its own step 1 invalidates, and DESIGN.md's saturated STAGE 2 range.
 
 **#127 item 2** has an approved policy pointing at option B, with two precedents, and option B is the
 only one of the four change sets that touches a single artifact.
