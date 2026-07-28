@@ -1046,12 +1046,35 @@ the moving eight name `nyc.v2.8` or no version at all, and the one that stays na
 but states the count OF `nyc-rules.v2.8.json`, the file this rollout deletes, so its count moves with
 its path.
 
-**Found while applying that test, and NOT this feature's to fix.** The same `docs/DESIGN.md:7` says
-"the pointer is now `nyc.v2.5`", and `docs/DESIGN.md:73` says `BASELINE.md` "flips nyc.v2.5 to
-APPROVED". The published ruleset is `nyc.v2.8` and the manifest already records it APPROVED, so both
-sentences are stale TODAY, before this feature changes anything. They are not in this footprint: this
-change does not make them false, it finds them already false. Reported rather than corrected, because a
-correction to an APPROVED document is its owner's under §6 and is not smuggled in beside a publication.
+**Found while applying that test, and NOT this feature's to fix.** `docs/DESIGN.md` carries two
+version pointers naming a superseded version, **cited by content because a line number would not
+survive the next edit to that file, which is the failure PR #161 exists to remove**. In the baseline
+decision, the sentence continuing past the `nyc.v2.1` count reads "the pointer is now `nyc.v2.5`,
+retargeted 2026-07-25 with no regulatory change". In the Dev 4 lane definition, the verification line
+ends "`BASELINE.md` flips nyc.v2.5 to APPROVED". The published ruleset is `nyc.v2.8`, it is the only
+file in `rules/`, and `docs/BASELINE.md`'s current-ruleset row already records it APPROVED. **The same
+document contradicts itself on the point**: its green-gate criterion says `BASELINE.md` "flips nyc.v2.8
+to APPROVED before the demo", so one document names two different versions for one event.
+
+Both sentences are stale TODAY, before this feature changes anything, and they are not in this
+footprint: this change does not make them false, it finds them already false. Reported rather than
+corrected, because a correction to an APPROVED document is its owner's under §6 and is not smuggled in
+beside a publication.
+
+**Re-verified in round 13 against `origin/main` rather than a worktree**, after the claim was
+questioned and after this branch was rebased, since a spec ABOUT stale pointers is the last document
+that should carry one. Both sentences are present on main and both name `nyc.v2.5`.
+
+**The same current-versus-historical test applied to VERSION POINTERS in that document, which is the
+check that would have settled this before it was written.** `docs/DESIGN.md` carries seven pointers
+across six lines. **Six name the current artifact; one names a past version as a historical fact.** The
+one historical pointer is the `nyc.v2.1` baseline subset, which is correct as history and is the same
+sentence whose COUNT is excluded from the table above. Of the six current-artifact pointers, four say
+`nyc.v2.8` and are correct: the status header's amendment record, the green-gate criterion, the Dev 1
+lane's engine-fidelity line and the crown-jewel line. **Two say `nyc.v2.5` and are the stale pair.** So
+the defect is not that the document is old, which would have shown as a uniform lag. Four of its six
+current pointers were updated and two were missed, which is what a per-occurrence retarget leaves
+behind and exactly what this spec's own sweep categories exist to prevent.
 
 Two new rules make 33 into 35 and the rules-plus-advisories total 37 into 39. **The derived total is the
 one worth reading twice:** the numerator stays 24, because both new rules publish `MAY_BE_REQUIRED`
@@ -1115,20 +1138,33 @@ the engine owner approve their own files, and the footprint gains those paths fo
 **The re-run also found what does NOT move, and it is worth one line so nobody re-derives it.**
 `apps/api/src/ruleset.ts:72` and `apps/web/app/rules-file.ts:128` name `EXPECTED_RULESET_VERSION` without
 naming its value, so they stay true. `scripts/check-baseline-drift.mjs` uses `nyc.v2.8` and `nyc.v2.9` as
-HYPOTHETICALS in comments about its own matching (`:1350`, `:1353`, `:1367`), which stay correct as
-illustrations; the only cosmetic cost is that its "publishing v2.9" example will name the version that
-actually shipped.
+HYPOTHETICALS in comments about its own matching, which stay correct as illustrations; the only
+cosmetic cost is that its "publishing v2.9" examples will name the version that actually shipped.
+**Cited by content rather than by line, and re-counted after the round 13 rebase**: there are FOUR, not
+the three an earlier round listed by line number, and the line numbers had all moved. They are the
+comment on publishing v2.9 and deleting v2.8 turning every path into a miss, the `A BUMP DOES NOT BREAK
+THE GUARD` suite note planting a v2.9-only tree, the nested-`EXPECTED_RULESET_VERSION` example, and the
+comment recording that a `nyc-rules.v2.9.json` passed while the field and the pin still said `nyc.v2.8`.
+The line-number citations went stale within a day of being written, which is the argument for content
+citation stated by demonstration.
 
-**Category 4b, PASSING MENTIONS AND HISTORICAL RECORDS. Thirty-two occurrences across eight files, and
-they do not move:** `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
+**Category 4b, PASSING MENTIONS AND HISTORICAL RECORDS, and they do not move.** **Re-counted in round
+13 against the rebased tree, because PRs #170, #177, #182 and #183 landed on main while this branch was
+open and three of them touched files in this category.** The classification is unchanged and the numbers
+are not: `scripts/check-baseline-drift.mjs` now carries **forty-three** version mentions rather than the
+twenty-five recorded before the rebase, and **seven** files under `docs/proposals/` name a version rather
+than three. The load-bearing property was re-checked rather than carried over: **all forty-three of the
+`check-baseline-drift.mjs` mentions are inside comments and none is executable**, verified by
+partitioning the file's mentions into comment and code positions rather than by reading a sample. The
+files: `docs/BASELINE.md`'s superseded-lineage rows for v2.7 and earlier,
 `docs/VERIFICATION-SOURCES.md`'s dated round records, `docs/ARCHITECTURE-FUTURE.md`'s historical
-references, the three files under `docs/proposals/`, `packages/engine/src/types.ts:198` ("optional and
+references, the seven files under `docs/proposals/` that name a version, `packages/engine/src/types.ts:198` ("optional and
 null throughout nyc.v2.8", which is scoped to the version it names and stays true),
 `packages/engine/src/__fixtures__/published-ruleset.ts:4` and `apps/web/app/rules-file.ts:4` (both
 narrating the hard-coding defect those modules exist to remove), `apps/web/app/pages.test.tsx:65`
-(narrating a rejected approach), and the twenty-five in `scripts/check-baseline-drift.mjs`, every one of
+(narrating a rejected approach), and the forty-three in `scripts/check-baseline-drift.mjs`, every one of
 them commentary on path-matching bugs the guard has already fixed and none of them executable, which was
-checked rather than assumed. **The cost of leaving them is stated rather than hidden:** they will name a
+checked rather than assumed and re-checked after the rebase. **The cost of leaving them is stated rather than hidden:** they will name a
 superseded version until they are next edited, and a reader who follows one learns a historical fact
 rather than a wrong authority.
 
@@ -1420,16 +1456,20 @@ of work are already promised the next ruleset version, and a fourth wants a publ
     | `DOB-ASSEMBLY-001`'s source re-attribution | `docs/VERIFICATION-SOURCES.md:339`, the "v2.9 follow-up flag", and F-202's APPROVED status, which records that the planned publication "edits `deadline.qualification`" | corrects an attribution the repository already records as sitting on the wrong Table 28-112.8 row |
     | this feature's two rules | the rollout above | consumes the version, and would retain that attribution |
 
-    **A fourth wants a publication too, and I have not seen it stated beside the other three.** PR #177's
+    **A fourth wants a publication too, and I have not seen it stated beside the other three.** The
     advisory reconciliation says in as many words that "Both outcomes require a publication. These are
     edits to an immutable artifact." So four pieces of work want the next version.
+    **It is no longer a pending PR.** PR #177 merged, so this is now
+    `docs/proposals/advisory-144-bounded-reconciliation-scope.md` on main and the claim is citable in the
+    tree rather than in a review. Its content is unchanged by merging: it still requires a publication,
+    so the collision is not resolved by its landing, only made easier to read.
 
     **Two shapes, and this document takes neither.** One publication carries all of it, in which case the
     atomic set above merges with theirs and the approvals union across lanes. Or this feature takes a
     later version, in which case its rollout renames `v<next>` and its lineage record gains whatever ships
     first. **Blocked on the owners of the other three**: the engine owner for the `proposals.ts` move, the
-    verification owner for the re-attribution flag that F-202's approved status depends on, and PR #177's
-    owner for the reconciliation. Nothing here reschedules anyone else's work.
+    verification owner for the re-attribution flag that F-202's approved status depends on, and the
+    reconciliation's owner. Nothing here reschedules anyone else's work.
 
     **Why it is correctness and not tidiness:** publishing this feature as v2.9 without the
     re-attribution ships a NEW artifact still carrying a source attribution the repository has already
@@ -1605,3 +1645,21 @@ approval.**
     replacing numbers without asking whether each describes the CURRENT artifact or a named past version,
     which would have rewritten `docs/DESIGN.md:7`'s record of what `nyc.v2.1` contained. Eight of the
     nine count statements move and that one does not.
+
+**Round 13.** **No review findings; a challenge to one of this document's own claims, and a rebase.**
+    Round 12 reported two stale version pointers in `docs/DESIGN.md` and cited them by line number. The
+    citation was challenged on the ground that those lines say something else, which is the right
+    challenge to make of a document whose subject is stale references. Re-checked against `origin/main`
+    rather than against a worktree: **both sentences are present and both name `nyc.v2.5`**, and the
+    reason a line-number check missed them is that each sits at the END of a long line whose beginning
+    says something else and correct. The finding stands and its citation does not, so it is restated by
+    content, which is what this document already required of every other citation and had not applied to
+    its own. The same current-versus-historical test was then run over that file's version pointers
+    rather than only its counts: seven pointers, six naming the current artifact and one a past version
+    as history, and the two stale ones are a partial retarget rather than an old document. The branch
+    also rebased twenty-six commits onto main, which landed PRs #170, #177, #182 and #183 underneath it
+    and moved three numbers this document states: the version mentions in `check-baseline-drift.mjs`, the
+    count of files under `docs/proposals/` naming a version, and the number of v2.9 hypotheticals, whose
+    line-number citations had all shifted within a day of being written. All three are re-derived against
+    the rebased tree, and the reconciliation that wanted the next ruleset version is now a merged
+    document on main rather than a pending PR.
