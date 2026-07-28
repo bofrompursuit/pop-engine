@@ -211,14 +211,22 @@ is the as-of date** and must be recorded as such.
 
 | # | URL | Observations it returns | States per observation |
 | --- | --- | --- | --- |
-| 1 | `.../permit-types/block-parties.page` | Is the alcohol prohibition sentence present as quoted? | 2 |
-| 2 | `.../support/frequently-asked-questions.page` | **(a)** Does an alcohol prohibition sentence appear, and **which of block parties, street events, festivals and parades does it name?** **(b)** production figure, **(c)** street-festival figure, **(d)** single-block-festival figure | 16 for (a), 3 each for (b), (c), (d) |
+| 1 | `.../permit-types/block-parties.page` | Is the alcohol prohibition sentence present as quoted, absent, or CONTRADICTED by text permitting or qualifying alcohol? | 3 |
+| 2 | `.../support/frequently-asked-questions.page` | **(a)** For EACH of block parties, street events, festivals and parades: does the page prohibit, say nothing, or PERMIT or qualify? **(b)** production figure, **(c)** street-festival figure, **(d)** single-block-festival figure | 3⁴ = 81 for (a), 3 each for (b), (c), (d) |
 | 3 | `.../permitting/permit-deadlines.page` | Open-culture figure; single-block-festival figure | 3 each |
 | 4 | `.../permit-types/open-culture.page` | Open-culture figure | 3 |
 | 5 | `.../permit-types/single-block-festivals.page` | Single-block-festival figure | 3 |
-| 6 | `.../permit-types/street-events.page` | Does an alcohol provision appear? | 2 |
-| 7 | `.../permit-types/street-festivals.page` | **(a)** Does an alcohol provision appear? **(b)** street-festival figure | 2 for (a), 3 for (b) |
-| 8 | `.../permitting/fees.page` | **Per class name**, for each of the five the advisory prints: is it on the schedule as printed, on the schedule under a different published label, or absent? | 3 each, five names |
+| 6 | `.../permit-types/street-events.page` | Does an alcohol provision appear: prohibiting, absent, or permitting or qualifying? | 3 |
+| 7 | `.../permit-types/street-festivals.page` | **(a)** Does an alcohol provision appear, on the same three states? **(b)** street-festival figure | 3 for (a), 3 for (b) |
+| 8 | `.../permitting/fees.page` | **Per class name**, for each of the five the advisory prints: is it on the schedule as printed, under ONE different published label, under MORE THAN ONE published label, or absent? | 4 each, five names |
+
+**A class-name observation has FOUR states, not three**, and the fourth is already on the record rather
+than hypothetical. `docs/VERIFICATION-SOURCES.md:153-154` transcribes TWO Production Events rows:
+"Production Events (with curb lane or sidewalk only)" at $290 per day and "Production Events (with curb
+lane and sidewalk)" at $700 per day. So `production event` is not one class with one label; the schedule
+publishes two labels that both begin with the advisory's name and differ by a scope qualifier the
+advisory does not carry. A three-state mapping assuming one published label per class cannot express
+that, which is the same shape as B-1e's coinage a revision ago.
 
 A figure observation has three states, not two: **as printed**, **present but different**, and
 **absent**. The middle state is the one an earlier revision of this document had nowhere to put, and
@@ -226,6 +234,36 @@ it is not a failure. A source that now publishes a different figure is fetched e
 this advisory prints, and it belongs in the dossier round even though **this document may not restate
 it**: writing the new figure into a draft would be asserting a permit fact this scope has no standing
 to assert.
+
+**A PAGE THAT CONTRADICTS IS NOT A PAGE THAT IS SILENT, and the presence checks had no third state.**
+An earlier revision made every alcohol observation binary, present or absent, so a page that explicitly
+permits or qualifies alcohol for a category was scored identically to a page that says nothing about it,
+and the A-1 rule below retains the prohibition whenever EITHER page supports it. Under a binary
+observation, a `block-parties.page` that had been rewritten to permit alcohol under conditions would
+score as "not present as quoted" and lose against the FAQ, or worse, an FAQ prohibition would carry a
+category whose own permit-type page now contradicts it, and the advisory would print a prohibition the
+fetch had just found contrary text for.
+
+**So each alcohol observation now has three states: prohibits, silent, contradicts.** The third routes
+the same way the B-4 to B-6 disagreements already route: two live official pages disagreeing is the
+legend's own definition of `OFFICIAL_CONFLICT`, and it is recorded as a candidate conflict for the
+verification owner rather than resolved here. Concretely, per category:
+
+- **prohibits on one page, silent on the other** is the case the rules below already handle: supported,
+  sourced to the page that carries it.
+- **prohibits on one page, contradicts on the other** is a candidate `OFFICIAL_CONFLICT`. The claim is
+  NOT retained as a plain prohibition, because the fetch has found text against it, and it is NOT
+  removed as unsupported, because the fetch has found text for it. It goes to the verification owner
+  with both quotes, and the shape it would take if promoted is a rule carrying both readings, which is
+  what that status exists for.
+- **contradicts, and nothing prohibits** removes the claim, and the contrary quote goes into the dossier
+  round for the same reason a changed figure does: it is fetched evidence about a fact this advisory
+  prints. **This document may not restate the contrary text as a permission**, which would be asserting
+  a permit fact it has no standing to assert.
+
+**PR #182's fetch found no contradiction**, so every branch above is prospective on today's record. The
+mapping handles it because a fetch is being prescribed for a future date, and the state that has nowhere
+to go is the state that gets discarded.
 
 **Rows 6 and 7 are two-sided, corrected from an earlier revision.** They were written as negative
 checks that could only fail A-2 and A-3. That was wrong: if either page carries an alcohol provision,
@@ -303,11 +341,44 @@ unpromoted claim is removed from the text whatever the fetch returned.
 
 | claim | deciding observations | rule |
 | --- | --- | --- |
-| **A-1** block parties | row 1; row 2(a) | Supported if row 1 shows the sentence as quoted **or** row 2(a) names block parties. Retained iff supported and promoted, sourced to whichever page carries it |
-| **A-2** street events | row 2(a); row 6 | Supported if either names street events. Same retention rule |
-| **A-3** festivals | row 2(a); row 7(a) | Supported if either names festivals. Same retention rule |
-| **A-4** parades | row 2(a) only | Supported if row 2(a) names parades. Same retention rule |
+| **A-1** block parties | row 1; row 2(a) | Supported if either PROHIBITS and neither CONTRADICTS; retained iff supported and promoted, sourced to whichever page carries it. **One prohibits and one contradicts: candidate `OFFICIAL_CONFLICT`, to the owner, not retained as a plain prohibition.** Contradicts with no prohibition, or silent on both: removed |
+| **A-2** street events | row 2(a); row 6 | Same three-state rule |
+| **A-3** festivals | row 2(a); row 7(a) | Same three-state rule |
+| **A-4** parades | row 2(a) only | Same three-state rule, on one observation: prohibits, silent, or contradicts |
 | **A-5** attribution | derived, not decided | **Not an independent claim.** Each retained category names the page that carries it. If a category is carried only by the FAQ, its clause reads "per the CECM FAQ"; if only by `block-parties.page`, it names that page; if by both, both |
+
+**THE ASSEMBLY, which is where the last two revisions broke.** The rules above decide claims; three
+fixed shape texts below decide nothing and have **no slot for a retained A-2, A-3 or A-4**. Rows 2(a),
+6 and 7(a) can now confirm those categories, and the per-claim rule says a confirmed and promoted
+category is retained, so every fixed string in this section is unable to express its own mapping's
+output. That is the same defect as B-8's unreachable branch, one section over: fix the assembly, not
+the mapping.
+
+**So the assembly is a template with one slot per retained claim, and the shape texts below are the
+A-1 slot only:**
+
+1. **Frame, always:** "Alcohol in public space is outside this ruleset version's validated coverage".
+   Kept by every assembly; `acceptance.test.ts` pins nothing here, but section 4's one pin is on the
+   other advisory.
+2. **The A-1 clause**, whose form is the shape decision below.
+3. **One clause per retained category among A-2, A-3 and A-4**, each naming the page that carries it,
+   per A-5's derivation. Absent when the category is not retained, which is the state the record holds
+   today.
+4. **The evaluation frame:** what the RULESET evaluates. This is where an earlier revision's fixed
+   string was almost right: "No other alcohol-in-public-space path is evaluated by this ruleset
+   version" stays TRUE even when a category is retained, because retaining a prohibition CLAIM does not
+   make the ruleset evaluate that path. A retained A-2 says street-event alcohol is prohibited; it does
+   not add a rule that evaluates a street event's alcohol answer. The two sentences are about different
+   things and both stand.
+5. **"Confirm with the relevant agency"**, always.
+
+**And the status consequence, which is what makes this more than a wording fix.** Constraint 2 says a
+`COVERAGE_GAP` advisory asserts nothing, so **any assembly that retains A-2, A-3 or A-4 moves the status
+off `COVERAGE_GAP` and therefore takes section 5.0's intake-contract work with it**, exactly as shape 3
+does for A-1. Shape 1's price ("no status move, no source obliged") holds only in the assembly where
+A-2 to A-4 are all absent, which is today's record and not a fetch outcome. The three shapes below are
+priced for the A-1 slot; a retained non-block-party category adds shape 3's price on top of whichever
+shape is chosen.
 
 **A-5 stops being a branch, and that is a repair rather than a simplification.** An earlier revision
 let the FAQ restore a blanket "per the CECM FAQ" while A-2 through A-4 stayed removed, which would
@@ -354,11 +425,31 @@ That contradicts section 5.2's row saying finding sets do not move, and the row 
 reaches further than the rendered plan: the blocking finding is selected from the findings
 (`verdict.ts:54-62`), and `buildRescopeSuggestions` reads `introduced` findings by rule id
 (`verdict.ts:340-345`), so a second finding is a second candidate in both. **The cost is therefore a
-trigger and deduplication decision, not a text decision**: either the new rule publishes a
-`dedupe_key` shared with `SAPO-BLOCK-PARTY-ELIG-001`, which makes it the third rule in the ruleset to
-use the mechanism and merges the pair, or it narrows its trigger so the two cannot both fire, or the
-duplicate finding is accepted and the plan shows it. **This document does not choose**; it records
-that shape 2 cannot be costed without the choice.
+trigger and deduplication decision, not a text decision.** Three options were listed in an earlier
+revision and **the first is now withdrawn as unsound except under a condition that shape 2's own
+purpose defeats:**
+
+- ~~**Share a `dedupe_key` with `SAPO-BLOCK-PARTY-ELIG-001`.**~~ **WITHDRAWN unless both rules carry
+  the SAME `verification.status`.** `mergeFindings` (`packages/engine/src/findings.ts:123-134`) spreads
+  the FIRST finding and then concatenates only `ruleIds`, `notes`, `sources`, `triggeredBy` and
+  `deadlineUnknownFields`. **`verificationStatus` is not merged and not compared**: the merged line
+  carries whichever rule the ruleset lists first. `SAPO-BLOCK-PARTY-ELIG-001` is `SOURCE_CONFIRMED`;
+  the point of shape 2 is a promoted A-1, which is `VERIFIED`. So merging would render one status and
+  silently drop the other, and which one survives depends on array order. That is the defect this scope
+  exists to fix, one layer down: a statement rendering under a status that is not its own.
+  **PR #171 reached the same conclusion independently**, in `specs/host-guest-authorisation-coverage.md`,
+  when it refused a shared key between a new rule and `DOB-ASSEMBLY-001` on exactly this ground and
+  measured the merge both ways. The two documents should not disagree, and they do not.
+  The condition under which it becomes available is narrow and worth stating: if the owner promotes
+  BOTH rules to `VERIFIED` in the same publication, the statuses match, nothing is dropped, and the
+  merge is sound. That is a bigger promotion than shape 2 asks for.
+- **Narrow the new rule's trigger** so the two cannot both fire. Available today, and it makes the new
+  rule's scope a decision rather than a copy of the existing trigger.
+- **Accept the second finding** and let the plan show two `prohibited_or_ineligible` lines for one
+  prohibition, with the blocking-selection and rescope consequences below.
+
+**This document does not choose among the two that remain**; it records that shape 2 cannot be costed
+without the choice, and that the option an earlier revision leaned on is not sound as written.
 
 Also in shape 2's price: `EXPECTED_RULE_COUNT` and the five rule-count test pins listed in section
 5.2; the five documents stating "33 rules + 4 advisories", one of which is F-201 Acceptance Criterion
@@ -382,10 +473,10 @@ the status together, and a decision about what the intake page renders.
 
 | claim | deciding observations | rule |
 | --- | --- | --- |
-| **B-1a to B-1e**, one per class name | row 8, per name | **As printed** keeps the name. **Different published label** keeps the name **as the schedule publishes it**, which is not a failure. **Absent** drops that name |
+| **B-1a to B-1e**, one per class name | row 8, per name | **As printed** keeps the name. **One different published label** keeps the name as the schedule publishes it, which is not a failure. **MORE THAN ONE published label** keeps every label the schedule carries for that class, or drops the class if the owner will not publish a list; the choice is recorded below rather than taken. **Absent** drops that name |
 | **B-2** "known published" | derived | Retained only for figures that survive, removed with the last of them |
-| **B-3** production 10 days | row 2(b) | As printed and promoted, retained. Different or absent, removed, and the new reading goes to the dossier round |
-| **B-4** open culture 15 days | rows 3 and 4 | Both as printed and promoted, retained. **The two disagreeing is not removal**: two live official pages disagreeing is the legend's definition of `OFFICIAL_CONFLICT` and is recorded as a candidate conflict. Otherwise removed |
+| **B-3** production 10 days | row 2(b) | **As printed, the figure leaves the advisory either way** (see the destination rule below): unpromoted it is removed, promoted it becomes a candidate rule outside this scope. Different or absent, removed, and the new reading goes to the dossier round |
+| **B-4** open culture 15 days | rows 3 and 4 | Both as printed: same destination rule. **The two disagreeing is not removal**: two live official pages disagreeing is the legend's definition of `OFFICIAL_CONFLICT` and is recorded as a candidate conflict. Otherwise removed |
 | **B-5** street festival Dec 31 | rows 2(c) **and** 7(b) | Same three-way rule. **Both rows, corrected**: an earlier revision listed row 7 as deciding B-5 and then retained it on row 2 alone |
 | **B-6** single block festival 90 days | rows 3 and 5 | Same three-way rule |
 | **B-7** single block festival Dec 31 | row 2(d) | Same as B-3, one source |
@@ -397,6 +488,16 @@ only if row 2(d) shows December 31. **Both surviving means both readings are liv
 carry them, which is exactly what B-8 asserts.** The branch was not merely unlikely, it was
 unreachable, and its only effect would have been to render two live official deadlines as ordinary
 figures and lose the `OFFICIAL_CONFLICT` the ruleset publishes a status for.
+
+**B-1c is the multiple-label case, and it is decided by the record rather than by the fetch.** The
+transcription already shows two Production Events labels, so the expected observation for that name is
+*more than one published label*. Two outcomes are available and **this document takes neither**: keep
+both labels, which makes the enumeration longer and more accurate than the advisory's single name, or
+drop the class from the enumeration because a one-name slot cannot carry two published labels honestly.
+The second is not a failure either: the enumeration is a taxonomy claim, and a class whose published
+form is two scoped labels is not what "production event" asserts. **What is NOT available is keeping the
+advisory's own single name on the strength of a schedule that publishes two**, which is what a
+three-state mapping would have done by classifying it as "different label" and rewriting to one of them.
 
 **B-1e is the case an earlier revision classified as failure.** Round 3 of the dossier already
 transcribes the fifth label as **"Extra Large Event"**, so "plaza-and-street extra large" is the
@@ -430,10 +531,21 @@ guard.**
   rescope exclusion needs a replacement that does not depend on the status, which is an engine change
   this document does not propose.
 
-**If every deadline row confirms and the owner promotes**, the figures still leave the advisory: this
-ruleset models a filing lead as a rule with an `output.deadline`, and constraint 3 says one advisory
-cannot carry four independently promoted facts. **Four promoted deadlines are four candidate rules**,
-out of this scope.
+**ONE DESTINATION FOR A PROMOTED DEADLINE, because the rows above and this paragraph gave two.** An
+earlier revision had the per-claim rows retaining a promoted figure in the advisory while this paragraph
+said the figures leave it, and constraint 3 explains why the first is not representable: an advisory
+carries one `verification.status` for its whole text, so a promoted figure sitting beside an unpromoted
+one has no status that is true of both. **The destination is: a promoted deadline LEAVES the advisory,
+always.** It becomes a candidate rule with its own `output.deadline`, its own source and its own status,
+which is how this ruleset already models a filing lead, and which is out of this scope. The advisory's
+text drops the figure in every case, whether the figure failed, changed, or was promoted, and the three
+cases differ only in what happens NEXT: removed and recorded, removed and re-quoted in the dossier, or
+removed and carried into a candidate rule. **Four promoted deadlines are four candidate rules.**
+
+That also makes B-8 destination-consistent: if B-6 and B-7 both survive to promotion, the
+`OFFICIAL_CONFLICT` they assert belongs on the candidate rule that carries the two readings, which is
+what the status exists for, and not on an advisory whose own status would then have to be two things at
+once.
 
 ### 4.3 Is the mapping total? Verified by construction
 
@@ -449,14 +561,17 @@ cases were exactly the states no branch handled.
 
 | | count |
 | --- | --- |
-| Distinct combinations of section 3 observations | **204,073,344** |
-| Distinct text assemblies those map onto | **419,904** |
+| Distinct combinations of section 3 observations | **34,867,844,010,368**, and the number is not the point |
+| Distinct text assemblies those map onto | **at least 419,904**, and the same |
 
-The first is `2 · (16 · 3³) · 3² · 3 · 3 · 2 · (2 · 3) · 3⁵`, one factor per row in the section 3
-table. The second is the product of the per-claim outcome domains: `2⁴` for A-1 to A-4, `3⁵` for the
-five class names, and `2 · 3 · 3 · 3 · 2` for B-3 to B-7, with A-5, B-2 and B-8 derived rather than
-independent. Many observation combinations produce the same text, which is why the second number is
-smaller.
+The first is `3 · (3⁴ · 3³) · 3² · 3 · 3 · 3 · (3 · 3) · 4⁵`, one factor per row in the section 3
+table, after this round moved every alcohol observation from two states to three and every class-name
+observation from three to four. **The exact figure is not worth defending and is not load-bearing**: the
+point it makes is the same one it made an order of magnitude ago, which is that enumerating branches over
+this domain cannot be done correctly by hand. The assembly count is left as a lower bound for the same
+reason: the per-claim outcome domains now include a candidate-conflict outcome for A-1 to A-4 and a
+multi-label outcome per class name, and counting them precisely would be defending an arithmetic nobody
+reads instead of the property that matters, which section 4.3 states directly.
 
 **Neither number is a reason to worry, and both are a reason not to enumerate branches.** A document
 that tried would have to be wrong; the previous one was wrong in four places at a fraction of the
@@ -612,6 +727,36 @@ and the complete per-scenario `ruleIds` lists in `apps/api/src/checklist.test.ts
 findings fire on the same scenarios with different text. The one exception is the substring pin at
 `acceptance.test.ts:871`, named in section 4.
 
+**But an unchanged trigger does NOT leave assertions unchanged, and this is a separate class of pin the
+finding-set sweep missed.** A promotion moves the STATUS and obliges a SOURCE, and both are asserted
+directly. Re-run for every assertion naming either advisory:
+
+| Pin | What it asserts | Moves when |
+| --- | --- | --- |
+| `packages/engine/src/acceptance.test.ts:865` | the SAPO advisory's `verificationStatus` is `COVERAGE_GAP` | that advisory is promoted |
+| `packages/engine/src/acceptance.test.ts:870` | its `sources` equals `[]` | that advisory is promoted, since a source is then obliged |
+| `apps/api/src/ruleset.test.ts:103-107` | the two advisories are the ONLY source-null rules in the artifact | either is promoted; the list shrinks by one or empties |
+| `packages/engine/src/intake/intake.test.ts:173` | `alcoholInPublicSpaceNotice.verificationStatus` is `COVERAGE_GAP` | the alcohol advisory is promoted; already named in 5.0 |
+| `packages/engine/src/intake/intake.test.ts:721-733`, `:772`, `apps/api/src/events.test.ts:154`, `:166`, `:437` | the issue code and the status together | as 5.0 sets out |
+| **`apps/web/app/intake/intake-form.test.tsx:427`** | **the rendered warning contains the literal `COVERAGE_GAP`** | the alcohol advisory is promoted |
+| **`apps/web/app/checklist/checklist-view.test.tsx:936-941`** | **the advisory row renders "COVERAGE GAP", the not-covered line, and NO citation link** | the alcohol advisory is promoted |
+
+**Two of those are in `apps/web`, which this change was said not to touch**, and they are real failures
+rather than stale comments: `checklist-fixtures.ts`'s `planContext` reads `verificationStatus` and
+`sources` off the PUBLISHED rule (`:98`, `:114`), and `intake-form.test.tsx` reads the notice text off
+the contract, which is built from the published advisory. So a promotion fails tests in the web lane and
+the footprint gains those two files.
+
+**One that does NOT move, stated because the distinction is the point.**
+`apps/web/app/plan/plan-view.test.tsx:441-456` renders a HAND-BUILT finding (`:44`'s local `finding()`
+helper) with `verificationStatus: "COVERAGE_GAP"` written in the test. A promotion leaves it green while
+its comment, "ADV-ALCOHOL-PUBLIC-001 is a COVERAGE_GAP advisory", becomes false. That is a different and
+quieter cost than a failing pin: a test that keeps passing and stops describing what ships.
+
+**`intake-form.test.tsx:424` survives a text change**, because it asserts the rendered warning contains
+`contract.alcoholInPublicSpaceNotice.text` rather than a literal, which is worth knowing given section
+5.3: the narrowed text is shipped UI copy with no test pinning its wording.
+
 **Under shape 2 they do move, and an earlier revision of this row said otherwise without
 qualification.** A new rule triggering on `block_party AND alcohol` adds a finding rather than
 replacing one, for the reason section 4.1 derives from `findings.ts:138-150` and the two
@@ -679,6 +824,17 @@ git grep -n "nyc\.v2\.8\|nyc-rules\.v2\.8\.json" -- .
 **115 hits across 35 tracked files** on `main` at `ef847a2`. Both patterns are swept, because the
 version string goes stale on the same publication that removes the path.
 
+**The sweep is RE-RUN this round rather than patched, and it found seven category-1 references the first
+pass missed**, all in files the table already listed, which is how they escaped: the table recorded some
+lines per file and read as though it recorded all of them. `docs/PRD.md:8`, `:114`, `:130` and `:244`,
+`docs/ARCHITECTURE.md:3`, `docs/test-scenario-answer-key.md:3`, and
+`specs/F-206-rules-snapshot-banner.md:24`. **The method that finds them is per-file completeness**: list
+every hit line in each file, then classify each line, rather than classifying the file. Four more lines
+are category 4b on the same pass: the amendment records in `docs/DESIGN.md:3`,
+`specs/F-201-permit-plan-generator.md:3` and `specs/F-206-rules-snapshot-banner.md:3`, which name the
+legend to explain a dated amendment, and `docs/test-scenario-answer-key.md:109`, which records what
+landed in v2.8.
+
 **Category 1, and it is where the seventeen direct path references live.** Counting only
 `rules/nyc-rules.v2.8.json` as a path: `AGENTS.md` twice, `docs/PRD.md` six times,
 `docs/ARCHITECTURE.md` eight times, `specs/F-101-event-intake.md` once. The version-string references
@@ -688,15 +844,15 @@ in the same category move with them.
 | --- | --- | --- |
 | **`AGENTS.md`** | 13, 27 | **Line 13 is item 5 of mandatory pre-work, directing a contributor to open the file. Line 27 names it as the sole origin of regulatory output** |
 | **`CONTRIBUTING.md`** | 17, 22 | Golden Rule 1 says every lead time, fee, agency and requirement comes from that path; line 22 puts it in the authority chain |
-| `docs/PRD.md` | 6, 9, 134, 143, 159 | the status pointer, the permit-fact trace, the registry authority, the evaluated artifact, and the banner example with its published date |
-| `docs/ARCHITECTURE.md` | 10, 17, 30, 48, 68, 85, 231, 312 | AD-2's authoritative file, AD-9's baseline, the component diagram, the source tree, the intake-column authority, the `permit_rules` seed, the per-rule contract, and boot validation |
+| `docs/PRD.md` | 6, **8**, 9, **114**, **130**, 134, 143, 159, **244** | the status pointer, **the document map naming it as the published ruleset**, the permit-fact trace, **the plan-generation metric's "derived from ruleset nyc.v2.8"**, **the acceptance-suite derivation**, the registry authority, the evaluated artifact, the banner example with its published date, **and the Rules Engine bullet, which also carries the 33 + 4 count** |
+| `docs/ARCHITECTURE.md` | **3**, 10, 17, 30, 48, 68, 85, 231, 312 | **the header's "Permit facts referenced here trace to `rules/nyc-rules.v2.8.json`"**, AD-2's authoritative file, AD-9's baseline, the component diagram, the source tree, the intake-column authority, the `permit_rules` seed, the per-rule contract, and boot validation |
 | `docs/DESIGN.md` | 52, 70, 107 | the gate that flips the version to APPROVED, Dev 1's fidelity target, the versioning rule |
 | `docs/ROADMAP.md` | 12 | the ratification line |
 | `specs/F-101-event-intake.md` | 4, 13 | `Depends on: ruleset nyc.v2.8 ratified`, and the registry-authority line |
 | `specs/F-201-permit-plan-generator.md` | 4, 14 | `Depends on:`, and the authoritative-inputs line |
-| `specs/F-206-rules-snapshot-banner.md` | 17 | the banner example, **version and published date together** |
+| `specs/F-206-rules-snapshot-banner.md` | 17, **24** | the banner example with version and published date together, **and Acceptance Criterion 2, which names `rules/nyc-rules.v2.8.json` as the published legend defining what COVERAGE_GAP means. That is the authority for both advisories' status, so it is the most on-point reference in the table and the sweep missed it** |
 | `specs/F-204-portal-deep-links.md` | 41 | its `## Published on nyc.v2.8` scope heading |
-| `docs/test-scenario-answer-key.md` | 1, 5 | the ruleset the key is derived from, and its authority hierarchy |
+| `docs/test-scenario-answer-key.md` | 1, **3**, 5 | the ruleset the key is derived from, **its Status line saying the fixtures "remain the green-gate suite against nyc.v2.8"**, and its authority hierarchy |
 
 **The root documents are why this is not a tidiness item**, and PR #171 makes the same point about the
 same two files. `AGENTS.md:13` is mandatory pre-work. If the publication leaves it naming a deleted
@@ -806,9 +962,31 @@ as a dated dossier entry in its own right so the next person does not repeat the
 
 ---
 
-## 7. Open for the verification owner
+## 7. Open decisions, ROUTED BY CHANGE CLASS
 
-Listed rather than answered. Every one is theirs, and each changes the publication.
+Listed rather than answered, and each changes the publication. **An earlier revision assigned all nine
+to the verification owner, which is wrong for the ones that decide trigger and deduplication semantics.**
+`docs/DOCUMENTATION-GOVERNANCE.md` §6 routes "Regulatory source/status/content" to the verification owner
+plus the rules reviewer, and "Rule trigger, dedupe, branch, deadline, or formula semantics" to the
+verification owner plus the **engine owner**. Every item below is re-derived against the class it actually
+describes rather than the class the list assumed, which is the second approval route this document has
+been short:
+
+| # | Change class | Owners |
+| --- | --- | --- |
+| 1 | regulatory content, a reading of a quote | verification owner + rules reviewer |
+| **2** | **shape 2 adds a rule and shape 3 promotes an advisory: trigger semantics AND regulatory status** | **verification owner + engine owner**, plus the rules reviewer for the status |
+| 3 | regulatory source attribution on another rule | verification owner + rules reviewer |
+| **4** | **turning four figures into rules is deadline and trigger semantics** | **verification owner + engine owner** |
+| 5 | regulatory evidence pointer | verification owner + rules reviewer |
+| **6** | **promoting this advisory changes what `buildRescopeSuggestions` recommends** | **verification owner + engine owner** |
+| **7** | **dedupe semantics, explicitly** | **verification owner + engine owner** |
+| 8 | where confirmed names live; the second route is an engine change | verification owner + rules reviewer, **and the engine owner for the second route only** |
+| **9** | **narrowing a published trigger** | product owner for the scope decision, **plus verification owner + engine owner** for the semantics |
+
+**Four of the nine need the engine owner, and one needs the product owner**, which no earlier revision
+said. The pattern is that this document priced engine CONSEQUENCES carefully in section 5.0 and then
+routed the DECISIONS as though they were all text.
 
 1. **Is "SAPO prohibits alcohol at block parties" a fair restatement** of "Alcohol, vendors,
    commercial branding and sponsorships are not permitted at block parties"? Section 2.1.
