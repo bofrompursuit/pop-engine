@@ -210,8 +210,12 @@ passes: with `battery_present` absent, `FDNY-GENERATOR-001` now lists on a plan 
 did not; with `battery_present: false` it does not list. The semantics bite and the answer key
 still does not move.
 
-The measured source diff is **two files**: `packages/engine/src/conditions.ts` (+47/-3) and
-`packages/engine/src/verdict.ts` (+18/-2), plus the two fixture lines. `visibility.ts` needed no
+The measured source diff is **two files**: `packages/engine/src/conditions.ts` (+33/-3) and
+`packages/engine/src/verdict.ts` (+9/-2), plus the two fixture lines. Earlier rounds published
++47/-3 and +18/-2, which did not match the appendix patch. **The counts were stale, not the patch
+incomplete**, and the difference matters for the reproducibility claim so it is stated rather than
+quietly corrected: the appendix patch applies cleanly to this tree and the engine typechecks with it
+applied, so nothing is missing from it, and `git apply --numstat` on it gives the figures above. `visibility.ts` needed no
 change at all (see the note under 4).
 
 **Two caveats on that number, because it is the one likely to be quoted.**
@@ -238,6 +242,31 @@ narrower rule a dependent that HAS a stored value counts as answered, and both f
 across from attempt 1 rather than measured. That is the fourth distinct defect found in this table,
 and it is why round 5 re-ran every cell instead of the changed ones.
 
+**ATTEMPT 3 DOES NOT IMPLEMENT THE TRANSITIVE SEMANTICS THIS DOCUMENT CLAIMS FOR IT, and the
+numbers in the table above therefore describe something narrower than the semantics named in the
+heading.** Measured on this tree with the appendix patch applied, on a street event whose
+`obstructs_public_way` is unanswered, so `sapo_event_type` is indeterminate and `street_event_size`
+depends on it:
+
+| what is asked first | `street_event_size` in scope | indeterminate | blockers |
+| ------------------- | ---------------------------- | ------------- | -------- |
+| the dependent, on a cold resolver | false | **false** | **none** |
+| the parent, then the dependent    | false | true          | `obstructs_public_way` |
+
+The cause is in `blockersFor`: it returns early on `!isInScope(clause.field)` WITHOUT re-reading
+`indeterminate`, and that very call is what records the parent as indeterminate. So on a cold
+resolver the parent's blockers exist by the time the line returns and are not read; the dependent is
+cached out of scope with no indeterminacy recorded, and the SAPO size requirements behind it are
+suppressed silently. Ask the parent first and the same tree reports correctly, because the early
+`indeterminate.has` check then finds what the previous call stored.
+
+**So attempt 3's result is order-dependent**, and the measured 6 describes the order the rules
+happen to be evaluated in rather than the semantics #108 asks for. Every comparison in this document
+that uses attempt 3 inherits that caveat, including the option cost comparison in section 6. This is
+the harm class this whole document exists to measure appearing inside the document's own attempt 3,
+and it was found by review rather than by the measurement, which is itself a finding about the
+measurement.
+
 **Attempt 3's 6 is not attempt 1's 15 minus the 5 crashes, and that is worth being explicit about
 because the arithmetic invites the wrong inference.** The branching change is not semantics-neutral
 for OUTPUT. It changes which field the conditional resolver branches on, so four plans that diverged
@@ -245,6 +274,22 @@ under attempt 1 converge under attempt 3: branching on `battery_present` reaches
 both branches, and a fact that does not change the answer is not reported as missing. Measured, not
 reasoned: attempt 1 gives 11 engine failures on this tree and attempt 3 gives 2, with the only
 difference being the branching.
+
+**WHAT THE GREEN FIXTURES ESTABLISH ABOUT CONJUNCTION, which is less than three-valued logic.** The
+patch collects blockers from EVERY clause before evaluating any clause, so one missing conjunct
+makes the field indeterminate even when another conjunct is already decisively false. Measured, on
+`sound_audible_from_public_way`, whose `asked_when` is `amplified_sound AND location_type =
+private_venue`, with `amplified_sound` false and `location_type` unanswered:
+
+    in scope: false   indeterminate: TRUE   blockers: ["location_type"]
+
+Under three-valued conjunction `false AND unknown` is false, so the field should be decisively out
+of scope and nothing should be recorded as missing. The patch records `location_type` as a blocker
+and resolves the dependent as unknown instead. The fixtures pass because no fixture pairs a false
+conjunct with a missing one, so what they establish is that the patch propagates indeterminacy
+through conjunctions whose other conjuncts are TRUE or absent, not that it implements three-valued
+conjunction. A ruleset that added a second conjunct to any existing `asked_when` would meet the
+difference immediately.
 
 So the branching fix removes 9 of the 15, of which 5 are the non-termination and 4 are plans that
 now settle. The remaining 6 are the 4 `plan.test.ts` and 2 `engine.test.ts` failures that the two
@@ -339,7 +384,9 @@ thing the API can do.
 **But routes 1 and 5 are not the same kind of thing, and rounds 1 to 3 of this document framed the
 whole question as though only route 1 existed.** Route 1 needs a migration author to add a gate
 column and forget to backfill it. Route 5 needs only a published ruleset whose `asked_when` is
-wider than the previous one, which is a routine act by the verification owner and involves no
+wider than the previous one, which requires the engine owner's review as well as the verification
+owner's, because widening `asked_when` changes rule-scoping semantics rather than only a status, and
+involves no
 migration, no backfill decision and no SQL. Describing the state as reachable only by a mistake or
 by hand-written SQL was wrong, and it was the central argument for doing nothing.
 
@@ -465,12 +512,30 @@ than by reading the provenance summary.
 rule carries the field in v2.5, so it adds no evaluated content, but it is a schema change and the
 claim as written excluded it.
 
-One thing to correct in the other direction, checked because the claim was made against this
-document: `DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and `ADV-VENUE-OCCUPANCY-001` did NOT gain
-rescope coverage metadata in v2.5. Counting objects carrying `rescope` per published version gives
-3 in v2.3, v2.4 and v2.5 (the three SAPO rules) and 6 from v2.6 onward (those three added). That
-change belongs to v2.5-to-v2.6, not v2.4-to-v2.5, so it is outside the transition this section
-describes.
+`DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and `ADV-VENUE-OCCUPANCY-001` DID gain rescope coverage
+metadata in v2.5, so it belongs to the v2.4-to-v2.5 transition this section describes. An earlier
+round said the opposite and was wrong; the correction and the method that produced the error are in
+the revision note.
+
+**The counting basis, stated because it is what went wrong.** A published version is not a single
+artifact: `rules/nyc-rules.v2.5.json` has an initial publication and a later same-version edit
+before it is renamed forward. Every per-version count in this document measures the FINAL artifact
+of that version, not the commit that first published it, because the final artifact is what the
+version shipped as and what any later reader loads. Measured that way, objects carrying `rescope`:
+
+| version | revisions | initial publication | final artifact |
+| ------- | --------- | ------------------- | -------------- |
+| v2.3    | 2         | 3                   | 3              |
+| v2.4    | 1         | 3                   | 3              |
+| v2.5    | 2         | 3                   | **6**          |
+| v2.6    | 1         | 6                   | 6              |
+| v2.7    | 2         | 6                   | 6              |
+| v2.8    | 2         | 6                   | 6              |
+
+Re-derived on that basis, **v2.5 is the only version whose count moves**: 4e15440 publishes it with
+the three SAPO rules, and 11a552c adds the other three within the same version. v2.3, v2.7 and v2.8
+also have more than one revision, and their counts are unchanged across it, so the sequence is
+3/3/6/6/6/6 rather than the 3/3/3/6/6/6 an initial-publication count produces.
 
 Before v2.5, `battery_system_kwh` was always asked and is nullable, so an event with no battery
 left it blank, which resolved to `unknown` and made **`FDNY-GENERATOR-001`** conditional on every
@@ -550,10 +615,30 @@ corrected price:
 4. **Every fixture that submits one of these fields as a boolean, which must land BEFORE the
    answer-key impact can be measured at all.** `readFieldValue` accepts an enum only as a declared
    string (`validate.ts:85`), so `food_present: true` stops validating the moment the type changes.
-   This is 113 boolean literals across 9 files: `scenario-intake-fixtures.ts` (30),
+   This is 112 boolean literals across 8 files: `scenario-intake-fixtures.ts` (30),
    `acceptance.test.ts` (19), `engine.test.ts` (17), `intake/intake.test.ts` (14),
-   `plan.test.ts` (11), `rules-snapshot.test.ts` (10), `intake-form.test.tsx` (8),
-   `events.test.ts` (3) and migration `006_events_battery_present.ts` (1).
+   `plan.test.ts` (11), `rules-snapshot.test.ts` (10), `intake-form.test.tsx` (8) and
+   `events.test.ts` (3).
+
+   **`apps/api/migrations/006_events_battery_present.ts` is deliberately NOT in that list**, and it
+   was until this round. It is a migration, not a fixture and not an enum submission: it adds
+   `battery_present` as a boolean and backfills it, so its literal is a boolean written against the
+   column shape that exists at that point in the sequence. Editing it to an enum string fails on a
+   fresh database, because the migration runs before any later migration could change the column.
+   Editing a merged migration is also forbidden outright (`CONTRIBUTING.md`: never edit a merged
+   migration); the shape change belongs in the new forward migration point 5 already requires.
+   Nothing else in the list is a migration, checked file by file: the other eight are engine and app
+   fixtures and component tests.
+
+   **The blanket replacement these edits describe would break historical replay, so the work is
+   larger than a substitution.** `packages/engine/src/engine.test.ts` evaluates the same intake
+   objects against BOTH `__fixtures__/nyc-rules.v2.3.json` and the current ruleset, to verify that
+   old plans still replay under the semantics they were made with (governance §9). v2.3 declares
+   `food_present`, `selling_anything`, `amplified_sound` and `alcohol` as `boolean`, so rewriting
+   those fixtures to enum strings makes v2.3's `bool` triggers stop matching and the replay
+   assertions compare two different worlds. The implementation must therefore split or normalize
+   fixtures BY RULESET VERSION rather than replace values globally, which is design work this
+   inventory did not previously account for.
 
    Rounds 1 to 6 listed trigger, validator, schema and form work and omitted this entirely. It is
    the item that gates the others: point 6 below says this option's answer-key impact has never been
@@ -589,7 +674,7 @@ What it still does not reach: route 5, and any gate whose unanswered state arriv
 migration to write into.
 
 **On the corrected price this option is no longer the cheap one.** The engine change is **two
-files, `conditions.ts` +47/-3 and `verdict.ts` +18/-2**, with the answer key measured and unmoved
+files, `conditions.ts` +33/-3 and `verdict.ts` +9/-2**, with the answer key measured and unmoved
 under #108's own semantics. This one is 8 regulatory decisions, 11 published objects and 2 validator
 checks at risk of silent non-matching, a ruleset publication, a migration, a form change, an
 unmeasured answer key, and it reaches only five of the eight gates that need it. I am still not recommending either. I am recording that the first version of this
@@ -770,15 +855,28 @@ Four, and the first is the second round in which the headline's reproducibility 
 22. **"What v2.5 changed, in full" was too strong** (section 5). It omitted schema acceptance of
     `verification.last_verified_date`. It is now scoped to evaluated content, with the rest listed.
 
-**One correction rejected on the evidence, which is a first for this document.** The same finding
-attributed rescope coverage metadata on `DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and
-`ADV-VENUE-OCCUPANCY-001` to v2.5. Counting objects carrying `rescope` per published artifact gives
-3 in v2.3, v2.4 and v2.5, and 6 from v2.6. That change is v2.5-to-v2.6 and does not belong to the
-transition section 5 describes. The `last_verified_date` half of the same finding is right and is
-applied.
+**One correction was rejected and the rejection was WRONG, and it is the most serious defect in this
+document's history because of how it was wrong rather than that it was.** Round 7 turned down the
+finding that `DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and `ADV-VENUE-OCCUPANCY-001` gained rescope
+metadata in v2.5, on a count of 3/3/3/6/6/6 across v2.3 to v2.8, and presented the rejection as
+evidence of the document's disposition to weigh findings on their merits. It was then independently
+verified by a second reader who reached the same numbers and certified it.
 
-Across seven rounds: 22 corrections applied, one declined with evidence, and twelve of the applied
-ones have favoured this document's own conclusion.
+Both counts were taken from the commit that ADDED each artifact, which is the initial publication
+rather than what the version shipped as. `rules/nyc-rules.v2.5.json` has two revisions: 4e15440
+publishes it with three SAPO rules, and 11a552c adds the other three within the same version, before
+c8e06e5 renames it forward. The finding was right, the metadata landed inside v2.5, and it belongs to
+the transition section 5 describes. It is applied there, together with the counting basis this
+document now states, and re-derivation on the final-artifact basis moves v2.5 and no other version.
+
+Two checks agreed because they shared a method, not because the method was sound. A wrong rejection
+that reads as careful is worse than one that reads as careless: it spends the credibility of having
+weighed something. This document no longer claims a rejected correction as evidence of anything, and
+the standing rule that replaced it is in section 5: every per-version count states its basis and is
+taken from the final artifact of the version.
+
+Across seven rounds: 23 corrections applied, one declined and then found to have been declined
+wrongly, and twelve of the applied ones have favoured this document's own conclusion.
 
 
 ---
