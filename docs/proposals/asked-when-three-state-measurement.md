@@ -19,8 +19,10 @@ so the recipe is written down rather than implied:
 1. `git checkout 481e1f6` and `pnpm install --frozen-lockfile`.
 2. `pnpm --filter api migrate up` against an empty database. Omitting this produces a large false
    failure count; the api suites are skipped without `DATABASE_URL` and fail against a stale schema.
-3. Apply one attempt from section 2. Attempts 1 and 2 differ only in the body of the `!isInScope`
-   branch of `resolveAnswer`; attempt 3 is attempt 1 plus the `verdict.ts` branching change.
+3. Apply one attempt from the appendix, which carries all three patches verbatim. Each was
+   generated at `481e1f6` and each is verified to apply cleanly there with `git apply --check`.
+   Attempts 1 and 2 differ only in the body of the `!isInScope` branch of `resolveAnswer`; attempt 3
+   is attempt 1 plus the `verdict.ts` branching change.
 4. `pnpm vitest run` for the whole suite, and note that the fixture column in section 2's table
    depends on whether `battery_present: false` has been added to the two fixture objects named
    there.
@@ -312,7 +314,10 @@ The remaining routes to "in scope, unanswered" are:
    for `obstructs_public_way`, and any row where it is NULL or `no` stores NULL for
    `sapo_event_type`. Widening either expression exposes every one of those rows.
    `battery_present` is the third schema-nullable gate but has no `asked_when` at all, so it cannot
-   be widened; it is only reachable by route 1.
+   be widened; a NULL `battery_present` is reachable by routes 1 and 2, the migration and the
+   direct-SQL routes, which is what section 5 concludes and what the four `plan.test.ts` failures
+   actually demonstrated. Rounds 1 to 6 said route 1 alone here while section 5 said both, so the
+   analysis and the conclusion disagreed inside one document.
 
    **It is not a verification-owner action alone, and rounds 4's wording implied it was.** An
    `asked_when` expression decides what a trigger resolves to, so widening one is rule-scoping
@@ -449,9 +454,23 @@ inside the engine, which is a readability argument and not a capability one.
 
 ## 5. The v2.5 risk, concretely
 
-**What v2.5 changed, in full:** one field added, `battery_present`; one field regated,
-`battery_system_kwh` from `asked_when: null` to `asked_when: "battery_present"`. **No rule was
-added, removed, or had its trigger changed.**
+**What v2.5 changed to EVALUATED CONTENT:** one field added, `battery_present`; one field regated,
+`battery_system_kwh` from `asked_when: null` to `asked_when: "battery_present"`. **No rule or
+advisory object changed at all**, verified by diffing the two artifacts object by object rather
+than by reading the provenance summary.
+
+"In full" was the wording through round 6 and it was too strong. The rest of the v2.5 change:
+`ruleset_version`, `status` and `provenance` scalars, and **schema acceptance of an optional
+`verification.last_verified_date`**, which the artifact records only in its provenance prose. No
+rule carries the field in v2.5, so it adds no evaluated content, but it is a schema change and the
+claim as written excluded it.
+
+One thing to correct in the other direction, checked because the claim was made against this
+document: `DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and `ADV-VENUE-OCCUPANCY-001` did NOT gain
+rescope coverage metadata in v2.5. Counting objects carrying `rescope` per published version gives
+3 in v2.3, v2.4 and v2.5 (the three SAPO rules) and 6 from v2.6 onward (those three added). That
+change belongs to v2.5-to-v2.6, not v2.4-to-v2.5, so it is outside the transition this section
+describes.
 
 Before v2.5, `battery_system_kwh` was always asked and is nullable, so an event with no battery
 left it blank, which resolved to `unknown` and made **`FDNY-GENERATOR-001`** conditional on every
@@ -528,9 +547,21 @@ corrected price:
    `applicable("alcohol") === true` checks, at the block-party eligibility conflict and the
    alcohol-in-public-space coverage gap. With enum strings both stop firing, silently, so the two
    inline warnings the spec requires at submission time disappear as well as the findings.
-4. A new published ruleset version, a migration per changed column (boolean to text), and a form
+4. **Every fixture that submits one of these fields as a boolean, which must land BEFORE the
+   answer-key impact can be measured at all.** `readFieldValue` accepts an enum only as a declared
+   string (`validate.ts:85`), so `food_present: true` stops validating the moment the type changes.
+   This is 113 boolean literals across 9 files: `scenario-intake-fixtures.ts` (30),
+   `acceptance.test.ts` (19), `engine.test.ts` (17), `intake/intake.test.ts` (14),
+   `plan.test.ts` (11), `rules-snapshot.test.ts` (10), `intake-form.test.tsx` (8),
+   `events.test.ts` (3) and migration `006_events_battery_present.ts` (1).
+
+   Rounds 1 to 6 listed trigger, validator, schema and form work and omitted this entirely. It is
+   the item that gates the others: point 6 below says this option's answer-key impact has never been
+   measured, and it cannot be measured until the fixtures submit strings, because every scenario
+   fails validation first.
+5. A new published ruleset version, a migration per changed column (boolean to text), and a form
    control change.
-5. Answer-key impact, which this document has **not** measured for this option. The engine change
+6. Answer-key impact, which this document has **not** measured for this option. The engine change
    was measured and moves nothing; this one changes 12 trigger conditions across 11 published
    objects plus two validator checks, and cannot be assumed to move nothing.
 
@@ -718,3 +749,327 @@ was not reproducible.
 17 and 18 are the same comparison wrong in both directions at once, which is worse than a lean.
 Across five rounds this document has taken 18 corrections, and eleven of them have favoured its own
 conclusion.
+
+### Round 7
+
+Four, and the first is the second round in which the headline's reproducibility was the finding.
+
+19. **The recipe could not be run.** Section 2 described the three attempts and the published commit
+    reverted them, so step 3 pointed at nothing. The patches are now carried in an appendix, each
+    generated at `481e1f6` and each checked with `git apply --check` at that commit. Round 5 fixed
+    the sentence that named the base; this fixes the cause, which is that a measurement whose
+    inputs are not published is an argument.
+20. **A route claim contradicted section 5 inside the same file** (section 3). A NULL
+    `battery_present` is reachable by routes 1 and 2, not route 1 alone. Section 5 had said so since
+    round 5 and the analysis feeding it had not been updated. The other two route claims in the
+    document were checked and both already say routes 1 and 2.
+21. **The enum option omitted the fixture input migrations** (section 6), which are the item that
+    gates the rest: `readFieldValue` rejects a boolean for an enum, so 113 boolean literals across
+    9 files stop validating, and the answer-key impact this document flags as unmeasured cannot be
+    measured until they are converted.
+22. **"What v2.5 changed, in full" was too strong** (section 5). It omitted schema acceptance of
+    `verification.last_verified_date`. It is now scoped to evaluated content, with the rest listed.
+
+**One correction rejected on the evidence, which is a first for this document.** The same finding
+attributed rescope coverage metadata on `DOB-ASSEMBLY-001`, `ADV-NOISE-CODE-001` and
+`ADV-VENUE-OCCUPANCY-001` to v2.5. Counting objects carrying `rescope` per published artifact gives
+3 in v2.3, v2.4 and v2.5, and 6 from v2.6. That change is v2.5-to-v2.6 and does not belong to the
+transition section 5 describes. The `last_verified_date` half of the same finding is right and is
+applied.
+
+Across seven rounds: 22 corrections applied, one declined with evidence, and twelve of the applied
+ones have favoured this document's own conclusion.
+
+
+---
+
+## Appendix: the three patches
+
+The measurement's primary evidence is a set of failure counts, and small differences in
+`resolveAnswer` and in the branching change those counts. Attempt 2's unedited-fixture cell read 15
+for two rounds and measures 0, which is exactly the kind of error a reader can only catch by running
+the thing. So the patches are carried here rather than described.
+
+All three were generated at `481e1f6`, the commit the measurement is pinned to, and each is verified
+to apply cleanly there with `git apply --check`. `481e1f6` is an ancestor of this branch, so it
+survives rebases and is not subject to garbage collection while the branch exists.
+
+They are throwaways. Nothing in this branch applies them, and this document recommends no option.
+
+### Attempt 1: three-state semantics, original branching
+
+```diff
+diff --git a/packages/engine/src/conditions.ts b/packages/engine/src/conditions.ts
+index 21a68b8..36873c9 100644
+--- a/packages/engine/src/conditions.ts
++++ b/packages/engine/src/conditions.ts
+@@ -30,7 +30,11 @@ export type TriggerEvaluation = {
+   readonly triggeredBy: readonly TriggeredBy[];
+ };
+ 
+-export type ScopeResolver = { isInScope: (field: string) => boolean };
++export type ScopeResolver = {
++  isInScope: (field: string) => boolean;
++  isIndeterminate?: (field: string) => boolean;
++  blockersOf?: (field: string) => readonly string[];
++};
+ 
+ /**
+  * Evaluate the registry's `asked_when` scoping. The published expressions are a closed set of
+@@ -178,11 +182,21 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+   const cache = new Map<string, boolean>();
+   const resolving = new Set<string>();
+ 
++  const indeterminate = new Map<string, readonly string[]>();
++
+   const valueOf = (field: string): IntakeValue => {
+     if (!isInScope(field)) return null;
+     return intake[field] ?? null;
+   };
+ 
++  const blockersFor = (clause: AskedWhenClause): readonly string[] => {
++    if (indeterminate.has(clause.field)) return indeterminate.get(clause.field) as readonly string[];
++    if (resolving.has(clause.field)) return [];
++    if (!isInScope(clause.field)) return [];
++    const raw = intake[clause.field];
++    return raw === undefined || raw === null ? [clause.field] : [];
++  };
++
+   const evaluateClause = (clause: AskedWhenClause): boolean => {
+     const value = valueOf(clause.field);
+     switch (clause.kind) {
+@@ -224,6 +238,12 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+ 
+     resolving.add(field);
+     try {
++      const blockers = [...new Set(definition.askedWhenClauses.flatMap(blockersFor))];
++      if (blockers.length > 0) {
++        indeterminate.set(field, blockers);
++        cache.set(field, false);
++        return false;
++      }
+       const inScope = definition.askedWhenClauses.every(evaluateClause);
+       cache.set(field, inScope);
+       return inScope;
+@@ -232,11 +252,21 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+     }
+   }
+ 
+-  return { isInScope };
++  const settle = (field: string): void => {
++    if (!resolving.has(field)) isInScope(field);
++  };
++  return {
++    isInScope,
++    isIndeterminate: (field: string) => { settle(field); return indeterminate.has(field); },
++    blockersOf: (field: string) => { settle(field); return indeterminate.get(field) ?? []; },
++  };
+ }
+ 
+ function resolveAnswer(field: string, intake: EventIntake, scope: ScopeResolver): ResolvedAnswer {
+-  if (!scope.isInScope(field)) return { state: "not_asked" };
++  if (!scope.isInScope(field)) {
++    if (scope.isIndeterminate?.(field)) return { state: "unknown", isExplicitUnknown: false };
++    return { state: "not_asked" };
++  }
+   const value = intake[field];
+   if (value === undefined || value === null) return { state: "unknown", isExplicitUnknown: false };
+   if (value === UNKNOWN_ANSWER) return { state: "unknown", isExplicitUnknown: true };
+```
+
+### Attempt 2: narrower semantics, original branching
+
+```diff
+diff --git a/packages/engine/src/conditions.ts b/packages/engine/src/conditions.ts
+index 21a68b8..fa65493 100644
+--- a/packages/engine/src/conditions.ts
++++ b/packages/engine/src/conditions.ts
+@@ -30,7 +30,11 @@ export type TriggerEvaluation = {
+   readonly triggeredBy: readonly TriggeredBy[];
+ };
+ 
+-export type ScopeResolver = { isInScope: (field: string) => boolean };
++export type ScopeResolver = {
++  isInScope: (field: string) => boolean;
++  isIndeterminate?: (field: string) => boolean;
++  blockersOf?: (field: string) => readonly string[];
++};
+ 
+ /**
+  * Evaluate the registry's `asked_when` scoping. The published expressions are a closed set of
+@@ -178,11 +182,21 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+   const cache = new Map<string, boolean>();
+   const resolving = new Set<string>();
+ 
++  const indeterminate = new Map<string, readonly string[]>();
++
+   const valueOf = (field: string): IntakeValue => {
+     if (!isInScope(field)) return null;
+     return intake[field] ?? null;
+   };
+ 
++  const blockersFor = (clause: AskedWhenClause): readonly string[] => {
++    if (indeterminate.has(clause.field)) return indeterminate.get(clause.field) as readonly string[];
++    if (resolving.has(clause.field)) return [];
++    if (!isInScope(clause.field)) return [];
++    const raw = intake[clause.field];
++    return raw === undefined || raw === null ? [clause.field] : [];
++  };
++
+   const evaluateClause = (clause: AskedWhenClause): boolean => {
+     const value = valueOf(clause.field);
+     switch (clause.kind) {
+@@ -224,6 +238,12 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+ 
+     resolving.add(field);
+     try {
++      const blockers = [...new Set(definition.askedWhenClauses.flatMap(blockersFor))];
++      if (blockers.length > 0) {
++        indeterminate.set(field, blockers);
++        cache.set(field, false);
++        return false;
++      }
+       const inScope = definition.askedWhenClauses.every(evaluateClause);
+       cache.set(field, inScope);
+       return inScope;
+@@ -232,11 +252,25 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+     }
+   }
+ 
+-  return { isInScope };
++  const settle = (field: string): void => {
++    if (!resolving.has(field)) isInScope(field);
++  };
++  return {
++    isInScope,
++    isIndeterminate: (field: string) => { settle(field); return indeterminate.has(field); },
++    blockersOf: (field: string) => { settle(field); return indeterminate.get(field) ?? []; },
++  };
+ }
+ 
+ function resolveAnswer(field: string, intake: EventIntake, scope: ScopeResolver): ResolvedAnswer {
+-  if (!scope.isInScope(field)) return { state: "not_asked" };
++  if (!scope.isInScope(field)) {
++    if (scope.isIndeterminate?.(field)) {
++      const own = intake[field];
++      if (own !== undefined && own !== null) return { state: "answered", value: own };
++      return { state: "unknown", isExplicitUnknown: false };
++    }
++    return { state: "not_asked" };
++  }
+   const value = intake[field];
+   if (value === undefined || value === null) return { state: "unknown", isExplicitUnknown: false };
+   if (value === UNKNOWN_ANSWER) return { state: "unknown", isExplicitUnknown: true };
+```
+
+### Attempt 3: three-state semantics, branching on the gate
+
+```diff
+diff --git a/packages/engine/src/conditions.ts b/packages/engine/src/conditions.ts
+index 21a68b8..36873c9 100644
+--- a/packages/engine/src/conditions.ts
++++ b/packages/engine/src/conditions.ts
+@@ -30,7 +30,11 @@ export type TriggerEvaluation = {
+   readonly triggeredBy: readonly TriggeredBy[];
+ };
+ 
+-export type ScopeResolver = { isInScope: (field: string) => boolean };
++export type ScopeResolver = {
++  isInScope: (field: string) => boolean;
++  isIndeterminate?: (field: string) => boolean;
++  blockersOf?: (field: string) => readonly string[];
++};
+ 
+ /**
+  * Evaluate the registry's `asked_when` scoping. The published expressions are a closed set of
+@@ -178,11 +182,21 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+   const cache = new Map<string, boolean>();
+   const resolving = new Set<string>();
+ 
++  const indeterminate = new Map<string, readonly string[]>();
++
+   const valueOf = (field: string): IntakeValue => {
+     if (!isInScope(field)) return null;
+     return intake[field] ?? null;
+   };
+ 
++  const blockersFor = (clause: AskedWhenClause): readonly string[] => {
++    if (indeterminate.has(clause.field)) return indeterminate.get(clause.field) as readonly string[];
++    if (resolving.has(clause.field)) return [];
++    if (!isInScope(clause.field)) return [];
++    const raw = intake[clause.field];
++    return raw === undefined || raw === null ? [clause.field] : [];
++  };
++
+   const evaluateClause = (clause: AskedWhenClause): boolean => {
+     const value = valueOf(clause.field);
+     switch (clause.kind) {
+@@ -224,6 +238,12 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+ 
+     resolving.add(field);
+     try {
++      const blockers = [...new Set(definition.askedWhenClauses.flatMap(blockersFor))];
++      if (blockers.length > 0) {
++        indeterminate.set(field, blockers);
++        cache.set(field, false);
++        return false;
++      }
+       const inScope = definition.askedWhenClauses.every(evaluateClause);
+       cache.set(field, inScope);
+       return inScope;
+@@ -232,11 +252,21 @@ export function createScopeResolver(intake: EventIntake, ruleset: EngineRuleset)
+     }
+   }
+ 
+-  return { isInScope };
++  const settle = (field: string): void => {
++    if (!resolving.has(field)) isInScope(field);
++  };
++  return {
++    isInScope,
++    isIndeterminate: (field: string) => { settle(field); return indeterminate.has(field); },
++    blockersOf: (field: string) => { settle(field); return indeterminate.get(field) ?? []; },
++  };
+ }
+ 
+ function resolveAnswer(field: string, intake: EventIntake, scope: ScopeResolver): ResolvedAnswer {
+-  if (!scope.isInScope(field)) return { state: "not_asked" };
++  if (!scope.isInScope(field)) {
++    if (scope.isIndeterminate?.(field)) return { state: "unknown", isExplicitUnknown: false };
++    return { state: "not_asked" };
++  }
+   const value = intake[field];
+   if (value === undefined || value === null) return { state: "unknown", isExplicitUnknown: false };
+   if (value === UNKNOWN_ANSWER) return { state: "unknown", isExplicitUnknown: true };
+diff --git a/packages/engine/src/verdict.ts b/packages/engine/src/verdict.ts
+index 795a497..670b280 100644
+--- a/packages/engine/src/verdict.ts
++++ b/packages/engine/src/verdict.ts
+@@ -7,7 +7,7 @@ import {
+   MISSED_MAY_BE_REQUIRED_IS_CONDITIONAL,
+   RESCOPE_EXCLUDES_UNKNOWN_VALUES,
+ } from "./proposals";
+-import { UNKNOWN_ANSWER } from "./conditions";
++import { UNKNOWN_ANSWER, createScopeResolver } from "./conditions";
+ import { triggerFields } from "./ruleset";
+ import type {
+   EngineRuleset,
+@@ -182,9 +182,16 @@ function evaluateConditional(
+       reason: finding.timelineUnresolvedReason as string,
+     }));
+ 
++  const scopeForBranching = createScopeResolver(intake, ruleset);
++  const branchable = new Set<string>();
++  for (const field of resolved.unknownFields) {
++    const blockers = scopeForBranching.blockersOf?.(field) ?? [];
++    if (blockers.length === 0) branchable.add(field);
++    else for (const blocker of blockers) branchable.add(blocker);
++  }
+   const unknownFields = ruleset.intakeFields
+     .map((definition) => definition.field)
+-    .filter((field) => resolved.unknownFields.includes(field));
++    .filter((field) => branchable.has(field));
+ 
+   const missingFacts: MissingFact[] = [];
+   const pathVerdicts: Verdict[] = [];
+```
