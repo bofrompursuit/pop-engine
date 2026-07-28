@@ -114,8 +114,8 @@ So the feature emits an ordinary finding, and the answer decides whether it is e
 | not in scope (gate false) | none | n/a | n/a |
 | **`yes`** | emitted | **`may_be_required`** | direct the operator to confirm with DOB; assert no reduction |
 | **`no`** | emitted | **`may_be_required`** | state that the operator's own filing is unresolved |
-| **`unknown`** (explicit) | emitted | **`may_be_required`** | as `no` |
-| **in scope, NO answer** | emitted | **`may_be_required`** | as `no`; see the note below on Scenario A |
+| **`unknown`** (explicit) | emitted, **both rules** | **`may_be_required`** | both texts; measured, see below |
+| **in scope, NO answer** | not reachable through the product | n/a | `validateIntake` refuses it; engine-level only |
 
 **Why `may_be_required` and not something else.** It is the disposition
 `DOB-ASSEMBLY-001` already publishes, and it means exactly what the sources support: the requirement
@@ -129,6 +129,106 @@ one intended.
 weakening of round 3's distinction, it is what round 3's distinction always was: after NARROWED was
 removed, no state in this spec asserted a reduction, so the labels differed only in what they told
 the operator to do next, and note text is where this contract puts that.
+
+### The published rules, pinned field by field
+
+Round 4 said "an ordinary finding" and stopped there. That is not implementable: a rule carries
+`id`, `kind`, `trigger`, `output`, `source`, `verification` and `exercised_by_scenarios`, all seven
+required by `parseRule`, and the ones this spec left unmentioned are the ones an implementer would
+have had to invent. **In this repository an unmentioned regulatory field is an invitation to invent
+a permit fact**, which is the single thing this spec exists to prevent, so every field is either
+PINNED here or marked BLOCKED on a named owner. Nothing is left silent.
+
+**Two rules, not one**, because a rule carries at most one `note_text` and the mapping above needs
+two texts. Their ids are pinned here because the answer key and the test files pin rule ids
+literally, so an implementer choosing them alone would fork the artifact and its expectations. Ids
+are engine identifiers and assert no regulatory fact; a rules reviewer may rename them provided
+both artifacts move in the same commit.
+
+| Field | `DOB-ASSEMBLY-HOST-HELD-001` | `DOB-ASSEMBLY-HOST-UNRESOLVED-001` | Status |
+| --- | --- | --- | --- |
+| `kind` | `note` | `note` | PINNED, derived below |
+| `trigger.all` | the published gate verbatim (`location_type eq private_venue`, `headcount gte 75`) plus `venue_has_assembly_approval eq yes` | the same gate plus `venue_has_assembly_approval in ["no", "unknown"]` | PINNED |
+| `output.disposition` | `MAY_BE_REQUIRED` | `MAY_BE_REQUIRED` | PINNED, and it must be written explicitly; see the default trap |
+| `output.note_text` | confirms with DOB and asserts no reduction (F-1NN-AC-01) | states the operator's own filing is unresolved (F-1NN-AC-02) | PINNED in constraint, wording is the feature's |
+| `output.permit_name`, `agency`, `deadline`, `fee` | ABSENT | ABSENT | PINNED as absent |
+| `output.dedupe_key` | ABSENT | ABSENT | PINNED as absent, decided below |
+| `source.citation`, `source.urls` | drawn from `DOB-ASSEMBLY-001`'s existing block, no new source | same | **BLOCKED** on the verification owner |
+| `verification.status` | `RESEARCH_REQUIRED` is the only legend value that fits | same | **BLOCKED** on the verification owner |
+| `verification.qualification`, `evidence` | point at the existing record of the silence | same | **BLOCKED** on the verification owner |
+| `exercised_by_scenarios` | `["F", <the new explicit-no fixture>]` | same | PINNED, and NOT `A-rescope`; see below |
+
+**`kind: note`, and the alternative was measured rather than assumed.** A `permit`-kind finding is
+trackable: `apps/api/src/checklist.ts` limits tasks to `permit` and `insurance`, so a permit-kind
+rule here would add a SECOND checklist task for one TPA filing, and it would need a `permit_name`,
+which would either duplicate `DOB-ASSEMBLY-001`'s published instrument or name an instrument that
+does not exist. `note` is the shipped shape for a rule that qualifies another requirement without
+being one: `PARKS-INSURANCE-NOTE-001` is `kind: note`, publishes `note_text` alone, carries no
+`dedupe_key`, and sits beside `PARKS-EVENT-001`. Measured on the published ruleset with a note rule
+added: it renders as its own finding, `kind=note`, with `deadline=null` and its own
+`verificationStatus`, and `parseRule` falls `name` back to `note_text`
+(`packages/engine/src/ruleset.ts:454`), so the note text is also the line's heading and must read as
+one.
+
+**THE DEFAULT TRAP, and it is the reason `disposition` may not be omitted.**
+`DEFAULT_DISPOSITION_BY_RULE_KIND` in `packages/engine/src/proposals.ts:55` maps `note` to
+`no_new_requirement`, which is exactly the disposition the paragraph above forbids, and
+`PARKS-INSURANCE-NOTE-001` publishes no disposition and takes that default. So a note-kind rule that
+says nothing about its disposition renders the one output this feature must never produce. Publishing
+`MAY_BE_REQUIRED` explicitly is what prevents it, and `resolveDisposition` leaves a published
+`may_be_required` alone on an unknown trigger, since only `required` is downgraded.
+
+**NO SHARED `dedupe_key` WITH `DOB-ASSEMBLY-001`. One finding or two is a user-visible product
+choice, so it is decided here, and it is decided on three measured consequences of merging**, taken
+from the published ruleset with a shared key added:
+
+1. **Merging launders an unestablished statement under a confirmed badge.** `mergeFindings` spreads
+   the FIRST finding and concatenates only `ruleIds`, `notes`, `sources`, `triggeredBy` and
+   `deadlineUnknownFields`. `verificationStatus` is not merged. With the note listed after
+   `DOB-ASSEMBLY-001` the merged line carries `vstatus=SOURCE_CONFIRMED`, so F-206's per-line
+   rendering shows a confirmed status beside a statement whose own status is `RESEARCH_REQUIRED`, and
+   that status's "confirm with agency" rendering is lost.
+2. **Every displayed scalar depends on array order.** Listed AFTER, the merged line is
+   `kind=permit` with DOB's name and its `business_days_minimum` deadline. Listed BEFORE, the same
+   pair becomes `kind=note`, `name` = the note text, `deadline=null`: the TPA permit line stops being
+   a permit, loses its deadline, and with it its checklist trackability and its F-203 alerts. Nothing
+   in the schema or in `parseRule` prevents either order.
+3. **Merging re-keys the requirement, and live checklists pay for it.** F-202 identifies a
+   requirement by its whole sorted rule-id set, so `[DOB-ASSEMBLY-001]` and
+   `[DOB-ASSEMBLY-001, DOB-ASSEMBLY-HOST-HELD-001]` are different requirements. On publication every
+   existing checklist strikes its assembly row and appends an unstarted one, and the organizer's
+   status, notes and uploaded documents stay on the struck row.
+
+Also `noteText` merges as `first.noteText ?? second.noteText`, so a merged line drops the second
+rule's note text outright. It survives today only because `DOB-ASSEMBLY-001` publishes none, which
+is a fact about the current artifact rather than a guarantee. The note text is this feature's entire
+output, so a shape whose output depends on another rule staying silent is not the shape to publish.
+
+The cost of not merging is bounded by the `kind` decision: the second line is a note, not a permit,
+so the plan shows one permit requirement and one note qualifying it, and the checklist gains no task.
+
+**Which rules emit, corrected against a measurement rather than reasoned from the table.** Driven
+through the published ruleset on the analogous shipped field `venue_license_covers_event_area`, whose
+type, values and unknown-capability are identical, because the real field cannot be driven until its
+`UNCONSUMED_INTAKE_FIELDS` entry is removed (the coupling under System Impact, confirmed by the
+guard firing):
+
+| Answer | Emits | Note |
+| --- | --- | --- |
+| `yes` | HELD only | the `in ["no", "unknown"]` term resolves false |
+| `no` | UNRESOLVED only | the `eq yes` term resolves false |
+| explicit `unknown` | **BOTH** | a rule that does not list `unknown` among its accepted values gets tri-state `unknown` for an explicit `unknown`, and `findings.ts` continues only on `false` |
+| in scope, no answer | not reachable through the product; see below | |
+
+**Two consequences the earlier table got wrong.** An explicit `unknown` emits BOTH notes, so the two
+note texts must be jointly true rather than alternatives, and F-1NN-AC-02 expects two findings.
+And the mapping's fourth row describes an intake the product refuses: measured through
+`parseIntakeContract` and `validateIntake`, a private-venue intake at headcount 75 or more with
+`venue_has_assembly_approval` omitted returns
+`{field: "venue_has_assembly_approval", code: "required"}`. F-101 validates on submission, so no
+stored event can be in scope with no answer. The case survives only at the engine level, by calling
+`evaluate` directly, which is why `A-rescope` is not in `exercised_by_scenarios`: a fixture for
+Scenario A's private-venue rescope must ANSWER the field or `validateIntake` rejects it.
 
 ## State, Validation and Errors
 
@@ -175,7 +275,7 @@ distinguishable without colour alone, matching the treatment F-206 uses for veri
 | --- | --- | --- |
 | Intake registry | none | fields already published |
 | `validateIntake` | none | already accepts all three |
-| Ruleset | **new rules** | at least one per authorisation, so a version bump |
+| Ruleset | **two new rules** | the pair pinned under Outputs, so a version bump |
 | `packages/engine/src/ruleset.ts` | **required change** | `UNCONSUMED_INTAKE_FIELDS` entries must be removed in the same change as the trigger |
 | `apps/api/src/ruleset.ts` | **required change** | `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` both compared at boot; see the enumeration below |
 | Answer key | **moves** | new plan output for the scenarios that reach these gates |
@@ -220,21 +320,28 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    reduced obligation, or has no obligation. The test asserts the ABSENCE of each of those claims,
    not merely the presence of the correct one, because the failure mode is an extra sentence rather
    than a missing one.
-2. **F-1NN-AC-02 · An explicit `unknown` emits the same disposition**, with the unresolved-filing
-   note text, and never a disposition asserting any reduction.
+2. **F-1NN-AC-02 · An explicit `unknown` emits BOTH notes, each with `may_be_required`**, and never
+   a disposition asserting any reduction. Both, not one: an explicit `unknown` resolves tri-state
+   `unknown` for the `eq yes` rule, which therefore emits as well, and `findings.ts` continues only
+   on a `false` trigger. The two note texts are written to be jointly true for that reason, and this
+   criterion asserts the pair rather than either text alone.
 3. **F-1NN-AC-03 · An explicit `no` is emitted, and is tested.** `venue_has_assembly_approval: no`
    emits the finding with the unresolved-filing note text. This needs its own fixture: **no approved
    scenario contains an explicit `no` for this field**, so without one an implementation could omit
    or misclassify the known-negative path and still satisfy every other criterion here.
-4. **F-1NN-AC-04 · IN SCOPE WITH NO ANSWER behaves as a stated `no`, and is defined rather than
-   left to fall out.** Scenario A's rescope reaches the gate with the field OMITTED, which the
-   engine represents differently from an explicit `"unknown"`: `resolveAnswer` returns
-   `isExplicitUnknown: false` for an absent answer and `true` for the literal value, and that flag
-   is what lets a rule listing `unknown` among its accepted values be answered by it. A rule that
-   accepts the literal `unknown` therefore does NOT define the rescope's behaviour. This criterion
-   defines it: the finding is emitted with the same disposition and the same unresolved-filing note
-   text, the field appears in `missingFacts`, and its branches are evaluated. Tested on the
-   Scenario A rescope specifically, not only on an intake that answers the field.
+4. **F-1NN-AC-04 · IN SCOPE WITH NO ANSWER IS REFUSED BY INTAKE, and the criterion says so rather
+   than defining plan output for it.** Round 4 defined this case as behaving like a stated `no`. It
+   cannot arise through the product: measured through `parseIntakeContract` and `validateIntake`, a
+   private-venue intake at `headcount` 75 or more with `venue_has_assembly_approval` omitted returns
+   `{field: "venue_has_assembly_approval", code: "required", message: "venue_has_assembly_approval
+   is required for this event"}`, and F-101 validates on submission. So the criterion is: intake
+   REFUSES the omission, and the fixture for Scenario A's private-venue rescope ANSWERS the field.
+   At the engine level, where `evaluate` can be called on an unvalidated intake, an omitted in-scope
+   answer resolves tri-state `unknown` for both rules, both emit, the field appears in
+   `missingFacts` and its branches are evaluated; that is stated for the implementer's benefit and
+   is not a product path any user can reach. `resolveAnswer`'s `isExplicitUnknown` distinction is
+   real and still matters for the `in ["no", "unknown"]` term, which an explicit `unknown` answers
+   TRUE and an absent one does not.
 5. **F-1NN-AC-05 · A field the gate did not reach emits nothing**, per F-201 Acceptance Criterion
    4's rule that a field never asked is not a material unknown.
 6. **F-1NN-AC-06 · Alcohol is untouched, compared against an INDEPENDENT copy.** The three SLA
@@ -243,16 +350,25 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
    deriving its expectation from the new file would pass a changed alcohol rule against itself.
    The expectation is pinned independently inside the test footprint, as either the exact expected
    bytes for those three rules or a digest of them, captured from v2.8 before it is deleted.
-7. **F-1NN-AC-07 · Scenario A's rescope is expected explicitly.** Scenario A carries
-   `headcount: 75`, which meets the `headcount gte 75` half of the gate, so its required
-   re-evaluation to `location_type = private_venue` puts `venue_has_assembly_approval` in scope
-   with no answer. A trigger consuming that field therefore changes that rescope's findings, its
-   missing facts and its `A-rescope` exercise metadata. Expectations and tests for the rescope land
-   with the change; moving Scenario F's answer-key output alone is insufficient.
-8. **F-1NN-AC-08 · The coupled constants, the manifest and the current-version documents land
-   together.** A published trigger reading `venue_has_assembly_approval` lands in ONE commit with:
+7. **F-1NN-AC-07 · Scenario A's rescope is expected explicitly, and it gains an answer.** Scenario A
+   carries `headcount: 75`, which meets the `headcount gte 75` half of the gate, so its required
+   re-evaluation to `location_type = private_venue` puts `venue_has_assembly_approval` in scope. The
+   rescope therefore has to ANSWER it, per Acceptance Criterion 4: an omission is an intake
+   validation error, so a fixture that leaves it out is invalid rather than an unanswered-path test.
+   Which of the three answers the rescope records is a verification-owner call on what the scenario
+   is meant to demonstrate, and it changes that rescope's findings and its missing facts. Its
+   `A-rescope` exercise metadata moves only if that answer puts one of these two rules in it.
+   Expectations and tests for the rescope land with the change; moving Scenario F's answer-key output
+   alone is insufficient.
+8. **F-1NN-AC-08 · The coupled constants, the publication record, the manifest and the
+   current-version documents land together.** A published trigger reading
+   `venue_has_assembly_approval` lands in ONE commit with:
    the removal of its `UNCONSUMED_INTAKE_FIELDS` entry, the `EXPECTED_RULESET_VERSION` move, the
-   `EXPECTED_RULE_COUNT` move, the `snapshot_date` advance and its test pin, the
+   `EXPECTED_RULE_COUNT` move, the `snapshot_date` advance and its test pin, **`supersedes` extended
+   with `nyc.v2.8`, `status` rewritten with this feature's approval, and `provenance` rewritten to
+   describe this change rather than v2.8's deadline correction** (per Rollout item 1, and none of the
+   three is caught by a guard: `status` passes on its `APPROVED` prefix alone and the other two are
+   read by no code), the
    `docs/BASELINE.md` update (current row repointed, new sha256, superseded-lineage row for v2.8),
    the deletion of `rules/nyc-rules.v2.8.json`, and the current-version references in the approved
    documents listed under System Impact. That commit boots AND passes `pnpm check:baseline`.
@@ -280,8 +396,8 @@ until the entry is removed. Nos. 2, 3 and 5 must land in one commit or the API d
 - The six approved scenarios in `docs/test-scenario-answer-key.md` are the baseline. **Two of them
   reach this gate, not one.** Scenario F answers `venue_has_assembly_approval` `"unknown"` today.
   Scenario A carries `headcount: 75` and its required rescope to `location_type = private_venue`
-  puts the same field in scope unanswered, so that rescope's findings, missing facts and
-  `A-rescope` metadata move too.
+  puts the same field in scope, so that rescope must answer it and its findings and missing facts
+  move too. Its `A-rescope` metadata moves only if the answer chosen puts one of these rules in it.
 - **A new fixture is required for the explicit `no` path**, because no approved scenario contains
   one for this field. Adding it is an answer-key change and carries the approvals below.
 - Any answer-key movement is a regulatory publication under the change-class table in
@@ -302,14 +418,40 @@ Files this feature may touch, and who must be in the room:
 
 | Path | Change | Owner |
 | --- | --- | --- |
-| `rules/nyc-rules.v<next>.json` | new rules, new version, advanced `snapshot_date` | verification owner + rules reviewer |
-| **`rules/nyc-rules.v2.8.json`** | **deleted** | verification owner + rules reviewer |
-| `packages/engine/src/ruleset.ts` | remove **only** the `venue_has_assembly_approval` entry from `UNCONSUMED_INTAKE_FIELDS` | engine owner |
+| `rules/nyc-rules.v<next>.json` | new rules, new version, advanced `snapshot_date` | verification owner + rules reviewer + **engine owner** |
+| **`rules/nyc-rules.v2.8.json`** | **deleted** | verification owner + rules reviewer + **engine owner** |
+| `packages/engine/src/ruleset.ts` | remove **only** the `venue_has_assembly_approval` entry from `UNCONSUMED_INTAKE_FIELDS` | engine owner + **verification owner** |
 | `apps/api/src/ruleset.ts` | move `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` | engine owner |
-| `docs/test-scenario-answer-key.md` | expectations | verification owner + rules reviewer |
+| `docs/test-scenario-answer-key.md` | expectations | verification owner + rules reviewer + **engine owner** |
 | `docs/BASELINE.md` | current row, new digest, superseded-lineage record | product owner |
 | the test files below | version, count and expectation pins | engine owner |
 | the documents below | current-version references | product owner + each artifact's owner |
+
+### Every row audited against the change class it actually describes
+
+The engine owner was missing from the publication row, and a single missing name is not the defect:
+the rows had been assigned by what a path looks like rather than by what the change does, so the
+whole table is re-derived here against `docs/DOCUMENTATION-GOVERNANCE.md` §6 "Change classes and
+approvals". §6's two relevant rows are "Regulatory source/status/content", requiring the verification
+owner plus the rules reviewer, and "Rule trigger, dedupe, branch, deadline, or formula semantics",
+requiring the verification owner plus the engine owner. A change can be in both classes, and the
+approvals then union rather than choosing.
+
+| Row | Class per §6 | Why, and what changed here |
+| --- | --- | --- |
+| new ruleset file | both | it publishes regulatory content AND two new triggers reading a field no trigger reads today, which is trigger semantics. The engine owner was absent, and this is the row the reviewer cited |
+| v2.8 deleted | both | the deletion is not separable from the publication: `publishedRulesFile` throws unless exactly one ruleset is present, so the pair is one act, and the deletion removes every published trigger |
+| `UNCONSUMED_INTAKE_FIELDS` entry | engine plus regulatory content | it is engine code, so the engine owner, and its entry text is this repository's record of AC 28-117.1.3's amendment requirement, so deleting it deletes regulatory prose |
+| `apps/api/src/ruleset.ts` constants | neither §6 regulatory row | boot constants asserting nothing regulatory; engine owner alone |
+| answer key | both | its expectations move BECAUSE trigger semantics moved, and `fixture-ruleset-agreement.test.ts` checks published rules against this key, so the key is where a trigger change is verified. The Fixtures section already said this feature crosses both rows; the row did not carry it |
+| `docs/BASELINE.md` | approval record | §4 defines the manifest and §6 has no row for it; amending approval status and digests is the product owner's, unchanged |
+| test pins | neither §6 regulatory row | assertions over constants and expectations; engine owner |
+| current-version documents | product scope | each artifact's own owner plus the product owner, unchanged |
+
+**This is the fourth trigger-semantics change routed without the engine owner, so the fix is the
+audit rather than the cited cell.** Any future row added to this table states its §6 class in the
+same breath as its owner, and a row whose class includes trigger, dedupe, branch, deadline or formula
+semantics names the engine owner without being asked.
 
 ### The current-version documents, DERIVED the same way as the tests
 
@@ -407,6 +549,27 @@ Rollout is one change or none. In it:
    throws unless exactly one published ruleset is present, so leaving v2.8 in place fails boot and
    deleting a file the footprint does not name is an out-of-footprint change. Round 3 required the
    deletion and permitted only the new file.
+   **Its publication record is rewritten, not inherited.** Copying v2.8 and changing only the version
+   and the date leaves three top-level keys describing the previous publication:
+   - **`supersedes`** is an array, `["nyc.v1", "nyc.v2.1", ... "nyc.v2.7"]` in v2.8, eight entries and
+     no `nyc.v2.8`. Appending `nyc.v2.8` is what puts v2.8 in the new artifact's lineage. Left as
+     copied, the new file states that the version it replaces never existed.
+   - **`status`** is prose carrying the ratification date and every republication. It gains this
+     feature's approval, naming the verification owner, the rules reviewer and the engine owner per
+     the footprint audit above.
+   - **`provenance`** is prose whose "CHANGE FROM nyc.v2.7" section describes the DOB-ASSEMBLY-001
+     deadline correction. It is rewritten to describe THIS change: two new note rules, the field they
+     consume, and that they assert no reduction. Left as copied, the new artifact claims v2.8's
+     deadline correction as its own change.
+
+   **`status` is the dangerous one, and the reason is that it IS validated.** `validateRuleset`
+   requires `status` to be a string starting with `APPROVED` (`apps/api/src/ruleset.ts:511`), so a
+   copied string passes the boot guard while carrying the previous publication's history: the check
+   returns a false positive rather than no signal. `supersedes` and `provenance` are read by no code
+   at all, confirmed by searching the tracked TypeScript and scripts, and neither
+   `check-baseline-drift.mjs` nor `schema-contract.test.ts` asserts them. So all three ship stale in
+   silence, which is this document's own recurring class: a claim in a published artifact that reads
+   as verified and is not.
 2. `EXPECTED_RULESET_VERSION` and `EXPECTED_RULE_COUNT` moved.
 3. The `venue_has_assembly_approval` entry removed from `UNCONSUMED_INTAKE_FIELDS`, and **only**
    that entry: `food_affinity_private_exception_claimed` stays, because no rule in this feature
@@ -421,7 +584,11 @@ Rollout is one change or none. In it:
 7. The current-version references in the approved documents updated, per the derivation in the
    footprint.
 
-Items 1 to 4 each fail independently: 1 and 2 at boot, 3 at load, 4 in CI. No subset starts. There is no partial state worth shipping.
+Items 1 to 4 each fail independently: 1 and 2 at boot, 3 at load, 4 in CI. No subset starts. There is
+no partial state worth shipping. **The exception is item 1's publication record**, which fails
+nothing: a stale `supersedes` or `provenance` is read by no code, and a copied `status` satisfies the
+one check there is. It is in the atomic set because it is unenforceable, not because a guard will
+catch it.
 
 Fallback is to publish nothing and leave the field in `UNCONSUMED_INTAKE_FIELDS`. That is the
 current state, it is stable, and its cost is recorded honestly there: the field is collected and
@@ -488,7 +655,19 @@ None is resolved here.
     output. That keeps the footprint out of the shared contract, the API, persistence and the web
     lane entirely. Recorded because three rounds of this spec described output the product could not
     have produced, and no reviewer or author caught it until the contract was read.
-11. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
+11. **Round 5 found the reshape stopping at the boundary of the publication detail, three times.**
+    Round 4 replaced two unrepresentable plan states with an ordinary finding and was right to. What
+    it did not do was say WHICH rule: no id, kind, source, verification or dedupe decision, which in
+    this repository is an instruction to invent regulatory metadata, and the two shapes an implementer
+    could have chosen from that silence differ user-visibly (one merged permit line against a permit
+    line plus a note). The approval row for the new artifact named the verification owner and the
+    rules reviewer and not the engine owner, for the fourth time this session on a trigger-semantics
+    change, so the whole table is now audited against §6 by class rather than by path. And the
+    rollout prescribed the version and the date while leaving `supersedes`, `status` and `provenance`
+    to be copied from v2.8. Two corrections came out of measuring rather than reasoning: an explicit
+    `unknown` emits BOTH notes, and an in-scope OMISSION is an intake validation error rather than a
+    plan state, which retired a mapping row and rewrote Acceptance Criterion 4.
+12. **Section structure diverges from the house shape, deliberately.** No PROPOSED spec exists in
    this repository to match: all twelve specs under `specs/` are APPROVED and use a shorter
    structure (User Story, Inputs, Outputs, Acceptance Criteria, Edge Cases, Scenarios Exercised).
    This spec follows the fuller structure it was briefed with and keys its criteria `F-1NN-AC-0N`,
