@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AppHeader } from "./app-header";
 import "./globals.css";
 
 export const metadata = {
@@ -21,7 +22,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <AppHeader />
+        {children}
+      </body>
     </html>
   );
 }

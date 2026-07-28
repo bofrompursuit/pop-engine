@@ -267,7 +267,12 @@ export function IntakeForm({
         void save();
       }}
     >
-      <h1>{eventId === undefined ? "Describe your event" : "Edit your event"}</h1>
+      <p className="intake__eyebrow" aria-hidden="true">
+        Event details
+      </p>
+      <h1 className="intake__title">
+        {eventId === undefined ? "Describe your event" : "Edit your event"}
+      </h1>
       <p className="intake__lede">
         Answer what applies to your event. Questions appear as your answers make them relevant, and
         &ldquo;I don&rsquo;t know&rdquo; is a real answer — it is stored as unknown and carried into

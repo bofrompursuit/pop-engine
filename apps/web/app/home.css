@@ -1,22 +1,140 @@
-/* Route-local styles for the landing page — the Altitude MTL-derived editorial layout applied to
-   the one page in this app with no organizer data to show: a nav with the brand centered, a
-   hairline-divided hero, and the spatial-coordinate caption device from docs/DESIGN-SYSTEM.md. */
+/* Route-local styles for the landing page's photo-grid hero — the asymmetric grid, oversized
+   numerals, and spatial-coordinate caption from docs/DESIGN-SYSTEM.md, applied with real product
+   numbers rather than invented ones. The nav lives once in app-header.css, shared by every route. */
 
 .home {
   max-width: 68rem;
   margin: 0 auto;
 }
 
-.home__nav {
+.home__grid {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr 1fr;
+  grid-template-rows: repeat(2, 12rem);
+  gap: 0.35rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.home__hero-photo {
+  grid-row: 1 / 3;
+  position: relative;
+}
+
+.home__hero-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home__hero-overlay {
+  position: absolute;
+  inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 1.5rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.75rem;
+  background: linear-gradient(100deg, rgba(20, 22, 26, 0.82) 45%, rgba(20, 22, 26, 0.15));
+  color: #fff;
+}
+
+.home__eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #e2ded6;
+}
+
+.home__headline {
+  margin: 0;
+  max-width: 24rem;
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.home__coords {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: #cfcabf;
+}
+
+.home__grid-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home__stat {
+  position: relative;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.home__stat img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home__stat-overlay {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+}
+
+.home__stat--rules .home__stat-number,
+.home__stat--rules .home__stat-label {
+  color: var(--ink);
+}
+
+.home__stat-number {
+  font-family: var(--font-mono);
+  font-size: 2.75rem;
+  font-weight: 700;
+  line-height: 0.9;
+}
+
+.home__stat-label {
+  margin-top: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.home__cta {
+  display: flex;
+  justify-content: center;
+  padding: 2.5rem 0;
   margin-bottom: 2rem;
   border-bottom: 1px solid var(--line);
 }
 
-.home__nav-links a {
+.home__begin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -24,63 +142,23 @@
   text-decoration: none;
 }
 
-.home__brand {
-  font-family: var(--font-mono);
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-}
-
-.home__hero {
-  position: relative;
-  border-radius: 0.75rem;
-  overflow: hidden;
-  border: 1px solid var(--line);
-}
-
-.home__photo {
-  display: block;
-  width: 100%;
-  height: 26rem;
-  object-fit: cover;
-}
-
-.home__caption {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.5rem;
-  background: linear-gradient(0deg, rgba(20, 22, 26, 0.75), rgba(20, 22, 26, 0));
-  color: #fff;
-}
-
-.home__caption-text {
-  margin: 0;
-  max-width: 26rem;
-  font-size: 1rem;
-  line-height: 1.5;
-}
-
-.home__coords {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.06em;
-  text-align: right;
-  white-space: nowrap;
-}
-
 .home__lede {
-  margin-top: 2rem;
   color: var(--muted);
+  margin-bottom: 2rem;
 }
 
 .home__lede a {
   color: var(--ink);
   font-weight: 600;
+}
+
+@media (max-width: 48rem) {
+  .home__grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 16rem repeat(4, 8rem);
+  }
+
+  .home__hero-photo {
+    grid-row: auto;
+  }
 }

@@ -9,3 +9,4 @@ required — credited here anyway for provenance).
 - `manhattan-aerial.jpg` — photo-1543716091-a840c05249ec
 - `manhattan-skyline-haze.jpg` — photo-1490644658840-3f2e3f8c5625
 - `times-square-street.jpg` — photo-1496442226666-8d4d0e62e6e9
+- `event-crowd.jpg` — photo-1470229722913-7c0e2dbbafd3
