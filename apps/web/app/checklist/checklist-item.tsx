@@ -359,7 +359,7 @@ export function ChecklistItemCard({
 
   return (
     <article
-      className={item.inLatestPlan ? "check-item" : "check-item check-item--dropped"}
+      className={item.struckThrough ? "check-item check-item--dropped" : "check-item"}
       aria-labelledby={`check-${item.id}`}
     >
       <div className="check-item__head">
@@ -371,12 +371,11 @@ export function ChecklistItemCard({
         </span>
       </div>
 
-      {/* AC 6: a requirement the current plan no longer raises is struck through and kept, with
-          its status, notes and documents. Nothing is ever deleted. */}
-      {!item.inLatestPlan && (
+      {/* AC 6/9: a terminal task is struck through and kept with its organizer record. */}
+      {item.struckThrough && (
         <p className="check-item__retained" role="note">
-          The current plan no longer raises this requirement. It is kept with everything recorded
-          against it; nothing has been deleted.
+          This earlier task has ended. It is kept with everything recorded against it; nothing has
+          been deleted.
         </p>
       )}
 

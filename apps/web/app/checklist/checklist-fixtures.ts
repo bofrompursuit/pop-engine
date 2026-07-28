@@ -142,7 +142,7 @@ export const trackedItem = (
   status: "not_started",
   notes: null,
   updatedAt: "2026-07-26T09:00:00.000Z",
-  inLatestPlan: true,
+  struckThrough: false,
   documents: [],
   ...overrides,
 });
